@@ -1,0 +1,8 @@
+{
+  "name": "ai-biztech-portal",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ]
+}
