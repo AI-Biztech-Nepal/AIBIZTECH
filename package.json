@@ -4,5 +4,12 @@
   "workspaces": [
     "apps/*",
     "packages/*"
-  ]
+  ],
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.2.17",
+    "supabase": "^2.122.0"
+  },
+  "scripts": {
+    "test": "node --test supabase/tests/*.test.mjs"
+  }
 }

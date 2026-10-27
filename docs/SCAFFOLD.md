@@ -3,8 +3,7 @@
 One login, one organization, many services.
 
 This document kick-starts the **AI Biz Tech Nepal portal**: a single place where a business signs
-in and uses the services it subscribes to (Finance, Auto Stock Manager, Attendance Nepal,
-EV Service Manager). The existing apps stop being standalone products and become **services**
+in and uses the services it subscribes to (Finance, Auto Stock Manager, Attendance Nepal). The existing apps stop being standalone products and become **services**
 behind one platform.
 
 > Status: **Phase 0 (design)**. Values marked `TBD` are open decisions — see [§12](#12-open-decisions).
@@ -21,8 +20,8 @@ behind one platform.
 
 **Non-goals (for now)**
 - Rewriting existing frontends into one codebase.
-- Merging services that overlap (Stock Manager and EV Service both have customers/vehicles/job cards). Shared master data comes in Phase 6.
-- One combined mobile app. Native apps keep their own sign-in until Phase 6.
+- EV Service Manager. It stays a standalone, custom product outside the portal ([ADR 0003](adr/0003-ev-service-stays-outside.md)).
+- One combined mobile app. Native apps keep their own sign-in until Phase 5.
 
 ---
 
@@ -33,9 +32,8 @@ behind one platform.
 | `finance` | `FINANCE` | Expo (RN + web) | Supabase direct | Supabase Auth, per-user books | **A** |
 | `attendance` | `ATTENDANCENEPAL` | Expo mobile (+ planned Next.js admin) | Supabase direct | Supabase Auth, organization-based | **A** |
 | `stock` | `Auto-Stock-Manager` | React (CRA + craco) | FastAPI | Own JWT → moving to Supabase Auth, `company_id` | **B** |
-| `ev` | `EV-Service-Manager` | React (Vite) + Capacitor | FastAPI on Vercel | Own JWT, `company_id`, roles `admin`/`staff` | **B** |
 
-`Hamro-GNG-Auto` is a customer's public website that reads from Stock Manager. It stays **outside** the portal.
+`Hamro-GNG-Auto` (a customer's public website that reads from Stock Manager) and `EV-Service-Manager` stay **outside** the portal.
 
 - **Family A** — the app talks to Supabase directly. Integration = share the platform's Supabase session; Row Level Security checks organization membership.
 - **Family B** — React app + FastAPI backend. Integration = the backend verifies the platform's Supabase JWT and resolves the user's role from `core`; the service's own sign-up and staff screens are removed.
@@ -54,11 +52,11 @@ behind one platform.
              │  core.*   — orgs, memberships,   │
              │             services, roles      │
              │  finance.* attendance.*          │
-             │  stock.*   ev.*                  │
+             │  stock.*                         │
              └────────────────┬────────────────┘
      ┌──────────────┬─────────┴────┬──────────────┐
- finance.<domain> attendance.<domain> stock.<domain>  ev.<domain>
-  (Family A)      (Family A)       (B: + stock-api) (B: + ev-api)
+ finance.<domain> attendance.<domain> stock.<domain>
+  (Family A)      (Family A)       (B: + stock-api)
 ```
 
 ### Domains (`<domain>` = `TBD`, e.g. `aibiztechnepal.com`)
@@ -69,7 +67,6 @@ behind one platform.
 | `finance.<domain>` | Finance web |
 | `attendance.<domain>` | Attendance admin web |
 | `stock.<domain>` / `stock-api.<domain>` | Stock Manager web / API |
-| `ev.<domain>` / `ev-api.<domain>` | EV Service web / API |
 
 All hosts must be subdomains of one parent domain so the session cookie can be shared (`Domain=.<domain>`).
 
@@ -108,7 +105,7 @@ portal/
 └─ package.json
 ```
 
-**Database migrations live only in this repo.** Services have their own schema (`finance`, `ev`, ...) but
+**Database migrations live only in this repo.** Services have their own schema (`finance`, `stock`, ...) but
 any change to it is a PR here. One migrations folder per Supabase project avoids repos overwriting
 each other's history. Name migrations `<timestamp>_<schema>_<what>.sql`, e.g.
 `20261101000000_core_init.sql`, `20261115000000_finance_init.sql`.
@@ -129,7 +126,7 @@ create schema if not exists core;
 
 -- Catalogue of services the platform offers
 create table core.services (
-  key        text primary key,                 -- 'finance' | 'stock' | 'attendance' | 'ev'
+  key        text primary key,                 -- 'finance' | 'stock' | 'attendance'
   name       text not null,
   base_url   text not null,                    -- https://finance.<domain>
   roles      text[] not null,                  -- valid roles inside this service
@@ -192,7 +189,7 @@ create table core.invitations (
   org_id       uuid not null references core.organizations(id) on delete cascade,
   email        text not null,
   org_role     text not null default 'member',
-  service_roles jsonb not null default '{}',     -- {"finance":"accountant","ev":"staff"}
+  service_roles jsonb not null default '{}',     -- {"finance":"accountant","attendance":"hr"}
   invited_by   uuid references auth.users(id),
   expires_at   timestamptz not null default now() + interval '7 days',
   accepted_at  timestamptz
@@ -219,8 +216,7 @@ create table core.audit_log (
 insert into core.services (key, name, base_url, roles) values
   ('finance',    'Finance',              'https://finance.TBD',    array['admin','accountant','viewer']),
   ('stock',      'Auto Stock Manager',   'https://stock.TBD',      array['admin','stock_supervisor','parts_supervisor','social_media']),
-  ('attendance', 'Attendance Nepal',     'https://attendance.TBD', array['admin','hr','employee']),
-  ('ev',         'EV Service Manager',   'https://ev.TBD',         array['admin','staff']);
+  ('attendance', 'Attendance Nepal',     'https://attendance.TBD', array['admin','hr','employee']);
 ```
 
 ### Access helpers (used by RLS and by FastAPI)
@@ -325,7 +321,7 @@ export function getSupabase() {
 
 - **Next.js / CRA / Vite apps:** use `getSupabase()` directly.
 - **Expo apps (Finance, Attendance):** on **web** builds use `getSupabase()`; on **native** builds keep
-  the current AsyncStorage/SecureStore client (native sign-in stays per app until Phase 6).
+  the current AsyncStorage/SecureStore client (native sign-in stays per app until Phase 5).
 - In local development use `localhost` with ports, or map `*.aibiz.local` in the hosts file to test the shared cookie.
 
 Every service runs the same guard on load (exported from `packages/auth`):
@@ -357,7 +353,7 @@ export async function requireService(serviceKey: string) {
 6. Write the data-migration script (see [§9](#9-migrating-existing-customers)).
 7. Add the platform header from `@ai-biztech-nepal/ui` (app switcher + org switcher).
 
-## 8. Integration recipe — Family B (Stock Manager, EV Service)
+## 8. Integration recipe — Family B (Stock Manager)
 
 **Backend (FastAPI)** — replace the service's own JWT with `aibiz_auth`:
 
@@ -407,16 +403,15 @@ def require_service(service_key: str, roles: set[str] | None = None, get_db=None
 ```
 
 Requires **asymmetric JWT signing keys** enabled in the Supabase project (Settings → JWT Keys).
-Role/active checks stay live on every request, which keeps EV's "revocation is immediate" behaviour.
+Role/active checks stay live on every request, so removing someone's access takes effect immediately.
 
 Steps:
-1. Move tables into the service schema (`stock.*`, `ev.*`); rename `company_id` → `org_id` (uuid).
-2. Swap every route's auth dependency for `require_service('ev')` / `require_service('ev', {'admin'})`.
+1. Move tables into the service schema (`stock.*`); rename `company_id` → `org_id` (uuid).
+2. Swap every route's auth dependency for `require_service('stock')` / `require_service('stock', {'admin'})`.
 3. Delete `/auth/signup`, `/auth/login` and staff-account management — the portal owns them.
-   Staff now = organization members with an `ev` service role.
+   Staff now = organization members with a `stock` service role.
 4. Frontend: use `@ai-biztech-nepal/auth` for the session; send `Authorization` + `X-Org-Id` on every API call (`apiFetch` in the package does this).
-5. Cron endpoints (e.g. EV `/api/cron/service-loop-tick`) keep their `CRON_SECRET` and loop over all orgs that have the service enabled.
-6. Capacitor/Android builds: keep their own sign-in against the platform Supabase project until Phase 6.
+5. Cron endpoints keep their `CRON_SECRET` and loop over all orgs that have the service enabled.
 
 ---
 
@@ -444,7 +439,7 @@ Cut-over rule: the old app goes **read-only** on the cut-over date and stays rea
 | `DATABASE_URL` | FastAPI services | Pooled connection string |
 | `COOKIE_DOMAIN` (+ prefixed variants) | all web | `.<domain>` |
 | `PORTAL_URL` (+ prefixed variants) | all services | `https://app.<domain>` |
-| `CRON_SECRET` | EV, Stock | Existing cron protection |
+| `CRON_SECRET` | Stock | Existing cron protection |
 
 ---
 
@@ -470,26 +465,20 @@ Cut-over rule: the old app goes **read-only** on the cut-over date and stays rea
 - [ ] App switched to platform auth on web; owner → org scoping
 - [ ] Migration script + verified balances; cut over `finance.<domain>`
 
-### Phase 3 — EV Service (first Family B)
-- [ ] `ev` schema; `company_id` → `org_id`
-- [ ] FastAPI on `aibiz_auth`; signup/staff management removed
-- [ ] Cron loops over orgs with `ev` enabled
-- [ ] Migration script; cut over `ev.<domain>`
-- [ ] Make Garow-EV-specific wording/config per organization (if other brands will use it)
-
-### Phase 4 — Attendance (Family A)
+### Phase 3 — Attendance (Family A, **paying customers**)
 - [ ] `attendance` schema; admin web on platform auth
+- [ ] Rehearse the migration on a copy of production data; verify employee and attendance counts per org
 - [ ] ZKTeco bridge writes to the platform project
 - [ ] Employees as members with `attendance:employee` role
 
-### Phase 5 — Stock Manager (Family B)
+### Phase 4 — Stock Manager (Family B)
 - [ ] Finish MySQL → Postgres move into `stock` schema
 - [ ] FastAPI on `aibiz_auth`; roles mapped; platform-owner cross-company view → portal super-admin
 - [ ] Hamro-GNG-Auto public API keeps working (public endpoints scoped by org slug)
 
-### Phase 6 — Platform features
-- [ ] Shared `core.customers` / `core.vehicles` used by Stock and EV
-- [ ] Payroll (Attendance) and sales/payments (Stock, EV) post into Finance
+### Phase 5 — Platform features
+- [ ] Shared `core.customers` / `core.vehicles` if more services need them
+- [ ] Payroll (Attendance) and sales/payments (Stock) post into Finance
 - [ ] One AI Biz Tech Nepal mobile app; platform billing
 
 ---
@@ -498,9 +487,9 @@ Cut-over rule: the old app goes **read-only** on the cut-over date and stays rea
 
 | # | Decision | Default assumed in this doc |
 |---|---|---|
-| 1 | Portal domain | `TBD` — needed before cookies/SSO can be tested end to end |
+| 1 | Portal domain | Subdomains of one parent domain ([ADR 0001](adr/0001-one-parent-domain.md)); the domain name itself is `TBD` |
 | 2 | One Supabase project with a schema per service vs. separate projects | **One project** (enables cross-service features; gives up Finance's fully separate books) |
-| 3 | Which services have live customers today | Unknown — sets migration care and order |
-| 4 | Portal hosting | Vercel (matches Finance and EV today) |
-| 5 | Is EV Service Garow-only or for any EV brand | Garow-only until decided |
+| 3 | Which services have live customers today | **Decided:** Attendance only ([ADR 0002](adr/0002-attendance-has-paying-customers.md)) |
+| 4 | Portal hosting | Vercel (matches Finance today) |
+| 5 | EV Service Manager in the portal? | **Decided:** no, stays standalone ([ADR 0003](adr/0003-ev-service-stays-outside.md)) |
 | 6 | Platform super-admin (AI Biz Tech Nepal staff) access model | A `core.platform_admins` table, read-only by default |
