@@ -1,8 +1,8 @@
-import Link from 'next/link';
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { getContext, type Member } from '@/lib/supabase';
 import { createInvite, revokeInvite, saveMember } from '../actions';
+import { Header } from '../header';
 import { CopyLink } from './copy-link';
 import { Notice, type Search } from '../notice';
 
@@ -29,11 +29,7 @@ export default async function Team({ searchParams }: { searchParams: Search }) {
 
   return (
     <main className="wide">
-      <header>
-        <strong>AI Biz Tech Nepal</strong>
-        <span>{org.name}</span>
-        <Link href="/">Back to home</Link>
-      </header>
+      <Header org={org} page="team" />
 
       <h1>Team</h1>
       <p>Choose each person's role in your organization and in each service you have enabled.</p>

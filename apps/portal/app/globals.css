@@ -132,3 +132,4 @@ input[readonly] { opacity: 0.7; }
 .copy input { flex: 1; min-width: 0; }
 h2.spaced { margin-top: 24px; }
 main.wide > .tile { margin-bottom: 16px; }
+.cap { text-transform: capitalize; }

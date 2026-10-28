@@ -5,7 +5,7 @@ import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { createClient, getContext } from '@/lib/supabase';
 import { safeNext } from '@/lib/safe-next';
-import { FIELDS, PHONE, validateDetails, validatePhoto, type Details } from '@/lib/org-details';
+import { EMAIL, FIELDS, PHONE, validateDetails, validatePhoto, type Details } from '@/lib/org-details';
 
 const str = (f: FormData, k: string) => String(f.get(k) ?? '').trim();
 const fail = (path: string, message: string): never => redirect(`${path}?error=${encodeURIComponent(message)}`);
@@ -193,4 +193,19 @@ export async function acceptInvitation(form: FormData) {
   const { error } = await supabase.schema('core').rpc('accept_invitation', { p_id: id });
   if (error) fail(`/invite/${id}`, error.message);
   redirect('/');
+}
+
+// Admins edit contact details. PAN and the owner's details are not here: changing the PAN restarts verification.
+export async function updateOrganization(form: FormData) {
+  const { supabase, ctx } = await getContext();
+  const id = str(form, 'org_id');
+  if (ctx!.orgs.find((o) => o.id === id)?.org_role === 'member') fail('/admin', 'Only owners and admins can edit the organization.');
+  const v = { name: str(form, 'name'), address: str(form, 'address'), phone: str(form, 'phone'), email: str(form, 'email') };
+  if (!v.name || !v.address) fail('/admin', 'Name and address are required.');
+  if (!PHONE.test(v.phone)) fail('/admin', 'Enter a valid phone number (digits, optional + and dashes).');
+  if (!EMAIL.test(v.email)) fail('/admin', 'Enter a valid email address.');
+  const { error } = await supabase.schema('core').from('organizations').update(v).eq('id', id);
+  if (error) fail('/admin', error.message);
+  revalidatePath('/', 'layout');
+  redirect('/admin?message=' + encodeURIComponent('Organization details saved.'));
 }

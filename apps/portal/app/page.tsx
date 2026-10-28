@@ -1,7 +1,8 @@
-import Link from 'next/link';
+import { Fragment } from 'react';
 import { redirect } from 'next/navigation';
 import { getContext } from '@/lib/supabase';
-import { markNotificationsRead, signOut, startTrial, updateProfile } from './actions';
+import { markNotificationsRead, startTrial, updateProfile } from './actions';
+import { Header } from './header';
 import { Notice, type Search } from './notice';
 
 export default async function Launcher({ searchParams }: { searchParams: Search }) {
@@ -33,12 +34,7 @@ export default async function Launcher({ searchParams }: { searchParams: Search 
 
   return (
     <main className="wide">
-      <header>
-        <strong>AI Biz Tech Nepal</strong>
-        <span>{org.name}</span>
-        {isAdmin && <Link href="/team">Team</Link>}
-        <form action={signOut} className="inline"><button className="link">Sign out</button></form>
-      </header>
+      <Header org={org} page="home" />
 
       <h1>Hello{ctx.full_name ? `, ${ctx.full_name}` : ''}</h1>
       <Notice error={error} message={deniedName ? `You don't have access to ${deniedName} in ${org.name}. Ask your organization admin.` : message} />
@@ -61,7 +57,10 @@ export default async function Launcher({ searchParams }: { searchParams: Search 
           <dl>
             <dt>Email</dt><dd>{claims?.claims.email ?? '—'}</dd>
             <dt>Organization</dt><dd>{org.name}</dd>
-            <dt>Your role</dt><dd>{org.org_role}</dd>
+            <dt>Your role</dt><dd className="cap">{org.org_role}</dd>
+            {services?.filter((s) => org.services[s.key]).map((s) => (
+              <Fragment key={s.key}><dt>{s.name} role</dt><dd className="cap">{org.services[s.key]}</dd></Fragment>
+            ))}
             <dt>Status</dt><dd>{org.verification_status}</dd>
           </dl>
         </section>
