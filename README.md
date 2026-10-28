@@ -3,7 +3,7 @@
 One login, one organization, many services: Finance, Auto Stock Manager and Attendance Nepal,
 behind a single portal.
 
-Status: **Phase 0 (design)**. Start with [docs/SCAFFOLD.md](docs/SCAFFOLD.md); decisions are in [docs/adr/](docs/adr/).
+Status: **Phase 1 (portal + core)**. Start with [docs/SCAFFOLD.md](docs/SCAFFOLD.md); decisions are in [docs/adr/](docs/adr/).
 
 | Folder | What goes here |
 |---|---|

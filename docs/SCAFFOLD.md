@@ -453,11 +453,11 @@ Cut-over rule: the old app goes **read-only** on the cut-over date and stays rea
 - [ ] Inventory each service's roles and map them to `core.services.roles`
 
 ### Phase 1 — Portal + core
-- [ ] `apps/portal`: sign in, sign up (email code), forgot/reset password
-- [ ] Create organization on first sign-in; org switcher (writes `profiles.active_org_id`)
-- [ ] Service launcher (tiles from `my_context()`), "no access" state
-- [ ] Org admin: members, invitations, enable/disable services, assign service roles
-- [ ] `packages/auth`, `packages/ui`, `python/aibiz_auth` published (v0.1)
+- [x] `apps/portal`: sign in, sign up (email code), forgot/reset password
+- [x] Create organization on first sign-in (org switcher dropped: not needed)
+- [x] Service launcher (tiles from `my_context()`), "no access" state
+- [x] Org admin: members, invitations, enable/disable services, assign service roles
+- [x] `packages/auth`, `packages/ui`, `python/aibiz_auth` v0.1 built (not yet published or tagged)
 - [ ] Deploy portal to `app.<domain>`
 
 ### Phase 2 — Finance (Family A)
