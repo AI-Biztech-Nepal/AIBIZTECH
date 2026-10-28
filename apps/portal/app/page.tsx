@@ -11,6 +11,7 @@ export default async function Launcher({ searchParams }: { searchParams: Search 
 
   const org = ctx.orgs.find((o) => o.id === ctx.active_org_id) ?? ctx.orgs[0];
   const isAdmin = org.org_role !== 'member';
+  const verified = org.verification_status === 'verified';
   const core = supabase.schema('core');
   const [{ data: services }, { data: enabled }] = await Promise.all([
     core.from('services').select('key, name, base_url').eq('is_active', true).order('name'),
@@ -42,6 +43,13 @@ export default async function Launcher({ searchParams }: { searchParams: Search 
       <h1>Hello{ctx.full_name ? `, ${ctx.full_name}` : ''}</h1>
       <Notice error={error} message={deniedName && `You don't have access to ${deniedName} in ${org.name}. Ask your organization admin.`} />
 
+      {org.verification_status === 'pending' && (
+        <p role="status" className="banner">Your organization is awaiting verification. Services unlock once it is verified.</p>
+      )}
+      {org.verification_status === 'rejected' && (
+        <p role="alert" className="banner error">Verification was rejected{org.verification_note ? `: ${org.verification_note}` : '.'} Contact support.</p>
+      )}
+
       <ul className="tiles">
         {services?.map((s) => {
           const role = org.services[s.key];
@@ -54,7 +62,7 @@ export default async function Launcher({ searchParams }: { searchParams: Search 
                   <p>{role}{status === 'trial' ? ' · trial' : ''}</p>
                   <a href={s.base_url} className="button">Open</a>
                 </>
-              ) : isAdmin && status !== 'suspended' ? (
+              ) : isAdmin && verified && status !== 'suspended' ? (
                 <form action={startTrial}>
                   <input type="hidden" name="org_id" value={org.id} />
                   <input type="hidden" name="service_key" value={s.key} />
@@ -63,7 +71,7 @@ export default async function Launcher({ searchParams }: { searchParams: Search 
                   <button>{status ? 'Give me access' : 'Start free trial'}</button>
                 </form>
               ) : (
-                <p>{status === 'suspended' ? 'Suspended.' : 'No access. Ask your organization admin.'}</p>
+                <p>{!verified ? 'Available once your organization is verified.' : status === 'suspended' ? 'Suspended.' : 'No access. Ask your organization admin.'}</p>
               )}
             </li>
           );

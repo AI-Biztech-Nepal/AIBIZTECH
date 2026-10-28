@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { createClient, getContext } from '@/lib/supabase';
 import { safeNext } from '@/lib/safe-next';
+import { FIELDS, validateDetails, validatePhoto, type Details } from '@/lib/org-details';
 
 const str = (f: FormData, k: string) => String(f.get(k) ?? '').trim();
 const fail = (path: string, message: string): never => redirect(`${path}?error=${encodeURIComponent(message)}`);
@@ -57,12 +58,34 @@ export async function resetPassword(form: FormData) {
 }
 
 export async function createOrganization(form: FormData) {
-  const name = str(form, 'name');
-  if (!name) fail('/onboarding', 'Enter your organization name.');
-  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'org';
+  const v = Object.fromEntries(FIELDS.map((f) => [f, str(form, f)])) as Details;
+  const problem = validateDetails(v);
+  if (problem) fail('/onboarding', problem);
+  const photo = form.get('pan_photo');
+  const file = photo instanceof File && photo.size > 0 ? photo : null;
+  const photoProblem = file && validatePhoto(file);
+  if (photoProblem) fail('/onboarding', photoProblem);
+
+  const slug = v.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'org';
   const supabase = await createClient();
-  const { error } = await supabase.schema('core').rpc('create_organization', { p_name: name, p_slug: slug });
-  if (error) fail('/onboarding', error.code === '23505' ? 'That name is already taken. Try another.' : error.message);
+  const { data: orgId, error } = await supabase.schema('core').rpc('create_organization', {
+    p_name: v.name, p_slug: slug, p_address: v.address, p_phone: v.phone, p_email: v.email, p_pan_no: v.pan_no,
+    p_owner_name: v.owner_name, p_owner_address: v.owner_address, p_owner_phone: v.owner_phone, p_owner_email: v.owner_email,
+  });
+  if (error) {
+    if (error.code !== '23505') fail('/onboarding', error.message);
+    fail('/onboarding', error.message.includes('pan_no') ? 'An organization with this PAN is already registered.' : 'That name is already taken. Try another.');
+  }
+
+  // The organization exists by now; a failed photo upload must not lose it, so the owner can add the photo later
+  if (file) {
+    const path = `${orgId}/pan.${file.type.split('/')[1]}`;
+    const { error: uploadError } = await supabase.storage.from('pan-cards').upload(path, file, { contentType: file.type, upsert: true });
+    const { error: linkError } = uploadError
+      ? { error: uploadError }
+      : await supabase.schema('core').from('organizations').update({ pan_photo_path: path }).eq('id', orgId);
+    if (linkError) fail('/', 'Your organization was created, but the PAN photo could not be saved. You can add it later.');
+  }
   redirect('/');
 }
 
@@ -78,6 +101,7 @@ export async function switchOrg(form: FormData) {
 export async function startTrial(form: FormData) {
   const { supabase, ctx } = await getContext();
   const org_id = str(form, 'org_id');
+  if (ctx!.orgs.find((o) => o.id === org_id)?.verification_status !== 'verified') fail('/', 'Your organization must be verified before you can start a service.');
   const service_key = str(form, 'service_key');
   const core = supabase.schema('core');
   if (!str(form, 'enabled')) {

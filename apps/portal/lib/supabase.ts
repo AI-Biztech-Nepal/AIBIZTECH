@@ -25,7 +25,7 @@ export async function createClient() {
   });
 }
 
-export type Org = { id: string; name: string; org_role: 'owner' | 'admin' | 'member'; services: Record<string, string> };
+export type Org = { id: string; name: string; org_role: 'owner' | 'admin' | 'member'; verification_status: 'pending' | 'verified' | 'rejected'; verification_note: string | null; services: Record<string, string> };
 export type Context = { user_id: string; full_name: string | null; active_org_id: string | null; orgs: Org[] };
 
 export async function getContext() {
