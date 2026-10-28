@@ -4,4 +4,4 @@ export function Notice({ error, message }: { error?: string; message?: string })
   return null;
 }
 
-export type Search = Promise<{ error?: string; message?: string; next?: string; denied?: string }>;
+export type Search = Promise<{ error?: string; message?: string; next?: string; denied?: string; invite?: string }>;

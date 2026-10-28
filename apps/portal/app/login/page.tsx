@@ -14,7 +14,7 @@ export default async function Login({ searchParams }: { searchParams: Search }) 
         <label>Password<input name="password" type="password" autoComplete="new-password" required /></label>
         <button>Sign in</button>
       </form>
-      <p><Link href="/forgot-password">Forgot password?</Link> · <Link href="/signup">Create an account</Link></p>
+      <p><Link href="/forgot-password">Forgot password?</Link> · <Link href={next ? `/signup?next=${encodeURIComponent(next)}` : '/signup'}>Create an account</Link></p>
     </main>
   );
 }

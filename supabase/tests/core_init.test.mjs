@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
 
 // The storage migration needs Supabase's storage schema, which this stub does not have
-const migration = ['20261027000000_core_init', '20261028000000_org_verification', '20261028000200_notifications', '20261028000300_trials']
+const migration = ['20261027000000_core_init', '20261028000000_org_verification', '20261028000200_notifications', '20261028000300_trials', '20261028000400_members', '20261028000500_invitations']
   .map((f) => readFileSync(new URL(`../migrations/${f}.sql`, import.meta.url), 'utf8')).join('\n');
 
 // shortcut: minimal stand-in for Supabase's auth schema, switch to `supabase test db` once the CLI is in use
@@ -227,4 +227,96 @@ test('trial notices appear once, 3 days out and again when it ends', async () =>
 test('admins cannot remove a service to restart its trial', async () => {
   const { affectedRows } = await as(OWNER, `delete from core.org_services where org_id = $1`, [org]);
   assert.equal(affectedRows, 0);
+});
+
+test('org_members lists the team with emails for admins only', async () => {
+  const { rows } = await as(OWNER, `select * from core.org_members($1)`, [org]);
+  assert.equal(rows.length, 1);
+  assert.deepEqual([rows[0].email, rows[0].org_role, rows[0].status, rows[0].service_roles], ['owner@x.np', 'owner', 'active', { finance: 'admin' }]);
+  assert.equal((await as(OUTSIDER, `select * from core.org_members($1)`, [org])).rows.length, 0);
+  // a plain member sees nothing either
+  await asCommit(OWNER, `insert into core.memberships values ($1, $2, 'member')`, [org, OUTSIDER]);
+  try {
+    assert.equal((await as(OUTSIDER, `select * from core.org_members($1)`, [org])).rows.length, 0);
+  } finally {
+    await asCommit(OWNER, `delete from core.memberships where user_id = $1`, [OUTSIDER]);
+  }
+});
+
+test('the last active owner cannot be demoted, disabled or removed', async () => {
+  await assert.rejects(as(OWNER, `update core.memberships set org_role = 'admin' where user_id = $1`, [OWNER]), /keep an active owner/);
+  await assert.rejects(as(OWNER, `update core.memberships set status = 'disabled' where user_id = $1`, [OWNER]), /keep an active owner/);
+  await assert.rejects(as(OWNER, `delete from core.memberships where user_id = $1`, [OWNER]), /keep an active owner/);
+  // with a second owner in place, the first may step down
+  await db.exec('begin');
+  await db.query(`insert into core.memberships values ($1, $2, 'owner')`, [org, OUTSIDER]);
+  await db.query(`update core.memberships set org_role = 'admin' where user_id = $1`, [OWNER]);
+  const { rows } = await db.query(`select org_role from core.memberships where user_id = $1`, [OWNER]);
+  await db.exec('rollback');
+  assert.equal(rows[0].org_role, 'admin');
+});
+
+test('deleting a whole organization still works', async () => {
+  const { rows: [{ org: temp }] } = await asCommit(OUTSIDER, create(), details.map((d, i) => (i === 5 ? '555666777' : i === 1 ? 'temp-co' : d)));
+  await db.exec(`delete from core.organizations where id = '${temp}'`);
+  const { rows } = await db.query(`select 1 from core.memberships where org_id = $1`, [temp]);
+  assert.equal(rows.length, 0);
+});
+
+const INVITEE = '00000000-0000-0000-0000-00000000000c';
+const invite = (user, email, role = 'member', roles = '{}') =>
+  asCommit(user, `select core.create_invitation($1, $2, $3, $4::jsonb) as id`, [org, email, role, roles]);
+
+test('only admins create valid invitations, and only through the function', async () => {
+  await assert.rejects(invite(OUTSIDER, 'x@x.np'), /only owners and admins/);
+  await assert.rejects(invite(OWNER, 'not-an-email'), /valid email/);
+  await assert.rejects(invite(OWNER, 'x@x.np', 'owner'), /admin or member/);
+  await assert.rejects(invite(OWNER, 'owner@x.np'), /already a member/);
+  await assert.rejects(invite(OWNER, 'x@x.np', 'member', '{"stock":"admin"}'), /invalid role for service stock/);
+  await assert.rejects(invite(OWNER, 'x@x.np', 'member', '{"finance":"wizard"}'), /invalid role for service finance/);
+  await assert.rejects(as(OWNER, `insert into core.invitations (org_id, email) values ($1, 'x@x.np')`, [org]), /permission denied/);
+});
+
+test('a new invitation replaces the open one for the same email', async () => {
+  await invite(OWNER, 'Dup@X.np ');
+  await invite(OWNER, 'dup@x.np');
+  const { rows } = await as(OWNER, `select email from core.invitations where org_id = $1 and email like 'dup%'`, [org]);
+  assert.deepEqual(rows, [{ email: 'dup@x.np' }]);
+  assert.equal((await as(OUTSIDER, `select * from core.invitations`)).rows.length, 0);
+});
+
+test('invitee previews, accepts once, and gets membership, roles and the active org', async () => {
+  await db.exec(`insert into auth.users (id, email) values ('${INVITEE}', 'new@x.np')`);
+  const { rows: [{ id }] } = await invite(OWNER, 'new@x.np', 'member', '{"finance":"accountant"}');
+
+  assert.deepEqual((await as(INVITEE, `select * from core.invitation_preview($1)`, [id])).rows,
+    [{ org_name: 'Acme', email: 'new@x.np', org_role: 'member', state: 'open' }]);
+  await db.exec('begin; set local role authenticated;'); // signed out: sees nothing
+  assert.equal((await db.query(`select * from core.invitation_preview($1)`, [id])).rows.length, 0);
+  await db.exec('rollback');
+
+  await assert.rejects(asCommit(OUTSIDER, `select core.accept_invitation($1)`, [id]), /meant for a different email/);
+  const { rows: [{ accept_invitation }] } = await asCommit(INVITEE, `select core.accept_invitation($1)`, [id]);
+  assert.equal(accept_invitation, org);
+
+  const m = await as(INVITEE, `select org_role from core.memberships where user_id = $1`, [INVITEE]);
+  assert.equal(m.rows[0].org_role, 'member');
+  const sr = await as(INVITEE, `select service_key, role from core.service_roles where user_id = $1`, [INVITEE]);
+  assert.deepEqual(sr.rows, [{ service_key: 'finance', role: 'accountant' }]);
+  const { rows: [{ ctx }] } = await as(INVITEE, `select core.my_context() as ctx`);
+  assert.equal(ctx.active_org_id, org);
+  assert.equal((await as(INVITEE, `select state from core.invitation_preview($1)`, [id])).rows[0].state, 'accepted');
+
+  await assert.rejects(asCommit(INVITEE, `select core.accept_invitation($1)`, [id]), /already belong|already used/);
+});
+
+test('expired invitations and people who already belong to an organization cannot accept', async () => {
+  const { rows: [{ id: late }] } = await invite(OWNER, 'out@x.np');
+  await db.exec(`update core.invitations set expires_at = now() - interval '1 day' where id = '${late}'`);
+  assert.equal((await as(OUTSIDER, `select state from core.invitation_preview($1)`, [late])).rows[0].state, 'expired');
+  await assert.rejects(asCommit(OUTSIDER, `select core.accept_invitation($1)`, [late]), /expired/);
+
+  const { rows: [{ id: own }] } = await db.query(
+    `insert into core.invitations (org_id, email) values ($1, 'owner@x.np') returning id`, [org]);
+  await assert.rejects(asCommit(OWNER, `select core.accept_invitation($1)`, [own]), /already belong/);
 });

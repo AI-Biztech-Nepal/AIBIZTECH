@@ -121,3 +121,14 @@ dd { margin: 0; overflow-wrap: anywhere; }
 .notes span { color: var(--muted); font-size: 0.9rem; }
 .notes time { color: var(--muted); font-size: 0.8rem; }
 .tile dl { margin-top: 16px; }
+
+.members { list-style: none; padding: 0; display: grid; gap: 16px; }
+.members p { color: var(--muted); margin: 0 0 12px; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 12px; }
+label.check { display: flex; align-items: center; gap: 8px; align-self: end; }
+input[readonly] { opacity: 0.7; }
+
+.copy { display: flex; gap: 8px; }
+.copy input { flex: 1; min-width: 0; }
+h2.spaced { margin-top: 24px; }
+main.wide > .tile { margin-bottom: 16px; }

@@ -24,15 +24,16 @@ export async function signIn(form: FormData) {
 
 export async function signUp(form: FormData) {
   const supabase = await createClient();
+  const next = safeNext(str(form, 'next')); // an invitation link survives sign-up
   const { data, error } = await supabase.auth.signUp({
     email: str(form, 'email'),
     password: String(form.get('password')),
-    options: { emailRedirectTo: `${await origin()}/auth/callback`, data: { full_name: str(form, 'full_name') } },
+    options: { emailRedirectTo: `${await origin()}/auth/callback?next=${encodeURIComponent(next)}`, data: { full_name: str(form, 'full_name') } },
   });
   if (error) fail('/signup', error.message);
   // Email confirmation on: no session until the link is clicked
   if (!data.session) redirect('/login?message=' + encodeURIComponent('Check your email to confirm your account.'));
-  redirect('/');
+  redirect(next);
 }
 
 export async function signOut() {
@@ -131,4 +132,65 @@ export async function startTrial(form: FormData) {
   const { error: roleError } = await core.from('service_roles').insert({ org_id, user_id: ctx!.user_id, service_key, role: 'admin' });
   if (roleError) fail('/', roleError.message);
   revalidatePath('/');
+}
+
+// Owner/admin edits one member: org role, active state and a role per service. RLS and triggers enforce who may do what.
+export async function saveMember(form: FormData) {
+  const { supabase, ctx } = await getContext();
+  const core = supabase.schema('core');
+  const org_id = str(form, 'org_id');
+  const user_id = str(form, 'user_id');
+
+  // Your own org role and active state are not editable here, so you cannot lock yourself out
+  if (form.get('manage') && user_id !== ctx!.user_id) {
+    const org_role = str(form, 'org_role');
+    const patch = { status: form.get('active') ? 'active' : 'disabled', ...(org_role === 'admin' || org_role === 'member' ? { org_role } : {}) };
+    const { data, error } = await core.from('memberships').update(patch).eq('org_id', org_id).eq('user_id', user_id).select('user_id');
+    if (error) fail('/team', error.message);
+    if (!data?.length) fail('/team', 'You are not allowed to change this member.');
+  }
+
+  for (const [name, value] of form.entries()) {
+    if (!name.startsWith('role_')) continue;
+    const service_key = name.slice(5);
+    const role = String(value);
+    const { error } = role
+      ? await core.from('service_roles').upsert({ org_id, user_id, service_key, role })
+      : await core.from('service_roles').delete().eq('org_id', org_id).eq('user_id', user_id).eq('service_key', service_key);
+    if (error) fail('/team', error.message);
+  }
+  revalidatePath('/');
+  redirect('/team?message=' + encodeURIComponent('Saved.'));
+}
+
+// Owner/admin invites someone by email; the result is a link to hand over (email delivery comes later)
+export async function createInvite(form: FormData) {
+  const { supabase } = await getContext();
+  const service_roles: Record<string, string> = {};
+  for (const [name, value] of form.entries()) {
+    if (name.startsWith('role_') && value) service_roles[name.slice(5)] = String(value);
+  }
+  const { data, error } = await supabase.schema('core').rpc('create_invitation', {
+    p_org: str(form, 'org_id'), p_email: str(form, 'email'), p_org_role: str(form, 'org_role'), p_service_roles: service_roles,
+  });
+  if (error) fail('/team', error.message);
+  redirect('/team?invite=' + data);
+}
+
+export async function revokeInvite(form: FormData) {
+  const { supabase } = await getContext();
+  const { error } = await supabase.schema('core').from('invitations').delete().eq('id', str(form, 'id'));
+  if (error) fail('/team', error.message);
+  redirect('/team?message=' + encodeURIComponent('Invitation revoked.'));
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export async function acceptInvitation(form: FormData) {
+  const id = str(form, 'id');
+  if (!UUID.test(id)) fail('/', 'That invitation link is not valid.');
+  const { supabase } = await getContext();
+  const { error } = await supabase.schema('core').rpc('accept_invitation', { p_id: id });
+  if (error) fail(`/invite/${id}`, error.message);
+  redirect('/');
 }

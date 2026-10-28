@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getContext } from '@/lib/supabase';
 import { markNotificationsRead, signOut, startTrial, updateProfile } from './actions';
@@ -35,6 +36,7 @@ export default async function Launcher({ searchParams }: { searchParams: Search 
       <header>
         <strong>AI Biz Tech Nepal</strong>
         <span>{org.name}</span>
+        {isAdmin && <Link href="/team">Team</Link>}
         <form action={signOut} className="inline"><button className="link">Sign out</button></form>
       </header>
 
