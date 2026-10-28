@@ -5,7 +5,7 @@ import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { createClient, getContext } from '@/lib/supabase';
 import { safeNext } from '@/lib/safe-next';
-import { FIELDS, validateDetails, validatePhoto, type Details } from '@/lib/org-details';
+import { FIELDS, PHONE, validateDetails, validatePhoto, type Details } from '@/lib/org-details';
 
 const str = (f: FormData, k: string) => String(f.get(k) ?? '').trim();
 const fail = (path: string, message: string): never => redirect(`${path}?error=${encodeURIComponent(message)}`);
@@ -89,11 +89,31 @@ export async function createOrganization(form: FormData) {
   redirect('/');
 }
 
-export async function switchOrg(form: FormData) {
+export async function updateProfile(form: FormData) {
   const { supabase, ctx } = await getContext();
+  const full_name = str(form, 'full_name');
+  const phone = str(form, 'phone');
+  if (!full_name) fail('/', 'Enter your name.');
+  if (phone && !PHONE.test(phone)) fail('/', 'Enter a valid phone number (digits, optional + and dashes).');
   const { error } = await supabase.schema('core').from('profiles')
-    .update({ active_org_id: str(form, 'org_id') }).eq('user_id', ctx!.user_id);
+    .update({ full_name, phone: phone || null }).eq('user_id', ctx!.user_id);
   if (error) fail('/', error.message);
+  redirect('/?message=' + encodeURIComponent('Profile saved.'));
+}
+
+export async function markNotificationsRead(form: FormData) {
+  const { supabase, ctx } = await getContext();
+  const core = supabase.schema('core');
+  const [{ data: all }, { data: read }] = await Promise.all([
+    core.from('notifications').select('id').eq('org_id', str(form, 'org_id')),
+    core.from('notification_reads').select('notification_id'),
+  ]);
+  const seen = new Set((read ?? []).map((r) => r.notification_id));
+  const rows = (all ?? []).filter((n) => !seen.has(n.id)).map((n) => ({ notification_id: n.id, user_id: ctx!.user_id }));
+  if (rows.length) {
+    const { error } = await core.from('notification_reads').insert(rows);
+    if (error) fail('/', error.message);
+  }
   revalidatePath('/');
 }
 

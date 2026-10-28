@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
 
 // The storage migration needs Supabase's storage schema, which this stub does not have
-const migration = ['20261027000000_core_init', '20261028000000_org_verification']
+const migration = ['20261027000000_core_init', '20261028000000_org_verification', '20261028000200_notifications', '20261028000300_trials']
   .map((f) => readFileSync(new URL(`../migrations/${f}.sql`, import.meta.url), 'utf8')).join('\n');
 
 // shortcut: minimal stand-in for Supabase's auth schema, switch to `supabase test db` once the CLI is in use
@@ -159,4 +159,72 @@ test('changing the PAN sends a verified organization back to pending', async () 
   const { rows } = await db.query(`select verification_status from core.organizations where id = $1`, [org]);
   await db.exec('rollback');
   assert.equal(rows[0].verification_status, 'pending');
+});
+
+test('subscription and verification events notify owners and admins, who can mark them read', async () => {
+  const titles = async (u) => (await as(u, `select title from core.notifications order by id`)).rows.map((r) => r.title);
+  assert.deepEqual(await titles(OWNER), ['Verification pending', 'Organization verified', 'Finance trial started']);
+  assert.deepEqual(await titles(OUTSIDER), []);
+
+  const { rows: [{ id }] } = await as(OWNER, `select id from core.notifications order by id limit 1`);
+  await asCommit(OWNER, `insert into core.notification_reads values ($1, $2)`, [id, OWNER]);
+  assert.equal((await as(OWNER, `select * from core.notification_reads`)).rows.length, 1);
+  assert.equal((await as(OUTSIDER, `select * from core.notification_reads`)).rows.length, 0);
+  // not for someone else, and not for a notification you cannot see
+  await assert.rejects(as(OWNER, `insert into core.notification_reads values ($1, $2)`, [id, OUTSIDER]));
+  await assert.rejects(as(OUTSIDER, `insert into core.notification_reads values ($1, $2)`, [id, OUTSIDER]));
+  await assert.rejects(as(OWNER, `insert into core.notifications (org_id, kind, title) values ($1, 'x', 'forged')`, [org]));
+});
+
+test('suspending a service notifies the organization', async () => {
+  await db.exec('begin');
+  await db.query(`update core.org_services set status = 'suspended' where org_id = $1`, [org]);
+  const { rows } = await db.query(`select title from core.notifications where org_id = $1 order by id desc limit 1`, [org]);
+  await db.exec('rollback');
+  assert.equal(rows[0].title, 'Finance has been suspended');
+});
+
+// Runs sql as superuser inside a rolled-back transaction after changing the finance trial
+async function withTrial(endsInterval, fn) {
+  await db.exec('begin');
+  try {
+    await db.query(`update core.org_services set trial_ends_at = now() + $1::interval where org_id = $2`, [endsInterval, org]);
+    await db.exec(`set local role authenticated; select set_config('request.jwt.claim.sub', '${OWNER}', true);`);
+    return await fn();
+  } finally {
+    await db.exec('rollback');
+  }
+}
+
+test('an expired trial removes access, a running one keeps it', async () => {
+  const q = `select core.has_service_access($1, 'finance') a, (core.my_context() -> 'orgs' -> 0 -> 'services') s`;
+  const live = await withTrial('2 days', () => db.query(q, [org]));
+  assert.deepEqual([live.rows[0].a, live.rows[0].s], [true, { finance: 'admin' }]);
+  const gone = await withTrial('-1 hour', () => db.query(q, [org]));
+  assert.deepEqual([gone.rows[0].a, gone.rows[0].s], [false, {}]);
+});
+
+test('trial notices appear once, 3 days out and again when it ends', async () => {
+  const run = () => db.query(`select core.notify_trials($1)`, [org]);
+  const last = () => db.query(`select title from core.notifications where org_id = $1 and dedupe_key is not null order by id`, [org]);
+  const soon = await withTrial('2 days', async () => { await run(); await run(); return last(); });
+  assert.deepEqual(soon.rows.map((r) => r.title), ['Finance trial ends in 2 days']);
+  const early = await withTrial('10 days', async () => { await run(); return last(); });
+  assert.equal(early.rows.length, 0);
+  const ended = await withTrial('-1 hour', async () => { await run(); return last(); });
+  assert.deepEqual(ended.rows.map((r) => r.title), ['Finance trial has ended']);
+  // someone outside the org triggers nothing
+  await db.exec('begin');
+  await db.query(`update core.org_services set trial_ends_at = now() + interval '1 day'`);
+  await db.exec(`set local role authenticated; select set_config('request.jwt.claim.sub', '${OUTSIDER}', true);`);
+  await db.query(`select core.notify_trials($1)`, [org]);
+  await db.exec('reset role');
+  const { rows } = await db.query(`select count(*)::int n from core.notifications where dedupe_key is not null`);
+  await db.exec('rollback');
+  assert.equal(rows[0].n, 0);
+});
+
+test('admins cannot remove a service to restart its trial', async () => {
+  const { affectedRows } = await as(OWNER, `delete from core.org_services where org_id = $1`, [org]);
+  assert.equal(affectedRows, 0);
 });
