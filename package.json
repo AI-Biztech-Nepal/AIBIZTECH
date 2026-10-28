@@ -10,6 +10,6 @@
     "supabase": "^2.122.0"
   },
   "scripts": {
-    "test": "node --test supabase/tests/*.test.mjs"
+    "test": "node --test supabase/tests/*.test.mjs && npm test -w @ai-biztech-nepal/portal"
   }
 }
