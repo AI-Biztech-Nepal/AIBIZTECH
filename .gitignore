@@ -13,3 +13,7 @@ supabase/.temp/
 .DS_Store
 next-env.d.ts
 *.tsbuildinfo
+
+.env.migrate
+backups/
+scripts/migrate/node_modules
