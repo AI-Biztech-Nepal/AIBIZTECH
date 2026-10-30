@@ -6,6 +6,8 @@ const PUBLIC = ['/login', '/signup', '/forgot-password', '/auth/callback'];
 
 // Refreshes the Supabase session cookie on every request and sends signed-out users to /login
 export async function proxy(request: NextRequest) {
+  // Public pages need no session; skipping the auth round trip keeps /login fast
+  if (PUBLIC.some((p) => request.nextUrl.pathname.startsWith(p))) return NextResponse.next();
   let response = NextResponse.next({ request });
   const supabase = createServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, {
     cookieOptions,
@@ -21,7 +23,7 @@ export async function proxy(request: NextRequest) {
 
   const { data } = await supabase.auth.getClaims();
   const path = request.nextUrl.pathname;
-  if (!data?.claims && !PUBLIC.some((p) => path.startsWith(p))) {
+  if (!data?.claims) {
     const url = request.nextUrl.clone();
     url.pathname = '/login';
     url.search = `?next=${encodeURIComponent(path + request.nextUrl.search)}`;

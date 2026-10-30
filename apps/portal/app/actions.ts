@@ -36,6 +36,13 @@ export async function signUp(form: FormData) {
   redirect(next);
 }
 
+// The database only lets a person pick an org they belong to (core.profiles_update)
+export async function switchOrganization(form: FormData) {
+  const { supabase, ctx } = await getContext();
+  if (ctx) await supabase.schema('core').from('profiles').update({ active_org_id: str(form, 'org') }).eq('user_id', ctx.user_id);
+  redirect('/');
+}
+
 export async function signOut() {
   const supabase = await createClient();
   await supabase.auth.signOut();

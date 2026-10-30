@@ -29,7 +29,7 @@ export default async function Team({ searchParams }: { searchParams: Search }) {
 
   return (
     <main className="wide">
-      <Header org={org} page="team" />
+      <Header org={org} orgs={ctx.orgs} page="team" />
 
       <h1>Team</h1>
       <p>Choose each person's role in your organization and in each service you have enabled.</p>

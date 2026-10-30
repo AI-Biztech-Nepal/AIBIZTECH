@@ -50,7 +50,7 @@ export default async function Admin({ searchParams }: { searchParams: Search }) 
 
   return (
     <main className="wide">
-      <Header org={org} page="admin" />
+      <Header org={org} orgs={ctx.orgs} page="admin" />
       <h1>Admin</h1>
       <p>Everything about {org.name} in one place.</p>
       <Notice error={error} message={message} />
