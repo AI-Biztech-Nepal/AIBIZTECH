@@ -1,0 +1,132 @@
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Instrument+Sans:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  margin: 0;
+  font-family: 'Instrument Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  background: #F6F4EF;
+  font-variant-numeric: tabular-nums;
+}
+
+::selection { background: #a7e0d6; color: #0f3f3b; }
+:focus-visible { outline: 2px solid #0f766e; outline-offset: 2px; }
+input, textarea { caret-color: #0f766e; }
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Bricolage Grotesque', 'Instrument Sans', sans-serif;
+  letter-spacing: -0.01em;
+}
+
+@layer base {
+  :root {
+    --background: 40 24% 95%;
+    --foreground: 222 47% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+    --primary: 175 77% 26%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 214 32% 91%;
+    --secondary-foreground: 222 47% 11%;
+    --muted: 214 32% 91%;
+    --muted-foreground: 215 16% 47%;
+    --accent: 214 32% 91%;
+    --accent-foreground: 222 47% 11%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 175 77% 26%;
+    --radius: 0.5rem;
+  }
+}
+
+@layer base {
+  * { @apply border-border; }
+  body { @apply bg-background text-foreground; }
+}
+
+/* Sidebar scrollbar */
+.sidebar-nav::-webkit-scrollbar { width: 4px; }
+.sidebar-nav::-webkit-scrollbar-track { background: transparent; }
+.sidebar-nav::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
+
+/* Always-visible sliders for every scrollable area (tables, modals, panels) so
+   horizontal/vertical overflow is obvious instead of relying on OS auto-hide bars. */
+.overflow-x-auto, .overflow-y-auto, .overflow-auto {
+  scrollbar-width: thin;
+  scrollbar-color: #D6D3D1 transparent;
+}
+.overflow-x-auto::-webkit-scrollbar, .overflow-y-auto::-webkit-scrollbar, .overflow-auto::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.overflow-x-auto::-webkit-scrollbar-track, .overflow-y-auto::-webkit-scrollbar-track, .overflow-auto::-webkit-scrollbar-track {
+  background: transparent;
+}
+.overflow-x-auto::-webkit-scrollbar-thumb, .overflow-y-auto::-webkit-scrollbar-thumb, .overflow-auto::-webkit-scrollbar-thumb {
+  background: #D6D3D1;
+  border-radius: 4px;
+}
+.overflow-x-auto::-webkit-scrollbar-thumb:hover, .overflow-y-auto::-webkit-scrollbar-thumb:hover, .overflow-auto::-webkit-scrollbar-thumb:hover {
+  background: #A8A29E;
+}
+
+/* App-shell height: 100vh on mobile browsers is taller than the visible area (the URL bar
+   overlaps it), so prefer dynamic viewport units where supported. */
+.h-app { height: 100vh; height: 100dvh; }
+/* Notch / status-bar / gesture-bar padding; env() is 0 where there is no inset. */
+.pt-safe { padding-top: env(safe-area-inset-top); }
+.pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+.pl-safe { padding-left: env(safe-area-inset-left); }
+.pr-safe { padding-right: env(safe-area-inset-right); }
+
+/* Table hover */
+.table-row-hover:hover { background: #FAF8F4; }
+
+/* iOS Safari auto-zooms the page when a focused input's font-size is under
+   16px. Our compact inputs use text-sm (14px), which as a Tailwind utility
+   class outranks a plain element selector on specificity, so !important is
+   needed here to actually win on mobile viewports. */
+@media screen and (max-width: 640px) {
+  input, select, textarea {
+    font-size: 16px !important;
+  }
+}
+
+/* Print-scoped content: only .print-area is shown when printing */
+@media print {
+  body * { visibility: hidden; }
+  .print-area, .print-area * { visibility: visible; }
+  .print-area { position: absolute; top: 0; left: 0; width: 100%; }
+  .no-print { display: none !important; }
+}
+
+/* Animate fade in */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in { animation: fadeInUp 0.3s ease-out; }
+
+@keyframes slideIn { from { transform: translateX(28px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* Motion: one calm page entrance per route, a stagger for dashboard cards, nothing else.
+   Exponential ease-out; fully off for users who ask for reduced motion. */
+:root { --ease-out: cubic-bezier(0.16, 1, 0.3, 1); }
+.route-enter { animation: routeIn 0.35s var(--ease-out) both; }
+@keyframes routeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.stagger > * { animation: routeIn 0.5s var(--ease-out) both; }
+.stagger > *:nth-child(2) { animation-delay: 40ms; } .stagger > *:nth-child(3) { animation-delay: 80ms; }
+.stagger > *:nth-child(4) { animation-delay: 120ms; } .stagger > *:nth-child(5) { animation-delay: 160ms; }
+.stagger > *:nth-child(6) { animation-delay: 200ms; } .stagger > *:nth-child(n+7) { animation-delay: 240ms; }
+.animate-fade-in { animation: routeIn 0.35s var(--ease-out) both; }
+@media (prefers-reduced-motion: reduce) {
+  .route-enter, .stagger > *, .animate-fade-in { animation: none !important; }
+  * { transition-duration: 0.01ms !important; }
+}

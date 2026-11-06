@@ -1,0 +1,1321 @@
+diff --git a/PRODUCT.md b/PRODUCT.md
+index d4c8a4d..7c4fb8b 100644
+--- a/PRODUCT.md
++++ b/PRODUCT.md
+@@ -42,7 +42,7 @@ Built around how a Nepali dealership actually runs: Bikram Sambat dates first, N
+ 
+ ## Brand Commitments
+ 
+-- Keep the current look: light theme, dark slate sidebar, blue primary (#2563EB), Manrope for headings/figures, slate neutrals, status pills. Restructuring pages is fine; restyling the app is not.
++- Look (revamped Nov 2026): warm paper canvas (#F6F4EF), warm-black sidebar, deep marine teal accent (#0F766E, the old `blue-*` scale is remapped to it in tailwind.config.js), Bricolage Grotesque for headings/figures, Instrument Sans for body. One calm page entrance per route and a dashboard card stagger; no other ambient motion.
+ - Nepali (BS) dates are primary; AD shown on hover.
+ - Currency always NPR via the shared formatter.
+ 
+@@ -53,7 +53,7 @@ Built around how a Nepali dealership actually runs: Bikram Sambat dates first, N
+ 
+ ## Product Principles
+ 
+-1. Familiar over clever: keep existing page layouts and extend them in place rather than redesigning around a new headline metric.
++1. Familiar over clever: keep existing page layouts and extend them in place. The platform is a catalogue of services (see `frontend/src/utils/modules.js`), not only a dealership tool: each company switches on the services it needs via the first-login business builder (`/welcome`), and the Dashboard summarises every enabled service.
+ 2. One place per concept: a sale and its sold vehicle are one record; every party (customer, vendor, staff) lives in the Ledger. The Ledger is a book of people (A–Z, open an entry to read it), not a debt tracker — balances are shown, never the headline.
+ 3. Fast on a phone between customers: the key number and the next action fit the first screen.
+ 4. Numbers must reconcile: the same figure never disagrees between two pages.
+diff --git a/backend/schema.sql b/backend/schema.sql
+index 97ee008..ad402a6 100644
+--- a/backend/schema.sql
++++ b/backend/schema.sql
+@@ -654,6 +654,7 @@ CREATE TABLE IF NOT EXISTS settings (
+   hero_image_url VARCHAR(1000),
+   service_image_url VARCHAR(1000),
+   warranty_days_default INT,
++  business_profile JSON,
+   CONSTRAINT fk_settings_company FOREIGN KEY (company_id) REFERENCES companies(id)
+ ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+ 
+diff --git a/backend/server.py b/backend/server.py
+index 6e411de..632bcec 100644
+--- a/backend/server.py
++++ b/backend/server.py
+@@ -1928,7 +1928,8 @@ async def signup(request: Request, req: SignUpRequest):
+     # A settings row is looked up purely by company_id (see get_settings/update_settings) --
+     # "id" here is just an arbitrary row id, not a lookup key.
+     await db.settings.insert_one({"id": str(uuid.uuid4()), "company_id": company_id,
+-                                   "business_name": req.company_name})
++                                   "business_name": req.company_name,
++                                   "business_profile": {"onboarded": False}})
+     verify_token = await _create_auth_token(user["id"], "verify_email", ttl_minutes=24 * 60)
+     link = f"{FRONTEND_URL}/verify-email?token={verify_token}"
+     await _send_email(email, "Verify your email — Auto Stock Manager",
+@@ -5797,6 +5798,25 @@ async def update_settings(settings: SettingsUpdate, cu: dict = Depends(admin_onl
+     asyncio.create_task(_notify_storefront())
+     return await db.settings.find_one({}, {"_id": 0})
+ 
++# ── BUSINESS PROFILE (onboarding builder answers + the modules switched on) ──
++class BusinessProfile(BaseModel):
++    business_type: Optional[str] = Field(None, max_length=60)
++    answers: dict = {}
++    modules: List[str] = Field(default_factory=list, max_length=40)
++
++@api_router.get("/business-profile")
++async def get_business_profile(cu: dict = Depends(get_current_user)):
++    # Readable by every role: the nav hides modules the company has not switched on.
++    # No profile at all = a company that existed before the builder: nothing is hidden.
++    s = await db.settings.find_one({}, {"_id": 0, "business_profile": 1}) or {}
++    return s.get("business_profile") or {"onboarded": True, "legacy": True}
++
++@api_router.put("/business-profile")
++async def put_business_profile(p: BusinessProfile, cu: dict = Depends(admin_only)):
++    prof = {**p.model_dump(), "onboarded": True, "completed_at": datetime.now(timezone.utc).isoformat()}
++    await db.settings.update_one({}, {"$set": {"business_profile": prof}}, upsert=True)
++    return prof
++
+ # ── STARTUP ───────────────────────────────────────────────────────────
+ @app.on_event("startup")
+ async def startup():
+@@ -5961,6 +5981,7 @@ async def _run_startup_tasks():
+             ("vehicles", "sanakhat_cost", "DOUBLE"),
+             ("vehicles", "purchase_due", "DOUBLE"),
+             ("settings", "warranty_days_default", "INT"),
++            ("settings", "business_profile", "JSON"),
+             ("vehicle_photos", "sort_order", "INT"),
+             ("vehicle_photos", "storage_path", "VARCHAR(500)"),
+             ("legal_documents", "storage_path", "VARCHAR(500)"),
+diff --git a/backend/sqldb.py b/backend/sqldb.py
+index f97595b..dbd8f20 100644
+--- a/backend/sqldb.py
++++ b/backend/sqldb.py
+@@ -112,7 +112,8 @@ TABLES = {
+                            # when staff first opened the lead in the Leads screen (drives the new-lead badge)
+                            "seen_at"}, "json_cols": {"images"}},
+     "settings": {"columns": {"id", "company_id", "logo_url", "business_name", "contact_phone", "contact_email", "address",
+-                              "hero_image_url", "service_image_url", "warranty_days_default"}},
++                              "hero_image_url", "service_image_url", "warranty_days_default", "business_profile"},
++                 "json_cols": {"business_profile"}},
+     "sync_logs": {"columns": {"id", "company_id", "pushed_at", "count", "status", "message"}},
+     "audit_logs": {"columns": {"id", "company_id", "action", "vehicle_id", "user", "timestamp", "details"}},
+     "ai_chat_sessions": {"columns": {"id", "company_id", "messages", "updated_at"}, "json_cols": {"messages"}},
+diff --git a/frontend/src/App.js b/frontend/src/App.js
+index a93477f..9c11194 100644
+--- a/frontend/src/App.js
++++ b/frontend/src/App.js
+@@ -3,6 +3,7 @@ import { Suspense, lazy, useEffect } from "react";
+ import { BrowserRouter, Routes, Route, Navigate, useParams, useLocation } from "react-router-dom";
+ import { Toaster } from "sonner";
+ import { AuthProvider, useAuth } from "./context/AuthContext";
++import { BusinessProvider, useBusiness } from "./context/BusinessContext";
+ import { canAccessPath, ROLE_DEFAULT_PATH } from "./utils/permissions";
+ import { startUpdateChecker } from "./utils/updateChecker";
+ import Layout from "./components/Layout";
+@@ -31,6 +32,7 @@ const Sales = lazy(() => import("./pages/Sales"));
+ const SaleDetail = lazy(() => import("./pages/SaleDetail"));
+ const SoldStockDetail = lazy(() => import("./pages/SoldStockDetail"));
+ const Marketing = lazy(() => import("./pages/Marketing"));
++const Onboarding = lazy(() => import("./pages/Onboarding"));
+ const Platform = lazy(() => import("./pages/Platform"));
+ 
+ // Share, Offers and Visits now live as tabs of Marketing; keep their old addresses working
+@@ -50,7 +52,12 @@ const RouteFallback = () => (
+ 
+ const ProtectedRoute = ({ children }) => {
+   const { user, token } = useAuth();
+-  return (user && token) ? children : <Navigate to="/login" replace />;
++  const { ready, onboarded } = useBusiness();
++  if (!(user && token)) return <Navigate to="/login" replace />;
++  if (!ready) return <RouteFallback />;
++  // A new company's admin starts in the business builder, before anything else.
++  if (!onboarded && user.role === "admin") return <Navigate to="/welcome" replace />;
++  return children;
+ };
+ 
+ const PublicRoute = ({ children }) => {
+@@ -74,6 +81,14 @@ const SoldStockRedirect = () => {
+   return <Navigate to={`/sales/vehicle/${id}`} replace />;
+ };
+ 
++const WelcomeRoute = () => {
++  const { user, token } = useAuth();
++  const { ready, onboarded } = useBusiness();
++  if (!(user && token)) return <Navigate to="/login" replace />;
++  if (!ready) return <RouteFallback />;
++  return onboarded || user.role !== "admin" ? <Navigate to="/" replace /> : <Onboarding />;
++};
++
+ const HomeRoute = () => {
+   const { user } = useAuth();
+   if (user?.role && user.role !== "admin") {
+@@ -91,6 +106,7 @@ function AppRoutes() {
+         <Route path="/forgot-password" element={<PublicRoute><ForgotPassword /></PublicRoute>} />
+         <Route path="/reset-password" element={<PublicRoute><ResetPassword /></PublicRoute>} />
+         <Route path="/verify-email" element={<PublicRoute><VerifyEmail /></PublicRoute>} />
++        <Route path="/welcome" element={<WelcomeRoute />} />
+         <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
+           <Route index element={<HomeRoute />} />
+           <Route path="inventory" element={<RoleRoute path="/inventory"><Inventory /></RoleRoute>} />
+@@ -137,6 +153,7 @@ function App() {
+ 
+   return (
+     <AuthProvider>
++      <BusinessProvider>
+       {/* basename: empty/"/" for the normal root-hosted deployments (Vercel, the sslip.io
+           subdomain) -- CRA only sets PUBLIC_URL when a build is explicitly given one (e.g.
+           the raw-IP /auto-stock/ path build), so this is a no-op everywhere else. */}
+@@ -144,6 +161,7 @@ function App() {
+         <AppRoutes />
+         <Toaster richColors position="top-right" />
+       </BrowserRouter>
++      </BusinessProvider>
+     </AuthProvider>
+   );
+ }
+diff --git a/frontend/src/components/BillPrintModal.jsx b/frontend/src/components/BillPrintModal.jsx
+index 398198f..3a1946a 100644
+--- a/frontend/src/components/BillPrintModal.jsx
++++ b/frontend/src/components/BillPrintModal.jsx
+@@ -26,7 +26,7 @@ export default function BillPrintModal({ bill, vendor, onClose }) {
+         <div className="print-area overflow-y-auto p-8">
+           <div className="flex items-start justify-between border-b-2 border-slate-800 pb-4 mb-6">
+             <div>
+-              <div className="text-xl font-bold text-slate-900" style={{ fontFamily: "Manrope" }}>{user?.company_name || "Auto Stock Manager"}</div>
++              <div className="text-xl font-bold text-slate-900" style={{ fontFamily: "Bricolage Grotesque" }}>{user?.company_name || "Auto Stock Manager"}</div>
+             </div>
+             <div className="text-right">
+               <div className="text-lg font-bold uppercase tracking-wide text-slate-700">Purchase Bill</div>
+diff --git a/frontend/src/components/BookingReceipt.jsx b/frontend/src/components/BookingReceipt.jsx
+index 0975f5f..544c9fb 100644
+--- a/frontend/src/components/BookingReceipt.jsx
++++ b/frontend/src/components/BookingReceipt.jsx
+@@ -20,7 +20,7 @@ const RECEIPT_CSS = `
+   background: #fff; color: var(--text);
+   padding: 3.4cqw 4cqw 3cqw; border: .25cqw solid var(--accent);
+   display: grid; grid-template-rows: auto auto 1fr auto; row-gap: 1.6cqw;
+-  font-family: Manrope, "Segoe UI", Arial, sans-serif;
++  font-family: Bricolage Grotesque, "Segoe UI", Arial, sans-serif;
+ }
+ .rcpt > * { min-width: 0; }
+ .rcpt-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 2cqw; padding-bottom: 1.4cqw; border-bottom: .35cqw solid var(--accent); }
+diff --git a/frontend/src/components/Layout.jsx b/frontend/src/components/Layout.jsx
+index 7f22a9a..c3f9c25 100644
+--- a/frontend/src/components/Layout.jsx
++++ b/frontend/src/components/Layout.jsx
+@@ -3,6 +3,8 @@ import { Outlet, NavLink, useNavigate, useLocation } from "react-router-dom";
+ import { toast } from "sonner";
+ import api from "../utils/api";
+ import { useAuth } from "../context/AuthContext";
++import { useBusiness } from "../context/BusinessContext";
++import { MODULES } from "../utils/modules";
+ import { canAccessPath, marketingTabsFor } from "../utils/permissions";
+ import { isSanakhatOverdue, sanakhatPendingDays } from "../utils/helpers";
+ import {
+@@ -46,7 +48,10 @@ export default function Layout() {
+   const [marketingOpen, setMarketingOpen] = useState(null); // null = follow the current page
+ 
+   const handleLogout = () => { logout(); navigate("/login"); };
+-  const visibleNavItems = navItems.filter(({ path }) => canAccessPath(user?.role, path));
++  const { has } = useBusiness();
++  const moduleOfPath = Object.fromEntries(MODULES.filter(m => m.path).map(m => [m.path, m.id]));
++  // Dashboard, Companies and Settings are always there; services follow what the company switched on.
++  const visibleNavItems = navItems.filter(({ path }) => canAccessPath(user?.role, path) && (!moduleOfPath[path] || has(moduleOfPath[path])));
+ 
+   // Missing-data notifications: flags active-stock vehicles missing a photo or a
+   // registration number so gaps get caught without staff having to go hunting for
+@@ -134,19 +139,19 @@ export default function Layout() {
+   }, [user]);
+ 
+   const Sidebar = ({ mobile = false }) => (
+-    <aside className={`${mobile ? "fixed inset-0 z-50 flex" : "hidden lg:flex"} flex-col bg-slate-900 text-white ${mobile ? "w-64" : "w-64"} h-app`}>
++    <aside className={`${mobile ? "fixed inset-0 z-50 flex" : "hidden lg:flex"} flex-col bg-slate-900 text-white w-64 h-app`}>
+       {/* Logo */}
+-      <div className="flex items-center gap-3 px-6 py-5 border-b border-slate-700">
+-        <div className="w-9 h-9 rounded-lg bg-blue-600 flex items-center justify-center font-bold text-white text-sm">AS</div>
++      <div className="flex items-center gap-3 px-6 py-5 border-b border-white/10">
++        <div className="w-9 h-9 rounded-xl bg-blue-400 flex items-center justify-center font-display font-extrabold text-slate-900 text-sm">{(user?.company_name || "A")[0].toUpperCase()}</div>
+         <div>
+           {/* user.company_name comes back from login/signup (see AuthContext) -- this is
+               the signed-in tenant's own business, not the platform's own identity, which
+               only appears pre-login (see Login/SignUp's matching logo block). */}
+-          <div className="font-bold text-sm leading-tight" style={{ fontFamily: "Manrope, sans-serif" }}>{user?.company_name || "Auto Stock Manager"}</div>
+-          <div className="text-xs text-slate-400">Inventory Manager</div>
++          <div className="font-bold text-sm leading-tight" style={{ fontFamily: "Bricolage Grotesque, sans-serif" }}>{user?.company_name || "Auto Stock Manager"}</div>
++          <div className="text-xs text-slate-400">Business workspace</div>
+         </div>
+         {mobile && (
+-          <button className="ml-auto w-11 h-11 -mr-2.5 rounded-lg flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-800 transition-colors" onClick={() => setSidebarOpen(false)}>
++          <button className="ml-auto w-11 h-11 -mr-2.5 rounded-lg flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/5 transition-colors" onClick={() => setSidebarOpen(false)}>
+             <X size={18} />
+           </button>
+         )}
+@@ -169,8 +174,8 @@ export default function Layout() {
+                 className={({ isActive }) =>
+                   `flex items-center gap-3 px-3 py-3 rounded-lg text-sm font-medium transition-all duration-150 ${
+                     isActive
+-                      ? "bg-blue-600 text-white"
+-                      : "text-slate-400 hover:text-white hover:bg-slate-800"
++                      ? "bg-white/10 text-white shadow-[inset_3px_0_0_#5eead4]"
++                      : "text-slate-400 hover:text-white hover:bg-white/5"
+                   }`
+                 }
+                 data-testid={`nav-${label.toLowerCase().replace(" ", "-")}`}
+@@ -191,7 +196,7 @@ export default function Layout() {
+               <button
+                 onClick={() => { setMarketingOpen(!open); if (!onMarketing) navigate(`/marketing?tab=${subTabs[0]}`); }}
+                 aria-expanded={open}
+-                className={`w-full flex items-center gap-3 px-3 py-3 rounded-lg text-sm font-medium transition-all duration-150 ${onMarketing ? "bg-blue-600 text-white" : "text-slate-400 hover:text-white hover:bg-slate-800"}`}
++                className={`w-full flex items-center gap-3 px-3 py-3 rounded-lg text-sm font-medium transition-all duration-150 ${onMarketing ? "bg-white/10 text-white shadow-[inset_3px_0_0_#5eead4]" : "text-slate-400 hover:text-white hover:bg-white/5"}`}
+                 data-testid="nav-marketing"
+               >
+                 <Icon size={17} />
+@@ -200,7 +205,7 @@ export default function Layout() {
+                 <ChevronDown size={15} className={`${newLeads > 0 && !open ? "" : "ml-auto"} transition-transform ${open ? "rotate-180" : ""}`} />
+               </button>
+               {open && (
+-                <div className="mt-0.5 ml-5 pl-3 border-l border-slate-700 space-y-0.5">
++                <div className="mt-0.5 ml-5 pl-3 border-l border-white/10 space-y-0.5">
+                   {subTabs.map(key => {
+                     const { label: subLabel, icon: SubIcon } = MARKETING_NAV[key];
+                     return (
+@@ -209,7 +214,7 @@ export default function Layout() {
+                         to={`/marketing?tab=${key}`}
+                         replace={onMarketing}
+                         onClick={() => mobile && setSidebarOpen(false)}
+-                        className={`flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 ${onMarketing && current === key ? "bg-slate-800 text-white" : "text-slate-400 hover:text-white hover:bg-slate-800"}`}
++                        className={`flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 ${onMarketing && current === key ? "bg-white/10 text-white" : "text-slate-400 hover:text-white hover:bg-white/5"}`}
+                         data-testid={`nav-marketing-${key}`}
+                       >
+                         <SubIcon size={15} />
+@@ -226,7 +231,7 @@ export default function Layout() {
+       </nav>
+ 
+       {/* User */}
+-      <div className="px-4 py-4 border-t border-slate-700">
++      <div className="px-4 py-4 border-t border-white/10">
+         <div className="flex items-center gap-3">
+           <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-white text-xs font-bold">
+             {user?.name?.[0]?.toUpperCase() || "A"}
+@@ -244,7 +249,7 @@ export default function Layout() {
+   );
+ 
+   return (
+-    <div className="flex h-app overflow-hidden bg-slate-50 pl-safe pr-safe">
++    <div className="flex h-app overflow-hidden bg-[#F6F4EF] pl-safe pr-safe">
+       {/* Desktop Sidebar */}
+       <Sidebar />
+ 
+@@ -260,7 +265,7 @@ export default function Layout() {
+       {/* Main */}
+       <div className="flex-1 flex flex-col min-w-0">
+         {/* Header */}
+-        <header className="sticky top-0 z-30 bg-white border-b border-slate-200 shadow-sm h-14 box-content pt-safe flex items-center px-4 lg:px-6 gap-4">
++        <header className="sticky top-0 z-30 bg-[#F6F4EF]/85 backdrop-blur border-b border-slate-200 h-14 box-content pt-safe flex items-center px-4 lg:px-6 gap-4">
+           <button
+             className="lg:hidden w-11 h-11 -ml-2.5 rounded-lg flex items-center justify-center text-slate-500 hover:bg-slate-50 hover:text-slate-900 transition-colors"
+             onClick={() => setSidebarOpen(true)}
+@@ -362,7 +367,7 @@ export default function Layout() {
+           {/* Boundary here (not only at the app root) so a lazy page loading keeps the
+               sidebar/header on screen instead of swapping the whole layout for a spinner. */}
+           <Suspense fallback={<div className="flex items-center justify-center h-64"><div className="animate-spin w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full" /></div>}>
+-            <Outlet context={{ newLeads }} />
++            <div key={pathname} className="route-enter"><Outlet context={{ newLeads }} /></div>
+           </Suspense>
+           <div className="pb-safe" aria-hidden="true" />
+         </main>
+diff --git a/frontend/src/components/ListRow.jsx b/frontend/src/components/ListRow.jsx
+index cc15fe1..b609355 100644
+--- a/frontend/src/components/ListRow.jsx
++++ b/frontend/src/components/ListRow.jsx
+@@ -18,7 +18,7 @@ export default function ListRow({ onClick, thumb, title, subtitle, meta, pills,
+         </div>
+       )}
+       <div className="min-w-0 flex-1">
+-        <div className="font-semibold text-slate-900 text-sm truncate" style={{ fontFamily: "Manrope" }}>{title}</div>
++        <div className="font-semibold text-slate-900 text-sm truncate" style={{ fontFamily: "Bricolage Grotesque" }}>{title}</div>
+         {subtitle && <div className="text-xs text-slate-500 truncate">{subtitle}</div>}
+       </div>
+       {actions && (
+diff --git a/frontend/src/components/PhotoCropperModal.jsx b/frontend/src/components/PhotoCropperModal.jsx
+index f66fdcf..c41e8a4 100644
+--- a/frontend/src/components/PhotoCropperModal.jsx
++++ b/frontend/src/components/PhotoCropperModal.jsx
+@@ -54,7 +54,7 @@ export function PhotoCropperModal({ imageSrc, onCancel, onConfirm }) {
+     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 p-4">
+       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden">
+         <div className="flex items-center justify-between p-4 border-b border-slate-100">
+-          <h3 className="text-sm font-bold text-slate-900" style={{ fontFamily: "Manrope, sans-serif" }}>
++          <h3 className="text-sm font-bold text-slate-900" style={{ fontFamily: "Bricolage Grotesque, sans-serif" }}>
+             Position the vehicle in frame
+           </h3>
+           <button type="button" onClick={onCancel} className="w-11 h-11 md:w- md:h- flex items-center justify-center rounded-lg hover:bg-slate-100 text-slate-500">✕</button>
+diff --git a/frontend/src/components/crm/ui.jsx b/frontend/src/components/crm/ui.jsx
+index 21842ea..68b2327 100644
+--- a/frontend/src/components/crm/ui.jsx
++++ b/frontend/src/components/crm/ui.jsx
+@@ -4,7 +4,7 @@ import { X, AlertTriangle } from "lucide-react";
+ import { STATUS_BY_KEY, avatarTone, initialsOf } from "../../utils/crm";
+ 
+ // Small pieces the CRM screens share: dialogs, the side drawer, badges, the little trend graph.
+-export const FONT = { fontFamily: "Manrope" };
++export const FONT = { fontFamily: "Bricolage Grotesque" };
+ export const inputCls = "w-full h-10 px-3 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-50 disabled:text-slate-400";
+ export const btnPrimary = "h-10 px-4 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold inline-flex items-center justify-center gap-2 disabled:opacity-60 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2";
+ export const btnGhost = "h-10 px-4 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-sm font-semibold inline-flex items-center justify-center gap-2 disabled:opacity-60 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500";
+diff --git a/frontend/src/index.css b/frontend/src/index.css
+index cd15104..b8ba131 100644
+--- a/frontend/src/index.css
++++ b/frontend/src/index.css
+@@ -1,4 +1,4 @@
+-@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@600;700;800&family=Public+Sans:wght@400;500;600&display=swap');
++@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Instrument+Sans:wght@400;500;600;700&display=swap');
+ 
+ @tailwind base;
+ @tailwind components;
+@@ -6,24 +6,30 @@
+ 
+ body {
+   margin: 0;
+-  font-family: 'Public Sans', -apple-system, BlinkMacSystemFont, sans-serif;
++  font-family: 'Instrument Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+   -webkit-font-smoothing: antialiased;
+-  background: #F8FAFC;
++  background: #F6F4EF;
++  font-variant-numeric: tabular-nums;
+ }
+ 
++::selection { background: #a7e0d6; color: #0f3f3b; }
++:focus-visible { outline: 2px solid #0f766e; outline-offset: 2px; }
++input, textarea { caret-color: #0f766e; }
++
+ h1, h2, h3, h4, h5, h6 {
+-  font-family: 'Manrope', sans-serif;
++  font-family: 'Bricolage Grotesque', 'Instrument Sans', sans-serif;
++  letter-spacing: -0.01em;
+ }
+ 
+ @layer base {
+   :root {
+-    --background: 0 0% 100%;
++    --background: 40 24% 95%;
+     --foreground: 222 47% 11%;
+     --card: 0 0% 100%;
+     --card-foreground: 222 47% 11%;
+     --popover: 0 0% 100%;
+     --popover-foreground: 222 47% 11%;
+-    --primary: 221 83% 53%;
++    --primary: 175 77% 26%;
+     --primary-foreground: 0 0% 100%;
+     --secondary: 214 32% 91%;
+     --secondary-foreground: 222 47% 11%;
+@@ -35,7 +41,7 @@ h1, h2, h3, h4, h5, h6 {
+     --destructive-foreground: 0 0% 98%;
+     --border: 214 32% 91%;
+     --input: 214 32% 91%;
+-    --ring: 221 83% 53%;
++    --ring: 175 77% 26%;
+     --radius: 0.5rem;
+   }
+ }
+@@ -54,7 +60,7 @@ h1, h2, h3, h4, h5, h6 {
+    horizontal/vertical overflow is obvious instead of relying on OS auto-hide bars. */
+ .overflow-x-auto, .overflow-y-auto, .overflow-auto {
+   scrollbar-width: thin;
+-  scrollbar-color: #CBD5E1 transparent;
++  scrollbar-color: #D6D3D1 transparent;
+ }
+ .overflow-x-auto::-webkit-scrollbar, .overflow-y-auto::-webkit-scrollbar, .overflow-auto::-webkit-scrollbar {
+   width: 8px;
+@@ -64,11 +70,11 @@ h1, h2, h3, h4, h5, h6 {
+   background: transparent;
+ }
+ .overflow-x-auto::-webkit-scrollbar-thumb, .overflow-y-auto::-webkit-scrollbar-thumb, .overflow-auto::-webkit-scrollbar-thumb {
+-  background: #CBD5E1;
++  background: #D6D3D1;
+   border-radius: 4px;
+ }
+ .overflow-x-auto::-webkit-scrollbar-thumb:hover, .overflow-y-auto::-webkit-scrollbar-thumb:hover, .overflow-auto::-webkit-scrollbar-thumb:hover {
+-  background: #94A3B8;
++  background: #A8A29E;
+ }
+ 
+ /* App-shell height: 100vh on mobile browsers is taller than the visible area (the URL bar
+@@ -81,7 +87,7 @@ h1, h2, h3, h4, h5, h6 {
+ .pr-safe { padding-right: env(safe-area-inset-right); }
+ 
+ /* Table hover */
+-.table-row-hover:hover { background: #F8FAFC; }
++.table-row-hover:hover { background: #FAF8F4; }
+ 
+ /* iOS Safari auto-zooms the page when a focused input's font-size is under
+    16px. Our compact inputs use text-sm (14px), which as a Tailwind utility
+@@ -109,3 +115,18 @@ h1, h2, h3, h4, h5, h6 {
+ .animate-fade-in { animation: fadeInUp 0.3s ease-out; }
+ 
+ @keyframes slideIn { from { transform: translateX(28px); opacity: 0; } to { transform: none; opacity: 1; } }
++
++/* Motion: one calm page entrance per route, a stagger for dashboard cards, nothing else.
++   Exponential ease-out; fully off for users who ask for reduced motion. */
++:root { --ease-out: cubic-bezier(0.16, 1, 0.3, 1); }
++.route-enter { animation: routeIn 0.35s var(--ease-out) both; }
++@keyframes routeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
++.stagger > * { animation: routeIn 0.5s var(--ease-out) both; }
++.stagger > *:nth-child(2) { animation-delay: 40ms; } .stagger > *:nth-child(3) { animation-delay: 80ms; }
++.stagger > *:nth-child(4) { animation-delay: 120ms; } .stagger > *:nth-child(5) { animation-delay: 160ms; }
++.stagger > *:nth-child(6) { animation-delay: 200ms; } .stagger > *:nth-child(n+7) { animation-delay: 240ms; }
++.animate-fade-in { animation: routeIn 0.35s var(--ease-out) both; }
++@media (prefers-reduced-motion: reduce) {
++  .route-enter, .stagger > *, .animate-fade-in { animation: none !important; }
++  * { transition-duration: 0.01ms !important; }
++}
+diff --git a/frontend/src/pages/AddVehicleModal.jsx b/frontend/src/pages/AddVehicleModal.jsx
+index ef8e34c..9066029 100644
+--- a/frontend/src/pages/AddVehicleModal.jsx
++++ b/frontend/src/pages/AddVehicleModal.jsx
+@@ -41,7 +41,7 @@ export function AddVehicleModal({ form, setForm, onClose, onSubmit, saving, phot
+     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 sm:p-4">
+       <div className="bg-white sm:rounded-2xl shadow-2xl w-full h-full sm:h-auto sm:max-w-2xl sm:max-h-[90vh] overflow-y-auto">
+         <div className="flex items-center justify-between p-4 sm:p-5 border-b border-slate-100 sticky top-0 bg-white z-10">
+-          <h2 className="text-lg font-bold text-slate-900" style={{ fontFamily: "Manrope, sans-serif" }}>Add New Vehicle</h2>
++          <h2 className="text-lg font-bold text-slate-900" style={{ fontFamily: "Bricolage Grotesque, sans-serif" }}>Add New Vehicle</h2>
+           <button onClick={onClose} className="w-11 h-11 flex items-center justify-center rounded-lg hover:bg-slate-100 text-slate-500 shrink-0">✕</button>
+         </div>
+         <form onSubmit={onSubmit} className="p-4 sm:p-5 space-y-4">
+diff --git a/frontend/src/pages/Bookings.jsx b/frontend/src/pages/Bookings.jsx
+index 2e45e95..18eb97c 100644
+--- a/frontend/src/pages/Bookings.jsx
++++ b/frontend/src/pages/Bookings.jsx
+@@ -211,7 +211,7 @@ export default function Bookings({ embedded = false, onRecordSale: onRecordSaleP
+             </div>
+             <div className="min-w-0">
+               <div className="text-xs text-slate-500 font-medium">{c.label}</div>
+-              <div className="text-base sm:text-lg font-bold text-slate-900 break-words leading-tight" style={{ fontFamily: "Manrope" }}>{c.value}</div>
++              <div className="text-base sm:text-lg font-bold text-slate-900 break-words leading-tight" style={{ fontFamily: "Bricolage Grotesque" }}>{c.value}</div>
+               {c.sub && <div className="text-xs text-slate-500">{c.sub}</div>}
+             </div>
+           </div>
+diff --git a/frontend/src/pages/Dashboard.jsx b/frontend/src/pages/Dashboard.jsx
+index fcfdb94..29d0815 100644
+--- a/frontend/src/pages/Dashboard.jsx
++++ b/frontend/src/pages/Dashboard.jsx
+@@ -7,6 +7,7 @@ import { formatNPR } from "../utils/helpers";
+ import HoverADDate from "../components/HoverADDate";
+ import DateRangeFilter, { resolveDateFilter } from "../components/DateRangeFilter";
+ import { useAuth } from "../context/AuthContext";
++import ServicesOverview from "../components/ServicesOverview";
+ import { getCurrentBSDate, BS_MONTHS } from "../utils/nepali-date";
+ 
+ // ── Sub-components defined OUTSIDE to prevent remount ──────────────────
+@@ -21,7 +22,7 @@ const KPICard = ({ title, value, subtitle, icon: Icon, color, testid, onClick })
+     <div className="flex items-start justify-between gap-2">
+       <div className="min-w-0">
+         <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1 truncate">{title}</p>
+-        <p className="text-xl sm:text-2xl font-bold text-slate-900 break-words leading-tight" style={{ fontFamily: "Manrope, sans-serif" }}>{value}</p>
++        <p className="text-xl sm:text-2xl font-bold text-slate-900 break-words leading-tight" style={{ fontFamily: "Bricolage Grotesque, sans-serif" }}>{value}</p>
+         {subtitle && <p className="text-xs text-slate-500 mt-1 truncate">{subtitle}</p>}
+       </div>
+       <div className={`hidden sm:flex w-11 h-11 rounded-lg items-center justify-center shrink-0 ${color}`}>
+@@ -97,7 +98,7 @@ const AccountingKPI = ({ label, value, color, icon: Icon, sub, onClick, testid }
+     </div>
+     <div className="min-w-0">
+       <p className="text-xs font-semibold opacity-80 uppercase tracking-wider">{label}</p>
+-      <p className="text-lg sm:text-xl font-bold text-white break-words leading-tight" style={{ fontFamily: "Manrope, sans-serif" }}>{value}</p>
++      <p className="text-lg sm:text-xl font-bold text-white break-words leading-tight" style={{ fontFamily: "Bricolage Grotesque, sans-serif" }}>{value}</p>
+       {sub && <p className="text-xs opacity-70 mt-0.5 truncate">{sub}</p>}
+     </div>
+   </div>
+@@ -182,7 +183,7 @@ function AccountingSummary({ range }) {
+       {/* Header */}
+       <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+         <div>
+-          <h2 className="text-base font-bold text-slate-900" style={{ fontFamily: "Manrope, sans-serif" }}>
++          <h2 className="text-base font-bold text-slate-900" style={{ fontFamily: "Bricolage Grotesque, sans-serif" }}>
+             Accounting Summary
+           </h2>
+           <p className="text-xs text-slate-500 mt-0.5">
+@@ -256,7 +257,7 @@ function AccountingSummary({ range }) {
+                   data-testid="recent-sale-card"
+                   className="shrink-0 w-56 bg-white rounded-lg border border-green-100 shadow-sm p-3 cursor-pointer hover:shadow-md hover:border-green-300 transition-all"
+                 >
+-                  <div className="font-bold text-slate-900 text-sm truncate mb-1" style={{ fontFamily: "Manrope" }}>
++                  <div className="font-bold text-slate-900 text-sm truncate mb-1" style={{ fontFamily: "Bricolage Grotesque" }}>
+                     {s.vehicle_info || "Vehicle"}
+                   </div>
+                   <div className="text-xs text-slate-500 mb-1 truncate">{s.customer_name}</div>
+@@ -345,7 +346,7 @@ function AccountingSummary({ range }) {
+                     >
+                       <div className={showBill ? "" : "flex items-center justify-between gap-3"}>
+                         <div className="min-w-0">
+-                          <div className="font-semibold text-slate-900 text-sm truncate" style={{ fontFamily: "Manrope" }}>
++                          <div className="font-semibold text-slate-900 text-sm truncate" style={{ fontFamily: "Bricolage Grotesque" }}>
+                             {s.vehicle_info || "Vehicle"}
+                           </div>
+                           <div className="text-xs text-slate-500 truncate">
+@@ -421,7 +422,7 @@ function AccountingSummary({ range }) {
+                           className="flex items-center justify-between gap-3 px-4 sm:px-5 py-3 cursor-pointer hover:bg-slate-50 transition-colors"
+                         >
+                           <div className="min-w-0">
+-                            <div className="font-semibold text-slate-900 text-sm truncate" style={{ fontFamily: "Manrope" }}>
++                            <div className="font-semibold text-slate-900 text-sm truncate" style={{ fontFamily: "Bricolage Grotesque" }}>
+                               {b.vehicle_info || "Vehicle"}
+                             </div>
+                             <div className="text-xs text-slate-500 truncate">
+@@ -497,7 +498,7 @@ function AccountingSummary({ range }) {
+                     className="flex items-center justify-between gap-3 px-4 sm:px-5 py-3 cursor-pointer hover:bg-slate-50 transition-colors"
+                   >
+                     <div className="min-w-0">
+-                      <div className="font-semibold text-slate-900 text-sm truncate" style={{ fontFamily: "Manrope" }}>
++                      <div className="font-semibold text-slate-900 text-sm truncate" style={{ fontFamily: "Bricolage Grotesque" }}>
+                         {v.vehicle_info || "Vehicle"}
+                       </div>
+                       <div className="text-xs text-slate-500 truncate">
+@@ -599,6 +600,8 @@ export default function Dashboard() {
+         </div>
+       </div>
+ 
++      <ServicesOverview stats={stats} />
++
+       {/* Period-scoped: follows the toggle above. */}
+       <AccountingSummary range={range} />
+ 
+@@ -613,7 +616,7 @@ export default function Dashboard() {
+       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+         {/* Stock Aging Chart */}
+         <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200 shadow-sm p-5" data-testid="aging-chart">
+-          <h2 className="text-base font-bold text-slate-900 mb-4" style={{ fontFamily: "Manrope, sans-serif" }}>Stock Aging Overview</h2>
++          <h2 className="text-base font-bold text-slate-900 mb-4" style={{ fontFamily: "Bricolage Grotesque, sans-serif" }}>Stock Aging Overview</h2>
+           <ResponsiveContainer width="100%" height={200}>
+             <BarChart data={agingData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
+               <XAxis dataKey="name" tick={{ fontSize: 11, fill: "#64748B" }} />
+@@ -628,7 +631,7 @@ export default function Dashboard() {
+ 
+         {/* Alerts */}
+         <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5" data-testid="alerts-panel">
+-          <h2 className="text-base font-bold text-slate-900 mb-4" style={{ fontFamily: "Manrope, sans-serif" }}>Stock Alerts</h2>
++          <h2 className="text-base font-bold text-slate-900 mb-4" style={{ fontFamily: "Bricolage Grotesque, sans-serif" }}>Stock Alerts</h2>
+           <div className="space-y-3">
+             <AlertCard title="Dead Stock" count={stats.dead_stock_count} description="60+ days. Immediate action needed." color="bg-red-100 text-red-800" onClick={() => navigate("/inventory?aging=dead")} />
+             <AlertCard title="Slow Moving" count={stats.slow_moving_count} description="46–60 days. Consider price reduction." color="bg-orange-100 text-orange-800" onClick={() => navigate("/inventory?aging=slow")} />
+diff --git a/frontend/src/pages/ForgotPassword.jsx b/frontend/src/pages/ForgotPassword.jsx
+index e56483f..ca04e6a 100644
+--- a/frontend/src/pages/ForgotPassword.jsx
++++ b/frontend/src/pages/ForgotPassword.jsx
+@@ -37,14 +37,14 @@ export default function ForgotPassword() {
+           <div className="flex items-center gap-3 mb-8">
+             <div className="w-11 h-11 rounded-xl bg-blue-600 flex items-center justify-center font-bold text-white text-lg">AS</div>
+             <div>
+-              <div className="font-bold text-slate-900 text-lg leading-tight" style={{ fontFamily: "Manrope, sans-serif" }}>Auto Stock Manager</div>
++              <div className="font-bold text-slate-900 text-lg leading-tight" style={{ fontFamily: "Bricolage Grotesque, sans-serif" }}>Auto Stock Manager</div>
+               <div className="text-xs text-slate-500">Inventory Manager</div>
+             </div>
+           </div>
+ 
+           {sent ? (
+             <>
+-              <h1 className="text-2xl font-bold text-slate-900 mb-1" style={{ fontFamily: "Manrope, sans-serif" }}>Check your email</h1>
++              <h1 className="text-2xl font-bold text-slate-900 mb-1" style={{ fontFamily: "Bricolage Grotesque, sans-serif" }}>Check your email</h1>
+               <p className="text-slate-500 text-sm mb-6">
+                 If an account exists for <span className="font-medium text-slate-700">{email}</span>, a password
+                 reset link is on its way. The link expires in 1 hour.
+@@ -55,7 +55,7 @@ export default function ForgotPassword() {
+             </>
+           ) : (
+             <>
+-              <h1 className="text-2xl font-bold text-slate-900 mb-1" style={{ fontFamily: "Manrope, sans-serif" }}>Reset password</h1>
++              <h1 className="text-2xl font-bold text-slate-900 mb-1" style={{ fontFamily: "Bricolage Grotesque, sans-serif" }}>Reset password</h1>
+               <p className="text-slate-500 text-sm mb-6">Enter your account email and we'll send you a reset link.</p>
+ 
+               <form onSubmit={handleSubmit} className="space-y-4">
+diff --git a/frontend/src/pages/ImportStock.jsx b/frontend/src/pages/ImportStock.jsx
+index 9ffa255..387af41 100644
+--- a/frontend/src/pages/ImportStock.jsx
++++ b/frontend/src/pages/ImportStock.jsx
+@@ -149,17 +149,17 @@ export default function ImportStock() {
+         <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-4" data-testid="import-result">
+           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+             <div className="bg-green-50 border border-green-100 rounded-xl p-4 text-center">
+-              <div className="text-2xl font-bold text-green-700" style={{ fontFamily: "Manrope" }}>
++              <div className="text-2xl font-bold text-green-700" style={{ fontFamily: "Bricolage Grotesque" }}>
+                 {result.committed ? result.inserted : (result.rows || []).filter(r => r.status === "ok").length}
+               </div>
+               <div className="text-xs text-green-600 mt-0.5">{result.committed ? "Imported" : "Ready to import"}</div>
+             </div>
+             <div className="bg-red-50 border border-red-100 rounded-xl p-4 text-center">
+-              <div className="text-2xl font-bold text-red-700" style={{ fontFamily: "Manrope" }}>{result.skipped}</div>
++              <div className="text-2xl font-bold text-red-700" style={{ fontFamily: "Bricolage Grotesque" }}>{result.skipped}</div>
+               <div className="text-xs text-red-600 mt-0.5">Failed</div>
+             </div>
+             <div className="bg-slate-50 border border-slate-100 rounded-xl p-4 text-center">
+-              <div className="text-2xl font-bold text-slate-800" style={{ fontFamily: "Manrope" }}>{result.total_rows}</div>
++              <div className="text-2xl font-bold text-slate-800" style={{ fontFamily: "Bricolage Grotesque" }}>{result.total_rows}</div>
+               <div className="text-xs text-slate-500 mt-0.5">Total Rows</div>
+             </div>
+           </div>
+diff --git a/frontend/src/pages/Inventory.jsx b/frontend/src/pages/Inventory.jsx
+index e54f8d6..9a95c59 100644
+--- a/frontend/src/pages/Inventory.jsx
++++ b/frontend/src/pages/Inventory.jsx
+@@ -771,7 +771,7 @@ export default function Inventory() {
+               </div>
+               <div className="min-w-0">
+                 <div className="text-xs text-slate-500 font-medium truncate">{c.label}</div>
+-                <div className="text-sm sm:text-lg font-bold text-slate-900 leading-tight" style={{ fontFamily: "Manrope" }}>{c.value}</div>
++                <div className="text-sm sm:text-lg font-bold text-slate-900 leading-tight" style={{ fontFamily: "Bricolage Grotesque" }}>{c.value}</div>
+               </div>
+             </div>
+           ))}
+@@ -799,7 +799,7 @@ export default function Inventory() {
+                   className="shrink-0 w-56 bg-white rounded-lg border border-amber-100 shadow-sm p-3 hover:shadow-md transition-shadow cursor-pointer"
+                 >
+                   <div className="flex items-start justify-between gap-2 mb-1">
+-                    <div className="font-bold text-slate-900 text-sm truncate" style={{ fontFamily: "Manrope" }}>{v.brand} {v.model}</div>
++                    <div className="font-bold text-slate-900 text-sm truncate" style={{ fontFamily: "Bricolage Grotesque" }}>{v.brand} {v.model}</div>
+                     <span className={`shrink-0 px-1.5 py-0.5 rounded-full text-xs font-semibold uppercase tracking-wide ${st.bg} ${st.text}`}>
+                       {st.label}
+                     </span>
+@@ -937,7 +937,7 @@ export default function Inventory() {
+               >
+                 <div className="flex items-start justify-between gap-2 mb-3">
+                   <div className="min-w-0">
+-                    <div className="font-bold text-slate-900 text-sm truncate" style={{ fontFamily: "Manrope" }}>{v.brand} {v.model}</div>
++                    <div className="font-bold text-slate-900 text-sm truncate" style={{ fontFamily: "Bricolage Grotesque" }}>{v.brand} {v.model}</div>
+                     <div className="text-xs text-slate-500 mt-0.5">{v.year} · {v.engine_cc}cc · {v.fuel_type} · {formatOwnership(v.ownership_number)}</div>
+                     {v.registration_number && <div className="text-xs font-mono text-slate-500 mt-0.5">{v.registration_number}</div>}
+                     {isAdmin && v.created_by && <div className="text-[11px] text-slate-400 mt-0.5" data-testid="vehicle-author">Added by {v.created_by}</div>}
+@@ -1151,7 +1151,7 @@ export default function Inventory() {
+                       className="flex items-center justify-between gap-3 px-4 sm:px-5 py-3 cursor-pointer hover:bg-slate-50 transition-colors"
+                     >
+                       <div className="min-w-0">
+-                        <div className="font-semibold text-slate-900 text-sm truncate" style={{ fontFamily: "Manrope" }}>{v.brand} {v.model}</div>
++                        <div className="font-semibold text-slate-900 text-sm truncate" style={{ fontFamily: "Bricolage Grotesque" }}>{v.brand} {v.model}</div>
+                         <div className="text-xs text-slate-500 truncate flex items-center gap-1.5 mt-0.5">
+                           <span className={`px-1.5 py-0.5 rounded-full text-xs font-semibold uppercase tracking-wide ${st.bg} ${st.text}`}>{st.label}</span>
+                           {v.registration_number && <span className="font-mono">{v.registration_number}</span>}
+diff --git a/frontend/src/pages/JobCards.jsx b/frontend/src/pages/JobCards.jsx
+index 0af217f..4cd713c 100644
+--- a/frontend/src/pages/JobCards.jsx
++++ b/frontend/src/pages/JobCards.jsx
+@@ -385,7 +385,7 @@ export default function JobCards() {
+           { label: "Completed", count: stats.completed, bg: "bg-green-50 border-green-100", text: "text-green-800" },
+         ].map(s => (
+           <div key={s.label} className={`${s.bg} border rounded-xl p-2.5 sm:p-4 text-center`} data-testid={`job-stat-${s.label.toLowerCase().replace(" ", "-")}`}>
+-            <div className={`text-2xl font-bold ${s.text}`} style={{ fontFamily: "Manrope" }}>{s.count}</div>
++            <div className={`text-2xl font-bold ${s.text}`} style={{ fontFamily: "Bricolage Grotesque" }}>{s.count}</div>
+             <div className={`text-xs font-medium ${s.text} mt-0.5`}>{s.label}</div>
+           </div>
+         ))}
+@@ -493,7 +493,7 @@ export default function JobCards() {
+                         <span data-testid="job-vehicle-status-badge" className={`px-1.5 py-0.5 rounded-full text-xs font-semibold uppercase tracking-wide ${vs.bg} ${vs.text}`}>{vs.label}</span>
+                       )}
+                     </div>
+-                    <div className="font-bold text-slate-900 text-sm mt-0.5" style={{ fontFamily: "Manrope" }}>
++                    <div className="font-bold text-slate-900 text-sm mt-0.5" style={{ fontFamily: "Bricolage Grotesque" }}>
+                       {job.vehicle_brand} {job.vehicle_model} {job.vehicle_year}
+                     </div>
+                     {job.registration_number && <div className="text-xs text-slate-500 font-mono">{job.registration_number}</div>}
+@@ -869,7 +869,7 @@ export default function JobCards() {
+       {statusChoice && (
+         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" data-testid="job-status-choice-modal">
+           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-5">
+-            <h3 className="text-base font-bold text-slate-900 mb-1" style={{ fontFamily: "Manrope, sans-serif" }}>Move vehicle out of Repair</h3>
++            <h3 className="text-base font-bold text-slate-900 mb-1" style={{ fontFamily: "Bricolage Grotesque, sans-serif" }}>Move vehicle out of Repair</h3>
+             <p className="text-xs text-slate-500 mb-4">
+               This vehicle was entered directly into the Repair stage, so there's no earlier status to return it to.
+               All of its job cards are complete — choose where it should go now.
+diff --git a/frontend/src/pages/Leads.jsx b/frontend/src/pages/Leads.jsx
+index 91aea81..19474be 100644
+--- a/frontend/src/pages/Leads.jsx
++++ b/frontend/src/pages/Leads.jsx
+@@ -25,7 +25,7 @@ const TABS = [
+   { key: "rejected", label: "Rejected" },
+ ];
+ const MIN_REMARK = 3;
+-const FONT = { fontFamily: "Manrope" };
++const FONT = { fontFamily: "Bricolage Grotesque" };
+ 
+ // Nepali mobile numbers are typed as 98XXXXXXXX; wa.me needs the country code.
+ const waNumber = phone => {
+diff --git a/frontend/src/pages/Login.jsx b/frontend/src/pages/Login.jsx
+index af3600c..173a44b 100644
+--- a/frontend/src/pages/Login.jsx
++++ b/frontend/src/pages/Login.jsx
+@@ -95,12 +95,12 @@ export default function Login() {
+           <div className="flex items-center gap-3 mb-8">
+             <div className="w-11 h-11 rounded-xl bg-blue-600 flex items-center justify-center font-bold text-white text-lg">AS</div>
+             <div>
+-              <div className="font-bold text-slate-900 text-lg leading-tight" style={{ fontFamily: "Manrope, sans-serif" }}>Auto Stock Manager</div>
++              <div className="font-bold text-slate-900 text-lg leading-tight" style={{ fontFamily: "Bricolage Grotesque, sans-serif" }}>Auto Stock Manager</div>
+               <div className="text-xs text-slate-500">Inventory Manager</div>
+             </div>
+           </div>
+ 
+-          <h1 className="text-2xl font-bold text-slate-900 mb-1" style={{ fontFamily: "Manrope, sans-serif" }}>Sign In</h1>
++          <h1 className="text-2xl font-bold text-slate-900 mb-1" style={{ fontFamily: "Bricolage Grotesque, sans-serif" }}>Sign In</h1>
+           <p className="text-slate-500 text-sm mb-6">Enter your credentials to continue</p>
+ 
+           <form onSubmit={handleSubmit} className="space-y-4">
+diff --git a/frontend/src/pages/Offers.jsx b/frontend/src/pages/Offers.jsx
+index d63b7ce..7fb6bed 100644
+--- a/frontend/src/pages/Offers.jsx
++++ b/frontend/src/pages/Offers.jsx
+@@ -61,15 +61,15 @@ export default function Offers() {
+     <div className="space-y-6">
+       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+         <div className="bg-white border border-slate-200 rounded-xl p-4 text-center shadow-sm">
+-          <div className="text-2xl font-bold text-slate-900" style={{ fontFamily: "Manrope" }}>{spunToday}</div>
++          <div className="text-2xl font-bold text-slate-900" style={{ fontFamily: "Bricolage Grotesque" }}>{spunToday}</div>
+           <div className="text-xs text-slate-500 mt-0.5">Spins today</div>
+         </div>
+         <div className="bg-green-50 border border-green-100 rounded-xl p-4 text-center">
+-          <div className="text-2xl font-bold text-green-700" style={{ fontFamily: "Manrope" }}>{spins.length}</div>
++          <div className="text-2xl font-bold text-green-700" style={{ fontFamily: "Bricolage Grotesque" }}>{spins.length}</div>
+           <div className="text-xs text-green-600 mt-0.5">Gifts won</div>
+         </div>
+         <div className="bg-amber-50 border border-amber-100 rounded-xl p-4 text-center">
+-          <div className="text-2xl font-bold text-amber-700" style={{ fontFamily: "Manrope" }}>{prizes.reduce((s, p) => s + (Number(p.stock) || 0), 0)}</div>
++          <div className="text-2xl font-bold text-amber-700" style={{ fontFamily: "Bricolage Grotesque" }}>{prizes.reduce((s, p) => s + (Number(p.stock) || 0), 0)}</div>
+           <div className="text-xs text-amber-600 mt-0.5">Gifts in stock</div>
+         </div>
+         <div className="bg-white border border-slate-200 rounded-xl p-3 flex items-center gap-3 shadow-sm print:border-0">
+@@ -85,7 +85,7 @@ export default function Offers() {
+       {/* Prizes */}
+       <div className="bg-white border border-slate-200 rounded-xl shadow-sm print:hidden">
+         <div className="flex flex-wrap items-center justify-between gap-3 p-4 border-b border-slate-100">
+-          <h3 className="text-base font-bold text-slate-900 flex items-center gap-2" style={{ fontFamily: "Manrope" }}><Gift size={17} className="text-amber-600" />Prizes on the wheel</h3>
++          <h3 className="text-base font-bold text-slate-900 flex items-center gap-2" style={{ fontFamily: "Bricolage Grotesque" }}><Gift size={17} className="text-amber-600" />Prizes on the wheel</h3>
+           <div className="flex items-center gap-2">
+             <button onClick={() => setPrizes(ps => [...ps, { name: "", weight: 0, stock: 0 }])} className="flex items-center gap-1.5 h-9 px-3 border border-slate-200 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50"><Plus size={14} /> Add prize</button>
+             <button onClick={savePrizes} disabled={saving} data-testid="save-prizes-btn" className="h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold disabled:opacity-60">{saving ? "Saving..." : "Save prizes"}</button>
+@@ -124,7 +124,7 @@ export default function Offers() {
+       {/* Spins */}
+       <div className="bg-white border border-slate-200 rounded-xl shadow-sm print:hidden">
+         <div className="p-4 border-b border-slate-100">
+-          <h3 className="text-base font-bold text-slate-900 flex items-center gap-2" style={{ fontFamily: "Manrope" }}><Bike size={17} className="text-blue-600" />Spins</h3>
++          <h3 className="text-base font-bold text-slate-900 flex items-center gap-2" style={{ fontFamily: "Bricolage Grotesque" }}><Bike size={17} className="text-blue-600" />Spins</h3>
+         </div>
+         {spins.length === 0 ? (
+           <div className="p-12 text-center text-slate-500">
+diff --git a/frontend/src/pages/Reports.jsx b/frontend/src/pages/Reports.jsx
+index a80db23..4e6e2e4 100644
+--- a/frontend/src/pages/Reports.jsx
++++ b/frontend/src/pages/Reports.jsx
+@@ -83,7 +83,7 @@ export default function Reports() {
+                 title={aging ? `Click to view ${label} vehicles in Inventory` : undefined}
+               >
+                 <div className="text-xs text-slate-500 mb-1 truncate">{label}</div>
+-                <div className={`text-lg sm:text-xl font-bold break-words leading-tight ${color}`} style={{ fontFamily: "Manrope" }}>{val}</div>
++                <div className={`text-lg sm:text-xl font-bold break-words leading-tight ${color}`} style={{ fontFamily: "Bricolage Grotesque" }}>{val}</div>
+                 {aging && <div className="text-xs text-blue-500 mt-1">View in Inventory →</div>}
+               </div>
+             ))}
+@@ -91,7 +91,7 @@ export default function Reports() {
+ 
+           {/* Stock Aging Chart */}
+           <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+-            <h2 className="text-base font-bold text-slate-900 mb-4" style={{ fontFamily: "Manrope" }}>Stock Aging Distribution</h2>
++            <h2 className="text-base font-bold text-slate-900 mb-4" style={{ fontFamily: "Bricolage Grotesque" }}>Stock Aging Distribution</h2>
+             <ResponsiveContainer width="100%" height={220}>
+               <BarChart data={agingData}>
+                 <XAxis dataKey="name" tick={{ fontSize: 11, fill: "#64748B" }} />
+@@ -109,7 +109,7 @@ export default function Reports() {
+         <div className="space-y-5">
+           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+             <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+-              <h2 className="text-base font-bold text-slate-900 mb-4" style={{ fontFamily: "Manrope" }}>By Brand</h2>
++              <h2 className="text-base font-bold text-slate-900 mb-4" style={{ fontFamily: "Bricolage Grotesque" }}>By Brand</h2>
+               <ResponsiveContainer width="100%" height={220}>
+                 <BarChart data={brandData} layout="vertical" margin={{ left: 20 }}>
+                   <XAxis type="number" tick={{ fontSize: 11 }} allowDecimals={false} />
+@@ -120,7 +120,7 @@ export default function Reports() {
+               </ResponsiveContainer>
+             </div>
+             <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+-              <h2 className="text-base font-bold text-slate-900 mb-4" style={{ fontFamily: "Manrope" }}>By Purchase Source</h2>
++              <h2 className="text-base font-bold text-slate-900 mb-4" style={{ fontFamily: "Bricolage Grotesque" }}>By Purchase Source</h2>
+               <ResponsiveContainer width="100%" height={220}>
+                 <PieChart>
+                   <Pie data={sourceData} dataKey="count" nameKey="name" cx="50%" cy="50%" outerRadius={80} label={({ name, percent }) => `${name} ${(percent*100).toFixed(0)}%`} labelLine={false} fontSize={11}>
+@@ -136,7 +136,7 @@ export default function Reports() {
+           {/* Slow / Dead Stock */}
+           {(inventory.dead_stock?.length > 0 || inventory.slow_moving?.length > 0) ? (
+             <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+-              <h2 className="text-base font-bold text-slate-900 mb-4" style={{ fontFamily: "Manrope" }}>Action Required Stock</h2>
++              <h2 className="text-base font-bold text-slate-900 mb-4" style={{ fontFamily: "Bricolage Grotesque" }}>Action Required Stock</h2>
+               <div className="sm:hidden divide-y divide-slate-100">
+                 {[...inventory.dead_stock, ...inventory.slow_moving].map((v) => (
+                   <div key={v.id} onClick={() => navigate(`/inventory/${v.id}`)} className="py-3 cursor-pointer active:bg-slate-50">
+@@ -199,13 +199,13 @@ export default function Reports() {
+           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+             <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-4 text-center sm:col-span-1">
+               <div className="text-xs text-emerald-600 font-semibold uppercase mb-1">Total Realized Profit</div>
+-              <div className="text-2xl font-bold text-emerald-700" style={{ fontFamily: "Manrope" }}>{formatNPR(financial.total_profit)}</div>
++              <div className="text-2xl font-bold text-emerald-700" style={{ fontFamily: "Bricolage Grotesque" }}>{formatNPR(financial.total_profit)}</div>
+             </div>
+           </div>
+ 
+           {monthlyData.length > 0 && (
+             <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+-              <h2 className="text-base font-bold text-slate-900 mb-4" style={{ fontFamily: "Manrope" }}>Monthly P&L</h2>
++              <h2 className="text-base font-bold text-slate-900 mb-4" style={{ fontFamily: "Bricolage Grotesque" }}>Monthly P&L</h2>
+               <ResponsiveContainer width="100%" height={260}>
+                 <BarChart data={monthlyData}>
+                   <XAxis dataKey="month" tick={{ fontSize: 11, fill: "#64748B" }} />
+diff --git a/frontend/src/pages/ResetPassword.jsx b/frontend/src/pages/ResetPassword.jsx
+index f031be4..3d629f3 100644
+--- a/frontend/src/pages/ResetPassword.jsx
++++ b/frontend/src/pages/ResetPassword.jsx
+@@ -41,12 +41,12 @@ export default function ResetPassword() {
+           <div className="flex items-center gap-3 mb-8">
+             <div className="w-11 h-11 rounded-xl bg-blue-600 flex items-center justify-center font-bold text-white text-lg">AS</div>
+             <div>
+-              <div className="font-bold text-slate-900 text-lg leading-tight" style={{ fontFamily: "Manrope, sans-serif" }}>Auto Stock Manager</div>
++              <div className="font-bold text-slate-900 text-lg leading-tight" style={{ fontFamily: "Bricolage Grotesque, sans-serif" }}>Auto Stock Manager</div>
+               <div className="text-xs text-slate-500">Inventory Manager</div>
+             </div>
+           </div>
+ 
+-          <h1 className="text-2xl font-bold text-slate-900 mb-1" style={{ fontFamily: "Manrope, sans-serif" }}>Choose a new password</h1>
++          <h1 className="text-2xl font-bold text-slate-900 mb-1" style={{ fontFamily: "Bricolage Grotesque, sans-serif" }}>Choose a new password</h1>
+           <p className="text-slate-500 text-sm mb-6">Enter a new password for your account.</p>
+ 
+           {!token ? (
+diff --git a/frontend/src/pages/SaleDetail.jsx b/frontend/src/pages/SaleDetail.jsx
+index 05041bd..7450296 100644
+--- a/frontend/src/pages/SaleDetail.jsx
++++ b/frontend/src/pages/SaleDetail.jsx
+@@ -290,7 +290,7 @@ export default function SaleDetail({ saleId, embedded = false, editTick = 0, onS
+     <div className={`flex flex-col gap-5 animate-fade-in ${embedded ? "pt-6 border-t border-slate-200" : ""}`} data-testid={embedded ? "sale-details-section" : undefined}>
+       {embedded && (
+         <div className="flex items-center justify-between gap-3">
+-          <h2 className="text-xl font-bold text-slate-900" style={{ fontFamily: "Manrope" }}>Sale Details</h2>
++          <h2 className="text-xl font-bold text-slate-900" style={{ fontFamily: "Bricolage Grotesque" }}>Sale Details</h2>
+           <span className={`px-2.5 py-1 rounded-full text-xs font-semibold uppercase tracking-wide ${ps.bg} ${ps.text}`} data-testid="payment-status-badge">{sale.returned ? "Returned" : sale.payment_status}</span>
+         </div>
+       )}
+@@ -475,7 +475,7 @@ export default function SaleDetail({ saleId, embedded = false, editTick = 0, onS
+                   </div>
+                   <div className="text-right">
+                     <div className="text-xs text-slate-500">Grand Total</div>
+-                    <div className="text-xl font-bold text-green-700" style={{ fontFamily: "Manrope" }}>{formatNPR(grandTotal)}</div>
++                    <div className="text-xl font-bold text-green-700" style={{ fontFamily: "Bricolage Grotesque" }}>{formatNPR(grandTotal)}</div>
+                     {amountDue > 0 && <span className="inline-block mt-1 text-xs font-semibold text-red-700 bg-red-100 px-2 py-0.5 rounded-full">Due: {formatNPR(amountDue)}</span>}
+                   </div>
+                 </div>
+@@ -536,7 +536,7 @@ export default function SaleDetail({ saleId, embedded = false, editTick = 0, onS
+                 className={`bg-white rounded-xl border border-slate-200 shadow-sm p-4 min-w-0 ${c.clickable ? "cursor-pointer hover:border-blue-300 hover:shadow-md transition-all" : ""}`}
+               >
+                 <div className="text-xs text-slate-500 mb-1 truncate">{c.label}</div>
+-                <div className={`text-lg font-bold truncate ${c.highlight ? "text-red-600" : "text-slate-900"}`} style={{ fontFamily: "Manrope" }}>{c.value}</div>
++                <div className={`text-lg font-bold truncate ${c.highlight ? "text-red-600" : "text-slate-900"}`} style={{ fontFamily: "Bricolage Grotesque" }}>{c.value}</div>
+                 {c.sub && <div className="text-xs text-slate-400 mt-0.5 truncate">{c.sub}</div>}
+               </div>
+             ))}
+@@ -551,15 +551,15 @@ export default function SaleDetail({ saleId, embedded = false, editTick = 0, onS
+               <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                 <div>
+                   <div className="text-xs text-slate-500 mb-1">Total Investment</div>
+-                  <div className="text-lg font-bold text-slate-900" style={{ fontFamily: "Manrope" }}>{formatNPR(sale.total_investment)}</div>
++                  <div className="text-lg font-bold text-slate-900" style={{ fontFamily: "Bricolage Grotesque" }}>{formatNPR(sale.total_investment)}</div>
+                 </div>
+                 <div>
+                   <div className="text-xs text-slate-500 mb-1">Profit</div>
+-                  <div className={`text-lg font-bold ${sale.profit < 0 ? "text-red-600" : "text-green-600"}`} style={{ fontFamily: "Manrope" }}>{formatNPR(sale.profit)}</div>
++                  <div className={`text-lg font-bold ${sale.profit < 0 ? "text-red-600" : "text-green-600"}`} style={{ fontFamily: "Bricolage Grotesque" }}>{formatNPR(sale.profit)}</div>
+                 </div>
+                 <div>
+                   <div className="text-xs text-slate-500 mb-1">Profit Margin</div>
+-                  <div className={`text-lg font-bold ${sale.profit < 0 ? "text-red-600" : "text-green-600"}`} style={{ fontFamily: "Manrope" }}>{sale.profit_margin != null ? `${sale.profit_margin}%` : "—"}</div>
++                  <div className={`text-lg font-bold ${sale.profit < 0 ? "text-red-600" : "text-green-600"}`} style={{ fontFamily: "Bricolage Grotesque" }}>{sale.profit_margin != null ? `${sale.profit_margin}%` : "—"}</div>
+                 </div>
+               </div>
+             </div>
+diff --git a/frontend/src/pages/Sales.jsx b/frontend/src/pages/Sales.jsx
+index 339f001..efdd42d 100644
+--- a/frontend/src/pages/Sales.jsx
++++ b/frontend/src/pages/Sales.jsx
+@@ -553,7 +553,7 @@ export default function Sales() {
+               </div>
+               <div className="min-w-0">
+                 <div className="text-xs text-slate-500 font-medium">{c.label}</div>
+-                <div className="text-sm sm:text-lg font-bold text-slate-900 leading-tight" style={{ fontFamily: "Manrope" }}>{c.value}</div>
++                <div className="text-sm sm:text-lg font-bold text-slate-900 leading-tight" style={{ fontFamily: "Bricolage Grotesque" }}>{c.value}</div>
+               </div>
+             </div>
+           ))}
+@@ -1054,7 +1054,7 @@ export default function Sales() {
+                 </div>
+                 <div className="text-right">
+                   <div className="text-xs text-slate-500">Grand Total</div>
+-                  <div className="text-xl font-bold text-green-700" style={{ fontFamily: "Manrope" }} data-testid="grand-total-value">{formatNPR(grandTotal)}</div>
++                  <div className="text-xl font-bold text-green-700" style={{ fontFamily: "Bricolage Grotesque" }} data-testid="grand-total-value">{formatNPR(grandTotal)}</div>
+                   {amountDue > 0 && (
+                     <span className="inline-block mt-1 text-xs font-semibold text-red-700 bg-red-100 px-2 py-0.5 rounded-full" data-testid="due-amount-bubble">
+                       Due: {formatNPR(amountDue)}
+@@ -1180,7 +1180,7 @@ export default function Sales() {
+                       { label: "Unreadable", value: importResult.errors, cls: importResult.errors > 0 ? "bg-amber-50 text-amber-700 border-amber-100" : "bg-slate-50 text-slate-600 border-slate-100" },
+                     ].map(s => (
+                       <div key={s.label} className={`border rounded-lg p-2.5 text-center ${s.cls}`}>
+-                        <div className="text-xl font-bold" style={{ fontFamily: "Manrope" }}>{s.value}</div>
++                        <div className="text-xl font-bold" style={{ fontFamily: "Bricolage Grotesque" }}>{s.value}</div>
+                         <div className="text-xs mt-0.5 leading-tight">{s.label}</div>
+                       </div>
+                     ))}
+diff --git a/frontend/src/pages/Settings.jsx b/frontend/src/pages/Settings.jsx
+index 0ff5d58..577051a 100644
+--- a/frontend/src/pages/Settings.jsx
++++ b/frontend/src/pages/Settings.jsx
+@@ -193,7 +193,7 @@ export default function Settings() {
+ 
+       {/* Profile */}
+       <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+-        <h2 className="text-base font-bold text-slate-900 mb-4" style={{ fontFamily: "Manrope" }}>Profile</h2>
++        <h2 className="text-base font-bold text-slate-900 mb-4" style={{ fontFamily: "Bricolage Grotesque" }}>Profile</h2>
+         <div className="flex items-center gap-4">
+           <div className="w-14 h-14 rounded-full bg-blue-600 flex items-center justify-center text-white font-bold text-xl">
+             {user?.name?.[0]?.toUpperCase() || "A"}
+@@ -209,7 +209,7 @@ export default function Settings() {
+       {isAdmin && (
+         <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+           <div className="flex items-center justify-between mb-1">
+-            <h2 className="text-base font-bold text-slate-900" style={{ fontFamily: "Manrope" }}>Team Accounts</h2>
++            <h2 className="text-base font-bold text-slate-900" style={{ fontFamily: "Bricolage Grotesque" }}>Team Accounts</h2>
+             <button onClick={openAddUser} data-testid="add-account-btn" className="flex items-center gap-1.5 h-9 px-3 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg transition-all active:scale-95">
+               <UserPlus size={14} /> Add Account
+             </button>
+@@ -250,7 +250,7 @@ export default function Settings() {
+       {/* Storefront Settings (Admin only) */}
+       {isAdmin && (
+         <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+-          <h2 className="text-base font-bold text-slate-900 mb-1" style={{ fontFamily: "Manrope" }}>Storefront Settings</h2>
++          <h2 className="text-base font-bold text-slate-900 mb-1" style={{ fontFamily: "Bricolage Grotesque" }}>Storefront Settings</h2>
+           <p className="text-xs text-slate-500 mb-4">Branding and contact info shown on the public website (hamroauto.com.np)</p>
+           {!siteForm ? (
+             <div className="flex items-center justify-center h-24"><div className="animate-spin w-6 h-6 border-4 border-blue-600 border-t-transparent rounded-full" /></div>
+@@ -281,7 +281,7 @@ export default function Settings() {
+         <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+           <div className="flex items-center gap-2 mb-1">
+             <ShieldCheck size={18} className="text-teal-600" />
+-            <h2 className="text-base font-bold text-slate-900" style={{ fontFamily: "Manrope" }}>Warranty</h2>
++            <h2 className="text-base font-bold text-slate-900" style={{ fontFamily: "Bricolage Grotesque" }}>Warranty</h2>
+           </div>
+           <p className="text-xs text-slate-500 mb-4">
+             Default warranty length for every sold vehicle, counted from its sale date. You can still change it for one vehicle on the Warranty page.
+@@ -304,7 +304,7 @@ export default function Settings() {
+         <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+           <div className="flex items-center gap-2 mb-1">
+             <Fingerprint size={18} className="text-blue-600" />
+-            <h2 className="text-base font-bold text-slate-900" style={{ fontFamily: "Manrope" }}>Biometric Login</h2>
++            <h2 className="text-base font-bold text-slate-900" style={{ fontFamily: "Bricolage Grotesque" }}>Biometric Login</h2>
+           </div>
+           <p className="text-xs text-slate-500 mb-4">Use your fingerprint or face to sign in instead of typing your password.</p>
+           {bioEnabled ? (
+@@ -347,7 +347,7 @@ export default function Settings() {
+ 
+       {/* Change Password */}
+       <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+-        <h2 className="text-base font-bold text-slate-900 mb-4" style={{ fontFamily: "Manrope" }}>Change Password</h2>
++        <h2 className="text-base font-bold text-slate-900 mb-4" style={{ fontFamily: "Bricolage Grotesque" }}>Change Password</h2>
+         <form onSubmit={changePassword} className="space-y-4">
+           {[["Current Password","current_password"],["New Password","new_password"],["Confirm New Password","confirm"]].map(([label, key]) => (
+             <div key={key}>
+@@ -373,22 +373,22 @@ export default function Settings() {
+       {/* Storage Usage (Admin only) */}
+       {isAdmin && storage && (
+         <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6" data-testid="storage-usage-card">
+-          <h2 className="text-base font-bold text-slate-900 mb-1" style={{ fontFamily: "Manrope" }}>Storage Usage</h2>
++          <h2 className="text-base font-bold text-slate-900 mb-1" style={{ fontFamily: "Bricolage Grotesque" }}>Storage Usage</h2>
+           <p className="text-xs text-slate-500 mb-4">Space used by uploaded vehicle photos and legal documents. Documents over 2MB are compressed automatically.</p>
+           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+             <div className="rounded-lg bg-slate-50 p-3">
+               <p className="text-xs text-slate-500">Photos</p>
+-              <p className="text-lg font-bold text-slate-900" style={{ fontFamily: "Manrope" }}>{formatBytes(storage.photos.bytes)}</p>
++              <p className="text-lg font-bold text-slate-900" style={{ fontFamily: "Bricolage Grotesque" }}>{formatBytes(storage.photos.bytes)}</p>
+               <p className="text-xs text-slate-400">{storage.photos.count} file{storage.photos.count !== 1 ? "s" : ""}</p>
+             </div>
+             <div className="rounded-lg bg-slate-50 p-3">
+               <p className="text-xs text-slate-500">Documents</p>
+-              <p className="text-lg font-bold text-slate-900" style={{ fontFamily: "Manrope" }}>{formatBytes(storage.documents.bytes)}</p>
++              <p className="text-lg font-bold text-slate-900" style={{ fontFamily: "Bricolage Grotesque" }}>{formatBytes(storage.documents.bytes)}</p>
+               <p className="text-xs text-slate-400">{storage.documents.count} file{storage.documents.count !== 1 ? "s" : ""}</p>
+             </div>
+             <div className="rounded-lg bg-blue-50 p-3">
+               <p className="text-xs text-blue-600">Total</p>
+-              <p className="text-lg font-bold text-blue-900" style={{ fontFamily: "Manrope" }}>{formatBytes(storage.total_bytes)}</p>
++              <p className="text-lg font-bold text-blue-900" style={{ fontFamily: "Bricolage Grotesque" }}>{formatBytes(storage.total_bytes)}</p>
+               <p className="text-xs text-blue-400">{storage.photos.count + storage.documents.count} files</p>
+             </div>
+           </div>
+@@ -411,7 +411,7 @@ export default function Settings() {
+       {/* App Info — not shown for platform_owner (no company of its own) or Front Desk (showroom staff don't need system/infra details) */}
+       {user?.role !== "platform_owner" && user?.role !== "stock_supervisor" && (
+         <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+-          <h2 className="text-base font-bold text-slate-900 mb-4" style={{ fontFamily: "Manrope" }}>System Information</h2>
++          <h2 className="text-base font-bold text-slate-900 mb-4" style={{ fontFamily: "Bricolage Grotesque" }}>System Information</h2>
+           <div className="space-y-3 text-sm">
+             {[
+               ["Business", user?.company_name || "—"],
+diff --git a/frontend/src/pages/SignUp.jsx b/frontend/src/pages/SignUp.jsx
+index 7131e19..af3852e 100644
+--- a/frontend/src/pages/SignUp.jsx
++++ b/frontend/src/pages/SignUp.jsx
+@@ -60,14 +60,14 @@ export default function SignUp() {
+           <div className="flex items-center gap-3 mb-8">
+             <div className="w-11 h-11 rounded-xl bg-blue-600 flex items-center justify-center font-bold text-white text-lg">AS</div>
+             <div>
+-              <div className="font-bold text-slate-900 text-lg leading-tight" style={{ fontFamily: "Manrope, sans-serif" }}>Auto Stock Manager</div>
++              <div className="font-bold text-slate-900 text-lg leading-tight" style={{ fontFamily: "Bricolage Grotesque, sans-serif" }}>Auto Stock Manager</div>
+               <div className="text-xs text-slate-500">Inventory Manager</div>
+             </div>
+           </div>
+ 
+           {createdEmail ? (
+             <div data-testid="signup-check-email-panel">
+-              <h1 className="text-2xl font-bold text-slate-900 mb-1" style={{ fontFamily: "Manrope, sans-serif" }}>Check your email</h1>
++              <h1 className="text-2xl font-bold text-slate-900 mb-1" style={{ fontFamily: "Bricolage Grotesque, sans-serif" }}>Check your email</h1>
+               <p className="text-slate-500 text-sm mb-6">
+                 We sent a verification link to <span className="font-medium text-slate-700">{createdEmail}</span>.
+                 Click it to activate your workspace, then sign in.
+@@ -85,7 +85,7 @@ export default function SignUp() {
+             </div>
+           ) : (
+           <>
+-          <h1 className="text-2xl font-bold text-slate-900 mb-1" style={{ fontFamily: "Manrope, sans-serif" }}>Create Account</h1>
++          <h1 className="text-2xl font-bold text-slate-900 mb-1" style={{ fontFamily: "Bricolage Grotesque, sans-serif" }}>Create Account</h1>
+           <p className="text-slate-500 text-sm mb-6">Set up a new workspace — you'll be its Admin, and can add employees once you're in.</p>
+ 
+           <form onSubmit={handleSubmit} className="space-y-4">
+diff --git a/frontend/src/pages/SoldStockDetail.jsx b/frontend/src/pages/SoldStockDetail.jsx
+index 6add97f..e2cfeb3 100644
+--- a/frontend/src/pages/SoldStockDetail.jsx
++++ b/frontend/src/pages/SoldStockDetail.jsx
+@@ -290,7 +290,7 @@ export default function SoldStockDetail() {
+             className={`bg-white rounded-xl border border-slate-200 shadow-sm p-4 min-w-0 ${c.clickable ? "cursor-pointer hover:border-blue-300 hover:shadow-md transition-all" : ""}`}
+           >
+             <div className="text-xs text-slate-500 mb-1 truncate">{c.label}</div>
+-            <div className={`text-lg font-bold truncate ${c.highlight ? (vehicle.low_margin ? "text-red-600" : "text-green-600") : "text-slate-900"}`} style={{ fontFamily: "Manrope" }}>{c.value}</div>
++            <div className={`text-lg font-bold truncate ${c.highlight ? (vehicle.low_margin ? "text-red-600" : "text-green-600") : "text-slate-900"}`} style={{ fontFamily: "Bricolage Grotesque" }}>{c.value}</div>
+             {c.label === "Realized Profit" && vehicle.profit_margin !== null && (
+               <div className={`text-xs mt-0.5 ${vehicle.low_margin ? "text-red-500" : "text-green-600"}`}>
+                 {vehicle.profit_margin}% margin {vehicle.low_margin ? "⚠ Low!" : ""}
+@@ -308,7 +308,7 @@ export default function SoldStockDetail() {
+           <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+             <div>
+               <div className="text-xs text-slate-500 mb-1">Total Investment</div>
+-              <div className="text-lg font-bold text-slate-900" style={{ fontFamily: "Manrope" }}>{formatNPR(vehicle.total_investment)}</div>
++              <div className="text-lg font-bold text-slate-900" style={{ fontFamily: "Bricolage Grotesque" }}>{formatNPR(vehicle.total_investment)}</div>
+             </div>
+           </div>
+         </div>
+@@ -373,7 +373,7 @@ export default function SoldStockDetail() {
+         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setVoiding(false)}>
+           <form onSubmit={submitVoid} onClick={e => e.stopPropagation()} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 space-y-4">
+             <div>
+-              <h2 className="text-base font-bold text-slate-900" style={{ fontFamily: "Manrope" }}>Void warranty</h2>
++              <h2 className="text-base font-bold text-slate-900" style={{ fontFamily: "Bricolage Grotesque" }}>Void warranty</h2>
+               <p className="text-xs text-slate-500">{vehicle.brand} {vehicle.model}{vehicle.registration_number ? ` · ${vehicle.registration_number}` : ""}</p>
+             </div>
+             <label className="block text-xs font-medium text-slate-600">
+diff --git a/frontend/src/pages/SpareParts.jsx b/frontend/src/pages/SpareParts.jsx
+index d0a57aa..f6fe8ce 100644
+--- a/frontend/src/pages/SpareParts.jsx
++++ b/frontend/src/pages/SpareParts.jsx
+@@ -459,7 +459,7 @@ export default function SpareParts() {
+               <div className={`hidden sm:flex w-9 h-9 rounded-lg ${c.color} items-center justify-center`}><Package size={16} className="text-white" /></div>
+               <div>
+                 <div className="text-xs text-slate-500 font-medium">{c.label}</div>
+-                <div className="text-sm sm:text-lg font-bold text-slate-900 leading-tight" style={{ fontFamily: "Manrope" }}>{c.value}</div>
++                <div className="text-sm sm:text-lg font-bold text-slate-900 leading-tight" style={{ fontFamily: "Bricolage Grotesque" }}>{c.value}</div>
+               </div>
+             </div>
+           ))}
+diff --git a/frontend/src/pages/Team.jsx b/frontend/src/pages/Team.jsx
+index 345f8cf..a603561 100644
+--- a/frontend/src/pages/Team.jsx
++++ b/frontend/src/pages/Team.jsx
+@@ -93,11 +93,11 @@ export default function Team() {
+         {member.role === "mechanic" && (
+           <div className="mt-3 pt-3 border-t border-slate-50 grid grid-cols-2 gap-2">
+             <div className="text-center bg-slate-50 rounded-lg p-2">
+-              <div className="text-lg font-bold text-slate-900" style={{ fontFamily: "Manrope" }}>{member.total_jobs || 0}</div>
++              <div className="text-lg font-bold text-slate-900" style={{ fontFamily: "Bricolage Grotesque" }}>{member.total_jobs || 0}</div>
+               <div className="text-xs text-slate-500">Total Jobs</div>
+             </div>
+             <div className="text-center bg-green-50 rounded-lg p-2">
+-              <div className="text-lg font-bold text-green-700" style={{ fontFamily: "Manrope" }}>{member.completed_jobs || 0}</div>
++              <div className="text-lg font-bold text-green-700" style={{ fontFamily: "Bricolage Grotesque" }}>{member.completed_jobs || 0}</div>
+               <div className="text-xs text-green-600">Completed</div>
+             </div>
+           </div>
+@@ -145,12 +145,12 @@ export default function Team() {
+       {/* Stats */}
+       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+         <div className="bg-white border border-slate-200 rounded-xl p-4 text-center shadow-sm">
+-          <div className="text-2xl font-bold text-slate-900" style={{ fontFamily: "Manrope" }}>{members.length}</div>
++          <div className="text-2xl font-bold text-slate-900" style={{ fontFamily: "Bricolage Grotesque" }}>{members.length}</div>
+           <div className="text-xs text-slate-500 mt-0.5">Total Staff</div>
+         </div>
+         {groupedByRole.map(({ role, meta, members: roleMembers }) => (
+           <div key={role} className={`${meta.statBg} border rounded-xl p-4 text-center`}>
+-            <div className={`text-2xl font-bold ${meta.statText}`} style={{ fontFamily: "Manrope" }}>{roleMembers.length}</div>
++            <div className={`text-2xl font-bold ${meta.statText}`} style={{ fontFamily: "Bricolage Grotesque" }}>{roleMembers.length}</div>
+             <div className={`text-xs ${meta.statLabel} mt-0.5 flex items-center justify-center gap-1`}><meta.Icon size={11} />{meta.label}</div>
+           </div>
+         ))}
+@@ -162,7 +162,7 @@ export default function Team() {
+         <>
+           {groupedByRole.map(({ role, meta, members: roleMembers }) => (
+             <div key={role}>
+-              <h3 className="text-base font-bold text-slate-900 mb-3 flex items-center gap-2" style={{ fontFamily: "Manrope" }}><meta.Icon size={17} className={meta.statText} />{meta.label}</h3>
++              <h3 className="text-base font-bold text-slate-900 mb-3 flex items-center gap-2" style={{ fontFamily: "Bricolage Grotesque" }}><meta.Icon size={17} className={meta.statText} />{meta.label}</h3>
+               {view === "list" ? (
+                 <div className="space-y-2">
+                   {roleMembers.map(m => <MemberRow key={m.id} member={m} />)}
+diff --git a/frontend/src/pages/VehicleDetail.jsx b/frontend/src/pages/VehicleDetail.jsx
+index 9d7d5a9..d3e85fb 100644
+--- a/frontend/src/pages/VehicleDetail.jsx
++++ b/frontend/src/pages/VehicleDetail.jsx
+@@ -396,7 +396,7 @@ export function VehicleDetailModal({ id, onClose }) {
+         <div className="sticky top-0 bg-white z-10 border-b border-slate-100">
+           <div className="flex items-center justify-between gap-3 p-4 sm:p-5 pb-3">
+             <div className="min-w-0">
+-              <h2 className="text-lg font-bold text-slate-900 truncate" style={{ fontFamily: "Manrope, sans-serif" }}>{vehicle.brand} {vehicle.model}</h2>
++              <h2 className="text-lg font-bold text-slate-900 truncate" style={{ fontFamily: "Bricolage Grotesque, sans-serif" }}>{vehicle.brand} {vehicle.model}</h2>
+               {vehicle.registration_number && (
+                 <p className="text-base font-mono font-bold text-slate-900">{vehicle.registration_number}</p>
+               )}
+@@ -489,7 +489,7 @@ export function VehicleDetailModal({ id, onClose }) {
+                   className={`bg-white rounded-xl border border-slate-200 shadow-sm p-4 ${isExpenses ? "cursor-pointer hover:border-blue-300 hover:shadow-md transition-all" : ""}`}
+                 >
+                   <div className="text-xs text-slate-500 mb-1">{label}</div>
+-                  <div className={`text-lg font-bold ${bold ? "text-slate-900" : textClass}`} style={{ fontFamily: "Manrope" }}>{value}</div>
++                  <div className={`text-lg font-bold ${bold ? "text-slate-900" : textClass}`} style={{ fontFamily: "Bricolage Grotesque" }}>{value}</div>
+                   {label.includes("Profit") && vehicle.profit_margin !== null && (
+                     <div className={`text-xs mt-0.5 ${vehicle.low_margin ? "text-red-500" : "text-green-600"}`}>
+                       {vehicle.profit_margin}% margin {vehicle.low_margin ? "⚠ Low!" : ""}
+@@ -781,7 +781,7 @@ export function VehicleDetailModal({ id, onClose }) {
+           {/* Vehicle Photos */}
+           <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5" data-testid="photos-section">
+             <div className="flex items-center justify-between mb-4">
+-              <h2 className="text-sm font-bold text-slate-900" style={{ fontFamily: "Manrope" }}>Vehicle Photos</h2>
++              <h2 className="text-sm font-bold text-slate-900" style={{ fontFamily: "Bricolage Grotesque" }}>Vehicle Photos</h2>
+               {canManagePhotos && photos.length > 1 && <span className="text-xs text-slate-400">Drag to reorder · first photo is the storefront cover</span>}
+             </div>
+             {photos.length === 0 ? (
+@@ -861,7 +861,7 @@ export function VehicleDetailModal({ id, onClose }) {
+ 
+           {/* Document Status + Upload */}
+           <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+-            <h2 className="text-sm font-bold text-slate-900 mb-3" style={{ fontFamily: "Manrope" }}>Legal Documents</h2>
++            <h2 className="text-sm font-bold text-slate-900 mb-3" style={{ fontFamily: "Bricolage Grotesque" }}>Legal Documents</h2>
+             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
+               {[["bluebook", "Bluebook"], ["transfer", "Transfer"], ["tax_clearance", "Tax Clearance"]].map(([key, label]) => {
+                 const status = vehicle[`${key}_status`];
+diff --git a/frontend/src/pages/VerifyEmail.jsx b/frontend/src/pages/VerifyEmail.jsx
+index e36f6ef..c26cb0c 100644
+--- a/frontend/src/pages/VerifyEmail.jsx
++++ b/frontend/src/pages/VerifyEmail.jsx
+@@ -40,7 +40,7 @@ export default function VerifyEmail() {
+           <div className="flex items-center justify-center gap-3 mb-8">
+             <div className="w-11 h-11 rounded-xl bg-blue-600 flex items-center justify-center font-bold text-white text-lg">AS</div>
+             <div className="text-left">
+-              <div className="font-bold text-slate-900 text-lg leading-tight" style={{ fontFamily: "Manrope, sans-serif" }}>Auto Stock Manager</div>
++              <div className="font-bold text-slate-900 text-lg leading-tight" style={{ fontFamily: "Bricolage Grotesque, sans-serif" }}>Auto Stock Manager</div>
+               <div className="text-xs text-slate-500">Inventory Manager</div>
+             </div>
+           </div>
+@@ -53,7 +53,7 @@ export default function VerifyEmail() {
+           )}
+           {status === "success" && (
+             <>
+-              <h1 className="text-2xl font-bold text-slate-900 mb-2" style={{ fontFamily: "Manrope, sans-serif" }}>Email verified</h1>
++              <h1 className="text-2xl font-bold text-slate-900 mb-2" style={{ fontFamily: "Bricolage Grotesque, sans-serif" }}>Email verified</h1>
+               <p className="text-slate-500 text-sm mb-6">{message}</p>
+               <Link to="/login" className="inline-block w-full h-10 leading-10 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg">
+                 Sign in
+@@ -62,7 +62,7 @@ export default function VerifyEmail() {
+           )}
+           {status === "error" && (
+             <>
+-              <h1 className="text-2xl font-bold text-slate-900 mb-2" style={{ fontFamily: "Manrope, sans-serif" }}>Verification failed</h1>
++              <h1 className="text-2xl font-bold text-slate-900 mb-2" style={{ fontFamily: "Bricolage Grotesque, sans-serif" }}>Verification failed</h1>
+               <p className="text-slate-500 text-sm mb-6">{message}</p>
+               <Link to="/login" className="text-blue-600 font-semibold hover:underline text-sm">Back to sign in</Link>
+             </>
+diff --git a/frontend/src/pages/Visits.jsx b/frontend/src/pages/Visits.jsx
+index 874101c..d190a75 100644
+--- a/frontend/src/pages/Visits.jsx
++++ b/frontend/src/pages/Visits.jsx
+@@ -11,7 +11,7 @@ const RANGES = [
+   { key: "year", days: 365, skip: 0, label: "Year", short: "the last year" },
+ ];
+ const PAGE_SIZE = 16;
+-const FONT = { fontFamily: "Manrope" };
++const FONT = { fontFamily: "Bricolage Grotesque" };
+ 
+ // The website's front page is the path "/"; show it as Home.
+ const pageName = p => (p === "/" ? "Home" : p);
+diff --git a/frontend/src/pages/Warranty.jsx b/frontend/src/pages/Warranty.jsx
+index 12bf051..f43b705 100644
+--- a/frontend/src/pages/Warranty.jsx
++++ b/frontend/src/pages/Warranty.jsx
+@@ -164,7 +164,7 @@ export default function Warranty() {
+             data-testid={`warranty-filter-${key}`}
+             className={`text-left bg-white rounded-xl border p-3 sm:p-4 transition-all ${filter === key ? "border-blue-500 ring-2 ring-blue-100" : "border-slate-200 hover:border-slate-300"}`}
+           >
+-            <div className={`text-2xl font-bold ${color}`} style={{ fontFamily: "Manrope" }}>{count}</div>
++            <div className={`text-2xl font-bold ${color}`} style={{ fontFamily: "Bricolage Grotesque" }}>{count}</div>
+             <div className="text-xs text-slate-500 mt-0.5">{label}</div>
+           </button>
+         ))}
+@@ -189,7 +189,7 @@ export default function Warranty() {
+                   <button onClick={() => toggleExpanded(r.vehicle_id)} className="flex items-start gap-2 text-left flex-1 min-w-0">
+                     {open ? <ChevronDown size={16} className="text-slate-400 mt-0.5 shrink-0" /> : <ChevronRight size={16} className="text-slate-400 mt-0.5 shrink-0" />}
+                     <div className="min-w-0">
+-                      <div className="font-semibold text-slate-900 text-sm truncate" style={{ fontFamily: "Manrope" }}>
++                      <div className="font-semibold text-slate-900 text-sm truncate" style={{ fontFamily: "Bricolage Grotesque" }}>
+                         {r.brand} {r.model} {r.year || ""}
+                         {r.registration_number && <span className="ml-2 text-xs font-mono font-normal text-slate-500">{r.registration_number}</span>}
+                       </div>
+@@ -282,7 +282,7 @@ export default function Warranty() {
+           <form onSubmit={submitVoid} onClick={e => e.stopPropagation()} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 space-y-4">
+             <div className="flex items-start justify-between">
+               <div>
+-                <h2 className="text-base font-bold text-slate-900" style={{ fontFamily: "Manrope" }}>Void warranty</h2>
++                <h2 className="text-base font-bold text-slate-900" style={{ fontFamily: "Bricolage Grotesque" }}>Void warranty</h2>
+                 <p className="text-xs text-slate-500">{voiding.brand} {voiding.model} · {voiding.registration_number} · {voiding.customer_name || "no customer"}</p>
+               </div>
+               <button type="button" onClick={() => setVoiding(null)} className="max-md:min-w-11 max-md:min-h-11 max-md:inline-flex max-md:items-center max-md:justify-center p-1 hover:bg-slate-100 rounded-lg"><X size={16} /></button>
+@@ -316,7 +316,7 @@ export default function Warranty() {
+           <div onClick={e => e.stopPropagation()} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 space-y-4">
+             <div className="flex items-start justify-between">
+               <div>
+-                <h2 className="text-base font-bold text-slate-900" style={{ fontFamily: "Manrope" }}>Warranty length</h2>
++                <h2 className="text-base font-bold text-slate-900" style={{ fontFamily: "Bricolage Grotesque" }}>Warranty length</h2>
+                 <p className="text-xs text-slate-500">{editingLength.brand} {editingLength.model} · {editingLength.registration_number} · counted from the sale date</p>
+               </div>
+               <button type="button" onClick={() => setEditingLength(null)} className="max-md:min-w-11 max-md:min-h-11 max-md:inline-flex max-md:items-center max-md:justify-center p-1 hover:bg-slate-100 rounded-lg"><X size={16} /></button>
+diff --git a/frontend/tailwind.config.js b/frontend/tailwind.config.js
+index e881d98..7bf0f77 100644
+--- a/frontend/tailwind.config.js
++++ b/frontend/tailwind.config.js
+@@ -1,4 +1,6 @@
+ /** @type {import('tailwindcss').Config} */
++const { stone } = require('tailwindcss/colors');
++
+ module.exports = {
+     darkMode: ["class"],
+     content: [
+@@ -12,7 +14,18 @@ module.exports = {
+   			md: 'calc(var(--radius) - 2px)',
+   			sm: 'calc(var(--radius) - 4px)'
+   		},
++  		fontFamily: {
++  			sans: ['Instrument Sans', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
++  			display: ['Bricolage Grotesque', 'Instrument Sans', 'sans-serif']
++  		},
+   		colors: {
++  			// Identity: warm neutrals (stone) replace the cold slate, deep marine teal replaces
++  			// the default blue. Every existing slate-*/blue-* class in the app inherits this.
++  			slate: stone,
++  			blue: {
++  				50: '#eff9f7', 100: '#d3f0ea', 200: '#a7e0d6', 300: '#70c9bb', 400: '#3aac9d',
++  				500: '#1b8f83', 600: '#0f766e', 700: '#0c5f59', 800: '#0d4c48', 900: '#0f3f3b'
++  			},
+   			background: 'hsl(var(--background))',
+   			foreground: 'hsl(var(--foreground))',
+   			card: {
