@@ -1,3 +1,4 @@
+import { SubmitButton } from '@/app/submit-button';
 import { redirect } from 'next/navigation';
 import { getContext } from '@/lib/supabase';
 import { acceptInvitation, signOut } from '../../actions';
@@ -36,12 +37,12 @@ export default async function Invite({ params, searchParams }: { params: Promise
       {problem ? (
         <>
           <p role="alert" className="error">{problem}</p>
-          <form action={signOut}><button className="link">Sign out</button></form>
+          <form action={signOut}><SubmitButton className="link">Sign out</SubmitButton></form>
         </>
       ) : (
         <form action={acceptInvitation}>
           <input type="hidden" name="id" value={id} />
-          <button>Accept invitation</button>
+          <SubmitButton>Accept invitation</SubmitButton>
         </form>
       )}
     </main>

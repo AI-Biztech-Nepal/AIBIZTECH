@@ -1,9 +1,13 @@
-import { Fragment } from 'react';
+import { SubmitButton } from '@/app/submit-button';
 import { redirect } from 'next/navigation';
 import { getContext } from '@/lib/supabase';
-import { markNotificationsRead, startTrial, updateProfile } from './actions';
+import { startTrial } from './actions';
+import { recommend, type Profile } from '@/lib/recommend';
 import { Header } from './header';
 import { Notice, type Search } from './notice';
+
+const date = (d: number | string) => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'Asia/Kathmandu' });
+const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
 
 export default async function Launcher({ searchParams }: { searchParams: Search }) {
   const { error, denied, message } = await searchParams;
@@ -16,111 +20,93 @@ export default async function Launcher({ searchParams }: { searchParams: Search 
   const verified = org.verification_status === 'verified';
   const core = supabase.schema('core');
   await core.rpc('notify_trials', { p_org: org.id }); // adds any due trial notices; harmless if it fails
-  const [{ data: services }, { data: enabled }, { data: profile }, { data: claims }, { data: notes }, { data: reads }] = await Promise.all([
+  const [{ data: services }, { data: enabled }, { data: roles }, { data: business }] = await Promise.all([
     core.from('services').select('key, name, base_url').eq('is_active', true).order('name'),
     core.from('org_services').select('service_key, status, trial_ends_at').eq('org_id', org.id),
-    core.from('profiles').select('phone').eq('user_id', ctx.user_id).maybeSingle(),
-    supabase.auth.getClaims(),
-    // RLS returns these to owners and admins only
-    core.from('notifications').select('id, title, body, created_at').eq('org_id', org.id).order('created_at', { ascending: false }).limit(20),
-    core.from('notification_reads').select('notification_id'),
+    core.from('service_roles').select('service_key').eq('org_id', org.id), // any member may read these
+    core.from('organizations').select('business_type, business_needs, team_size').eq('id', org.id).maybeSingle(),
   ]);
-  const readIds = new Set((reads ?? []).map((r) => r.notification_id));
-  const unread = (notes ?? []).filter((n) => !readIds.has(n.id)).length;
   const statusOf = new Map((enabled ?? []).map((s) => [s.service_key, s.status as string]));
   const trialEnd = new Map((enabled ?? []).map((s) => [s.service_key, new Date(s.trial_ends_at).getTime()]));
+  const people = new Map<string, number>();
+  (roles ?? []).forEach((r) => people.set(r.service_key, (people.get(r.service_key) ?? 0) + 1));
   const daysLeft = (key: string) => Math.max(0, Math.ceil(((trialEnd.get(key) ?? 0) - Date.now()) / 864e5));
+  const suggested = new Set(recommend((business ?? {}) as Profile));
+  const all = [...(services ?? [])].sort((a, b) => Number(suggested.has(b.key)) - Number(suggested.has(a.key)));
+  const live = (key: string) => org.services[key] && statusOf.get(key) !== 'suspended' && !(statusOf.get(key) === 'trial' && (trialEnd.get(key) ?? 0) <= Date.now());
+  const ordered = [...all].sort((x, y) => Number(!!org.services[y.key]) - Number(!!org.services[x.key]));
+  const inUse = all.filter((s) => live(s.key)).length;
   const deniedName = services?.find((s) => s.key === denied)?.name;
 
   return (
-    <main className="wide">
+    <>
       <Header org={org} orgs={ctx.orgs} page="home" />
+      <main className="wide">
+        <div className="welcome">
+          <h1>Hello{ctx.full_name ? `, ${ctx.full_name}` : ''}</h1>
+          <p>{org.name} · <span className="cap">{org.org_role}</span> · {inUse} of {all.length} services in use</p>
+        </div>
+        <Notice error={error} message={deniedName ? `You don't have access to ${deniedName} in ${org.name}. Ask your organization admin.` : message} />
 
-      <h1>Hello{ctx.full_name ? `, ${ctx.full_name}` : ''}</h1>
-      <Notice error={error} message={deniedName ? `You don't have access to ${deniedName} in ${org.name}. Ask your organization admin.` : message} />
+        {org.verification_status === 'pending' && (
+          <p role="status" className="banner warn">Your organization is awaiting verification. Services unlock once it is verified.</p>
+        )}
+        {org.verification_status === 'rejected' && (
+          <p role="alert" className="banner error">Verification was rejected{org.verification_note ? `: ${org.verification_note}` : '.'} Contact support.</p>
+        )}
 
-      {org.verification_status === 'pending' && (
-        <p role="status" className="banner">Your organization is awaiting verification. Services unlock once it is verified.</p>
-      )}
-      {org.verification_status === 'rejected' && (
-        <p role="alert" className="banner error">Verification was rejected{org.verification_note ? `: ${org.verification_note}` : '.'} Contact support.</p>
-      )}
-
-      <div className="panels">
-        <section className="tile">
-          <h2>Profile</h2>
-          <form action={updateProfile}>
-            <label>Full name<input name="full_name" defaultValue={ctx.full_name ?? ''} maxLength={120} autoComplete="off" required /></label>
-            <label>Phone<input name="phone" type="tel" defaultValue={profile?.phone ?? ''} pattern="+?[0-9][0-9 -]{6,19}" title="Digits, optionally starting with +" autoComplete="off" /></label>
-            <button>Save</button>
-          </form>
-          <dl>
-            <dt>Email</dt><dd>{claims?.claims.email ?? '—'}</dd>
-            <dt>Organization</dt><dd>{org.name}</dd>
-            <dt>Your role</dt><dd className="cap">{org.org_role}</dd>
-            {services?.filter((s) => org.services[s.key]).map((s) => (
-              <Fragment key={s.key}><dt>{s.name} role</dt><dd className="cap">{org.services[s.key]}</dd></Fragment>
-            ))}
-            <dt>Status</dt><dd>{org.verification_status}</dd>
-          </dl>
-        </section>
-
-        <section className="tile">
-          <h2>Notifications{unread > 0 && <span className="badge">{unread}</span>}</h2>
-          {!isAdmin ? (
-            <p>Subscription messages go to your organization's owners and admins.</p>
-          ) : !notes?.length ? (
-            <p>No notifications yet.</p>
-          ) : (
-            <>
-              <ul className="notes">
-                {notes.map((n) => (
-                  <li key={n.id} className={readIds.has(n.id) ? '' : 'unread'}>
-                    <strong>{n.title}</strong>
-                    {n.body && <span>{n.body}</span>}
-                    <time dateTime={n.created_at}>{new Date(n.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kathmandu' })}</time>
+        <div className="home">
+          <section aria-labelledby="services">
+            <h2 id="services">Services</h2>
+            <ul className="rows">
+              {ordered.map((s) => {
+                const role = org.services[s.key];
+                const status = statusOf.get(s.key);
+                const expired = status === 'trial' && (trialEnd.get(s.key) ?? 0) <= Date.now();
+                const left = daysLeft(s.key);
+                if (role) {
+                  const tone = expired || status === 'suspended' ? 'off' : status === 'trial' ? (left <= 3 ? 'warn' : 'trial') : 'live';
+                  const label = expired ? 'Trial ended' : status === 'suspended' ? 'Suspended' : status === 'trial' ? `Trial, ${plural(left, 'day')} left` : 'Active';
+                  return (
+                    <li key={s.key}>
+                      <span className="mark" aria-hidden>{s.name[0]}</span>
+                      <div className="grow">
+                        <h3>{s.name}</h3>
+                        <span className="sub">
+                          <span className="cap">{role}</span> · {plural(people.get(s.key) ?? 0, 'person')} with access
+                          {status === 'trial' && !expired && ` · ends ${date(trialEnd.get(s.key)!)}`}
+                        </span>
+                        {/* Live figures (stock count, attendance today, balance) go here once each service exposes a summary endpoint */}
+                      </div>
+                      <span className={`state ${tone}`}>{label}</span>
+                      {!expired && status !== 'suspended' && <a href={s.base_url} className="button">Open</a>}
+                    </li>
+                  );
+                }
+                const canStart = isAdmin && verified && !expired && status !== 'suspended';
+                const note = !verified ? 'Needs verification first.' : expired ? 'Trial ended. Contact us to subscribe.' : status === 'suspended' ? 'Suspended. Contact us.' : status ? 'Enabled, but you have no role yet.' : isAdmin ? 'Start a free trial for your organization.' : 'Ask your organization admin for access.';
+                return (
+                  <li key={s.key}>
+                    <span className="mark quiet" aria-hidden>{s.name[0]}</span>
+                    <div className="grow">
+                      <h3>{s.name}{suggested.has(s.key) && <span className="chip accent">Recommended</span>}</h3>
+                      <span className="sub">{note}</span>
+                    </div>
+                    {canStart && (
+                      <form action={startTrial}>
+                        <input type="hidden" name="org_id" value={org.id} />
+                        <input type="hidden" name="service_key" value={s.key} />
+                        <input type="hidden" name="enabled" value={status ? '1' : ''} />
+                        <SubmitButton>{status ? 'Give me access' : 'Start free trial'}</SubmitButton>
+                      </form>
+                    )}
                   </li>
-                ))}
-              </ul>
-              {unread > 0 && (
-                <form action={markNotificationsRead}>
-                  <input type="hidden" name="org_id" value={org.id} />
-                  <button className="link">Mark all as read</button>
-                </form>
-              )}
-            </>
-          )}
-        </section>
-      </div>
-
-      <ul className="tiles">
-        {services?.map((s) => {
-          const role = org.services[s.key];
-          const status = statusOf.get(s.key);
-          const expired = status === 'trial' && (trialEnd.get(s.key) ?? 0) <= Date.now();
-          return (
-            <li key={s.key} className="tile">
-              <h2>{s.name}</h2>
-              {role ? (
-                <>
-                  <p>{role}{status === 'trial' ? ` · trial, ${daysLeft(s.key)} ${daysLeft(s.key) === 1 ? 'day' : 'days'} left` : ''}</p>
-                  <a href={s.base_url} className="button">Open</a>
-                </>
-              ) : isAdmin && verified && !expired && status !== 'suspended' ? (
-                <form action={startTrial}>
-                  <input type="hidden" name="org_id" value={org.id} />
-                  <input type="hidden" name="service_key" value={s.key} />
-                  <input type="hidden" name="enabled" value={status ? '1' : ''} />
-                  <p>{status ? 'Enabled, but you have no role yet.' : 'Not enabled for your organization.'}</p>
-                  <button>{status ? 'Give me access' : 'Start free trial'}</button>
-                </form>
-              ) : (
-                <p>{!verified ? 'Available once your organization is verified.' : expired ? 'Trial ended. Contact us to subscribe.' : status === 'suspended' ? 'Suspended.' : 'No access. Ask your organization admin.'}</p>
-              )}
-            </li>
-          );
-        })}
-      </ul>
-    </main>
+                );
+              })}
+            </ul>
+          </section>
+        </div>
+      </main>
+    </>
   );
 }

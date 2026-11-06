@@ -1,3 +1,4 @@
+import { SubmitButton } from '@/app/submit-button';
 import { resetPassword } from '../actions';
 import { Notice, type Search } from '../notice';
 
@@ -9,7 +10,7 @@ export default async function ResetPassword({ searchParams }: { searchParams: Se
       <Notice error={error} />
       <form action={resetPassword}>
         <label>New password<input name="password" type="password" autoComplete="new-password" minLength={8} required /></label>
-        <button>Save password</button>
+        <SubmitButton>Save password</SubmitButton>
       </form>
     </main>
   );

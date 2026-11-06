@@ -1,3 +1,4 @@
+import { SubmitButton } from '@/app/submit-button';
 import Link from 'next/link';
 import { forgotPassword } from '../actions';
 import { Notice, type Search } from '../notice';
@@ -10,7 +11,7 @@ export default async function ForgotPassword({ searchParams }: { searchParams: S
       <Notice error={error} />
       <form action={forgotPassword}>
         <label>Email<input name="email" type="email" autoComplete="email" required /></label>
-        <button>Send reset link</button>
+        <SubmitButton>Send reset link</SubmitButton>
       </form>
       <p><Link href="/login">Back to sign in</Link></p>
     </main>

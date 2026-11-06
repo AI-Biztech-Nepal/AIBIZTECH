@@ -11,8 +11,8 @@ export default async function Onboarding({ searchParams }: { searchParams: Searc
 
   return (
     <main className="card form">
-      <h1>Set up your organization</h1>
-      <p>Your business is the organization. We verify every organization, so we need its details and the owner's.</p>
+      <h1>Welcome. Tell us about your business</h1>
+      <p>A few questions so we can suggest the right services, then your organization's details. We verify every organization, so we need its details and the owner's.</p>
       <Notice error={error} />
       <Wizard key={error ?? ''} />
     </main>

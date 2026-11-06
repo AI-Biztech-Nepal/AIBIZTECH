@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
 
 // The storage migration needs Supabase's storage schema, which this stub does not have
-const migration = ['20261027000000_core_init', '20261028000000_org_verification', '20261028000200_notifications', '20261028000300_trials', '20261028000400_members', '20261028000500_invitations']
+const migration = ['20261027000000_core_init', '20261028000000_org_verification', '20261028000200_notifications', '20261028000300_trials', '20261028000400_members', '20261028000500_invitations', '20261031000000_business_profile', '20261031000100_platform_console']
   .map((f) => readFileSync(new URL(`../migrations/${f}.sql`, import.meta.url), 'utf8')).join('\n');
 
 // shortcut: minimal stand-in for Supabase's auth schema, switch to `supabase test db` once the CLI is in use
@@ -159,6 +159,11 @@ test('changing the PAN sends a verified organization back to pending', async () 
   const { rows } = await db.query(`select verification_status from core.organizations where id = $1`, [org]);
   await db.exec('rollback');
   assert.equal(rows[0].verification_status, 'pending');
+});
+
+test('the owner can save business answers but still cannot verify the organization', async () => {
+  await as(OWNER, `update core.organizations set business_type = 'retail', business_needs = '{stock,finance}', team_size = '2-5' where id = $1`, [org]);
+  await assert.rejects(as(OWNER, `update core.organizations set verification_status = 'pending', business_type = 'x' where id = $1`, [org]), /permission denied/);
 });
 
 test('subscription and verification events notify owners and admins, who can mark them read', async () => {
@@ -319,4 +324,36 @@ test('expired invitations and people who already belong to an organization canno
   const { rows: [{ id: own }] } = await db.query(
     `insert into core.invitations (org_id, email) values ($1, 'owner@x.np') returning id`, [org]);
   await assert.rejects(asCommit(OWNER, `select core.accept_invitation($1)`, [own]), /already belong/);
+});
+
+// Keep last: reviewing and suspending add notifications, which earlier tests count
+test('platform functions are for platform admins only, and every change is audited', async () => {
+  const STAFF = '00000000-0000-0000-0000-0000000000f1';
+  await db.exec(`insert into auth.users (id, email) values ('${STAFF}', 'staff@x.np')`);
+  await assert.rejects(as(OWNER, `select core.platform_overview()`), /not allowed/);
+  await assert.rejects(as(OWNER, `select core.platform_review_org($1, 'verified')`, [org]), /not allowed/);
+  await assert.rejects(as(OWNER, `select core.platform_set_service($1, 'finance', 'suspended')`, [org]), /not allowed/);
+  await db.exec(`insert into core.platform_admins (user_id) values ('${STAFF}')`);
+
+  const { rows: [{ o }] } = await as(STAFF, `select core.platform_overview() as o`);
+  assert.ok(o.orgs.total >= 1 && Array.isArray(o.services) && Array.isArray(o.activity));
+  const { rows: [{ l }] } = await as(STAFF, `select core.platform_orgs(null, 'acme') as l`);
+  assert.equal(l.rows[0].name, 'Acme');
+  assert.equal(l.total, 1);
+  const { rows: [{ d }] } = await as(STAFF, `select core.platform_org($1) as d`, [org]);
+  assert.equal(d.members[0].email, 'owner@x.np');
+
+  await assert.rejects(as(STAFF, `select core.platform_review_org($1, 'rejected', '  ')`, [org]), /reason/);
+  await asCommit(STAFF, `select core.platform_review_org($1, 'rejected', 'PAN does not match')`, [org]);
+  assert.deepEqual((await db.query(`select verification_status, verification_note from core.organizations where id = $1`, [org])).rows[0],
+    { verification_status: 'rejected', verification_note: 'PAN does not match' });
+  await asCommit(STAFF, `select core.platform_review_org($1, 'verified')`, [org]);
+  assert.deepEqual((await db.query(`select verification_status, verification_note, verified_by from core.organizations where id = $1`, [org])).rows[0],
+    { verification_status: 'verified', verification_note: null, verified_by: STAFF });
+
+  await asCommit(STAFF, `select core.platform_set_service($1, 'finance', 'suspended', 14)`, [org]);
+  assert.equal((await db.query(`select status from core.org_services where org_id = $1 and service_key = 'finance'`, [org])).rows[0].status, 'suspended');
+  await assert.rejects(as(STAFF, `select core.platform_set_service($1, 'finance', 'bogus')`, [org]), /status must be/);
+  await assert.rejects(as(STAFF, `select core.platform_set_service($1, 'stock', 'active')`, [org]), /does not have/);
+  assert.equal((await db.query(`select count(*)::int as n from core.platform_audit`)).rows[0].n, 3);
 });

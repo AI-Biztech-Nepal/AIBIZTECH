@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { createClient, getContext } from '@/lib/supabase';
 import { safeNext } from '@/lib/safe-next';
+import { parseProfile } from '@/lib/recommend';
 import { EMAIL, FIELDS, PHONE, validateDetails, validatePhoto, type Details } from '@/lib/org-details';
 
 const str = (f: FormData, k: string) => String(f.get(k) ?? '').trim();
@@ -85,15 +86,19 @@ export async function createOrganization(form: FormData) {
     fail('/onboarding', error.message.includes('pan_no') ? 'An organization with this PAN is already registered.' : 'That name is already taken. Try another.');
   }
 
-  // The organization exists by now; a failed photo upload must not lose it, so the owner can add the photo later
+  // The organization exists by now; a failed extra step must not lose it, so the owner is told and carries on
+  let soft = '';
+  const { error: profileError } = await supabase.schema('core').from('organizations').update(parseProfile(form)).eq('id', orgId);
+  if (profileError) soft = 'Your organization was created, but your business answers could not be saved.';
   if (file) {
     const path = `${orgId}/pan.${file.type.split('/')[1]}`;
     const { error: uploadError } = await supabase.storage.from('pan-cards').upload(path, file, { contentType: file.type, upsert: true });
     const { error: linkError } = uploadError
       ? { error: uploadError }
       : await supabase.schema('core').from('organizations').update({ pan_photo_path: path }).eq('id', orgId);
-    if (linkError) fail('/', 'Your organization was created, but the PAN photo could not be saved. You can add it later.');
+    if (linkError) soft = 'Your organization was created, but the PAN photo could not be saved. You can add it later.';
   }
+  if (soft) fail('/', soft);
   redirect('/');
 }
 
@@ -101,12 +106,12 @@ export async function updateProfile(form: FormData) {
   const { supabase, ctx } = await getContext();
   const full_name = str(form, 'full_name');
   const phone = str(form, 'phone');
-  if (!full_name) fail('/', 'Enter your name.');
-  if (phone && !PHONE.test(phone)) fail('/', 'Enter a valid phone number (digits, optional + and dashes).');
+  if (!full_name) fail('/settings', 'Enter your name.');
+  if (phone && !PHONE.test(phone)) fail('/settings', 'Enter a valid phone number (digits, optional + and dashes).');
   const { error } = await supabase.schema('core').from('profiles')
     .update({ full_name, phone: phone || null }).eq('user_id', ctx!.user_id);
-  if (error) fail('/', error.message);
-  redirect('/?message=' + encodeURIComponent('Profile saved.'));
+  if (error) fail('/settings', error.message);
+  redirect('/settings?message=' + encodeURIComponent('Profile saved.'));
 }
 
 export async function markNotificationsRead(form: FormData) {
@@ -122,7 +127,7 @@ export async function markNotificationsRead(form: FormData) {
     const { error } = await core.from('notification_reads').insert(rows);
     if (error) fail('/', error.message);
   }
-  revalidatePath('/');
+  revalidatePath('/', 'layout');
 }
 
 // Owner/admin starts a trial and becomes the service's admin; RLS enforces who may do this
@@ -206,13 +211,13 @@ export async function acceptInvitation(form: FormData) {
 export async function updateOrganization(form: FormData) {
   const { supabase, ctx } = await getContext();
   const id = str(form, 'org_id');
-  if (ctx!.orgs.find((o) => o.id === id)?.org_role === 'member') fail('/admin', 'Only owners and admins can edit the organization.');
+  if (ctx!.orgs.find((o) => o.id === id)?.org_role === 'member') fail('/settings', 'Only owners and admins can edit the organization.');
   const v = { name: str(form, 'name'), address: str(form, 'address'), phone: str(form, 'phone'), email: str(form, 'email') };
-  if (!v.name || !v.address) fail('/admin', 'Name and address are required.');
-  if (!PHONE.test(v.phone)) fail('/admin', 'Enter a valid phone number (digits, optional + and dashes).');
-  if (!EMAIL.test(v.email)) fail('/admin', 'Enter a valid email address.');
+  if (!v.name || !v.address) fail('/settings', 'Name and address are required.');
+  if (!PHONE.test(v.phone)) fail('/settings', 'Enter a valid phone number (digits, optional + and dashes).');
+  if (!EMAIL.test(v.email)) fail('/settings', 'Enter a valid email address.');
   const { error } = await supabase.schema('core').from('organizations').update(v).eq('id', id);
-  if (error) fail('/admin', error.message);
+  if (error) fail('/settings', error.message);
   revalidatePath('/', 'layout');
-  redirect('/admin?message=' + encodeURIComponent('Organization details saved.'));
+  redirect('/settings?message=' + encodeURIComponent('Organization details saved.'));
 }

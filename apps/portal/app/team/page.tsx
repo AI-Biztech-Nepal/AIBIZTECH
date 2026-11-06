@@ -1,3 +1,4 @@
+import { SubmitButton } from '@/app/submit-button';
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { getContext, type Member } from '@/lib/supabase';
@@ -28,23 +29,22 @@ export default async function Team({ searchParams }: { searchParams: Search }) {
   const offered = (services ?? []).filter((s) => enabledKeys.has(s.key));
 
   return (
-    <main className="wide">
+    <>
       <Header org={org} orgs={ctx.orgs} page="team" />
+      <main className="wide">
 
       <h1>Team</h1>
-      <p>Choose each person's role in your organization and in each service you have enabled.</p>
       <Notice error={error} message={message} />
 
       {invite && (
-        <section className="tile">
-          <h2>Invitation created</h2>
-          <p>Send this link to the person. It works once, for the email you entered, and expires in 7 days.</p>
+        <section className="setting">
+          <div><h2>Invitation created</h2><p className="sub">Send this link to the person. It works once, for the email you entered, and expires in 7 days.</p></div>
           <CopyLink value={linkFor(invite)} />
         </section>
       )}
 
-      <section className="tile">
-        <h2>Invite someone</h2>
+      <section className="setting">
+        <div><h2>Invite someone</h2><p className="sub">Set their role in the organization and in each service you have enabled.</p></div>
         <form action={createInvite}>
           <input type="hidden" name="org_id" value={org.id} />
           <div className="grid2">
@@ -61,20 +61,20 @@ export default async function Team({ searchParams }: { searchParams: Search }) {
               </label>
             ))}
           </div>
-          <button>Create invitation</button>
+          <SubmitButton>Create invitation</SubmitButton>
         </form>
       </section>
 
       {!!pending?.length && (
-        <section className="tile">
-          <h2>Pending invitations</h2>
+        <section className="setting">
+          <div><h2>Pending invitations</h2></div>
           <ul className="notes">
             {pending.map((i) => (
               <li key={i.id}>
                 <strong>{i.email}</strong>
                 <span>{i.org_role} · {new Date(i.expires_at) <= new Date() ? 'expired' : `expires ${new Date(i.expires_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'Asia/Kathmandu' })}`}</span>
                 <CopyLink value={linkFor(i.id)} />
-                <form action={revokeInvite} className="inline"><input type="hidden" name="id" value={i.id} /><button className="link">Revoke</button></form>
+                <form action={revokeInvite} className="inline"><input type="hidden" name="id" value={i.id} /><SubmitButton className="link">Revoke</SubmitButton></form>
               </li>
             ))}
           </ul>
@@ -82,15 +82,17 @@ export default async function Team({ searchParams }: { searchParams: Search }) {
       )}
 
       <h2 className="spaced">Members</h2>
-      <ul className="members">
+      <ul className="rows members">
         {members?.map((m) => {
           const isOwner = m.org_role === 'owner';
           const isSelf = m.user_id === ctx.user_id;
           const manage = !isOwner && !isSelf;
           return (
-            <li key={m.user_id} className="tile">
-              <h2>{m.full_name || m.email}{isSelf && ' (you)'}</h2>
-              <p>{m.email} · joined {new Date(m.joined_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kathmandu' })}</p>
+            <li key={m.user_id} className="member">
+              <div>
+                <h3>{m.full_name || m.email}{isSelf && ' (you)'}</h3>
+                <span className="sub">{m.email} · joined {new Date(m.joined_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kathmandu' })}</span>
+              </div>
               <form action={saveMember}>
                 <input type="hidden" name="org_id" value={org.id} />
                 <input type="hidden" name="user_id" value={m.user_id} />
@@ -114,13 +116,14 @@ export default async function Team({ searchParams }: { searchParams: Search }) {
                     </label>
                   ))}
                 </div>
-                {!offered.length && !manage ? null : <button>Save</button>}
+                {!offered.length && !manage ? null : <SubmitButton>Save</SubmitButton>}
               </form>
             </li>
           );
         })}
       </ul>
       {!offered.length && <p>No services are enabled yet. Start a trial from the home page, then assign roles here.</p>}
-    </main>
+      </main>
+    </>
   );
 }
