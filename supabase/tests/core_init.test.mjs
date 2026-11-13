@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
 
 // The storage migration needs Supabase's storage schema, which this stub does not have
-const migration = ['20261027000000_core_init', '20261028000000_org_verification', '20261028000200_notifications', '20261028000300_trials', '20261028000400_members', '20261028000500_invitations', '20261031000000_business_profile', '20261031000100_platform_console', '20261101000000_features']
+const migration = ['20261027000000_core_init', '20261028000000_org_verification', '20261028000200_notifications', '20261028000300_trials', '20261028000400_members', '20261028000500_invitations', '20261031000000_business_profile', '20261031000100_platform_console', '20261101000000_features', '20261101000300_feature_on_service_role']
   .map((f) => readFileSync(new URL(`../migrations/${f}.sql`, import.meta.url), 'utf8')).join('\n');
 
 // shortcut: minimal stand-in for Supabase's auth schema, switch to `supabase test db` once the CLI is in use
