@@ -9,9 +9,10 @@ import { PGlite } from '@electric-sql/pglite';
 const mig = (f) => readFileSync(new URL(`../migrations/${f}.sql`, import.meta.url), 'utf8');
 const core = ['20261027000000_core_init', '20261028000000_org_verification', '20261028000200_notifications', '20261028000300_trials',
   '20261028000400_members', '20261028000500_invitations', '20261031000000_business_profile', '20261031000100_platform_console',
-  '20261101000000_features', '20261101000300_feature_on_service_role'].map(mig).join('\n');
+  '20261101000000_features', '20261101000300_feature_on_service_role', '20261101000400_features_superadmin_only'].map(mig).join('\n');
 
 const A = '00000000-0000-0000-0000-00000000000a', B = '00000000-0000-0000-0000-00000000000b'; // orgs
+const PS = '00000000-0000-0000-0000-0000000000f3'; // platform staff: the only ones who may switch features
 const UA = '00000000-0000-0000-0000-0000000000a1', UB = '00000000-0000-0000-0000-0000000000b1'; // their owners
 
 const db = new PGlite();
@@ -46,7 +47,8 @@ await db.exec(`
 await db.exec(mig('20261101000200_finance_feature_guards'));
 // two dummy orgs, both with Finance, Finance rent catalogue on for A only (B has no row: default off)
 await db.exec(`
-  insert into auth.users (id, email) values ('${UA}', 'a@x.np'), ('${UB}', 'b@x.np');
+  insert into auth.users (id, email) values ('${UA}', 'a@x.np'), ('${UB}', 'b@x.np'), ('${PS}', 'staff@x.np');
+  insert into core.platform_admins (user_id) values ('${PS}');
   insert into core.organizations (id, name, slug, pan_no, verification_status) values
     ('${A}', 'Org A', 'a', '100000001', 'verified'), ('${B}', 'Org B', 'b', '100000002', 'verified');
   insert into core.memberships (org_id, user_id, org_role) values ('${A}', '${UA}', 'owner'), ('${B}', '${UB}', 'owner');
@@ -94,7 +96,7 @@ test('flag on: the owner can add, edit and delete; another org cannot touch the 
 });
 
 test('switching off pauses writes but keeps and shows every row; switching on restores', async () => {
-  await as(UA, `select core.set_feature($1, 'finance.rent', false)`, [A], true);
+  await as(PS, `select core.set_feature($1, 'finance.rent', $2, 'test')`, [A, false], true);
   try {
     assert.equal(await count(UA, 'rentals'), 1); // still there, still readable
     await assert.rejects(as(UA, `insert into finance.rentals (owner_id, name) values ($1, 'x')`, [A]), /row-level security/);
@@ -102,7 +104,7 @@ test('switching off pauses writes but keeps and shows every row; switching on re
     assert.equal((await as(UA, `delete from finance.rentals`)).affectedRows, 0);
     assert.equal((await as(UA, `select core.feature_on($1, 'finance.rent') a`, [A])).rows[0].a, false);
   } finally {
-    await as(UA, `select core.set_feature($1, 'finance.rent', true)`, [A], true);
+    await as(PS, `select core.set_feature($1, 'finance.rent', $2, 'test')`, [A, true], true);
   }
   await as(UA, `insert into finance.rentals (owner_id, name) values ($1, 'back')`, [A], true);
   assert.equal(await count(UA, 'rentals'), 2);
@@ -112,12 +114,12 @@ test('switching off pauses writes but keeps and shows every row; switching on re
 test('the rent sync leaves ledger lines alone while Rent is off', async () => {
   await db.exec(`insert into finance.customer_ledger_entries values ('${A}', '${UA}', 'rental_wage', '${UA}')`);
   const lines = async () => (await db.query(`select count(*)::int n from finance.customer_ledger_entries`)).rows[0].n;
-  await as(UA, `select core.set_feature($1, 'finance.rent', false)`, [A], true);
+  await as(PS, `select core.set_feature($1, 'finance.rent', $2, 'test')`, [A, false], true);
   try {
     await as(UA, `select finance.sync_rental_wages()`);
     assert.equal(await lines(), 1);
   } finally {
-    await as(UA, `select core.set_feature($1, 'finance.rent', true)`, [A], true);
+    await as(PS, `select core.set_feature($1, 'finance.rent', $2, 'test')`, [A, true], true);
   }
   await db.exec(`delete from finance.customer_ledger_entries`);
 });

@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
 
 // The storage migration needs Supabase's storage schema, which this stub does not have
-const migration = ['20261027000000_core_init', '20261028000000_org_verification', '20261028000200_notifications', '20261028000300_trials', '20261028000400_members', '20261028000500_invitations', '20261031000000_business_profile', '20261031000100_platform_console', '20261101000000_features', '20261101000300_feature_on_service_role']
+const migration = ['20261027000000_core_init', '20261028000000_org_verification', '20261028000200_notifications', '20261028000300_trials', '20261028000400_members', '20261028000500_invitations', '20261031000000_business_profile', '20261031000100_platform_console', '20261101000000_features', '20261101000300_feature_on_service_role', '20261101000400_features_superadmin_only']
   .map((f) => readFileSync(new URL(`../migrations/${f}.sql`, import.meta.url), 'utf8')).join('\n');
 
 // shortcut: minimal stand-in for Supabase's auth schema, switch to `supabase test db` once the CLI is in use
@@ -326,8 +326,10 @@ test('expired invitations and people who already belong to an organization canno
   await assert.rejects(asCommit(OWNER, `select core.accept_invitation($1)`, [own]), /already belong/);
 });
 
-test('features: defaults, dependencies, owner-only writes, audit, expired trial', async () => {
-  await db.exec(`insert into core.features (key, service_key, name, description, requires, default_on) values
+test('features: staff-only switching with a reason, dependencies, audit, defaults, expired trial', async () => {
+  const FSTAFF = '00000000-0000-0000-0000-0000000000f2';
+  await db.exec(`insert into auth.users (id, email) values ('${FSTAFF}', 'fstaff@x.np'); insert into core.platform_admins (user_id) values ('${FSTAFF}');
+    insert into core.features (key, service_key, name, description, requires, default_on) values
     ('finance.sales', 'finance', 'Sales', 's', '{}', true),
     ('finance.emi', 'finance', 'EMI', 'e', '{finance.sales}', true),
     ('finance.vehicles', 'finance', 'Vehicles', 'v', '{}', false)`);
@@ -338,23 +340,36 @@ test('features: defaults, dependencies, owner-only writes, audit, expired trial'
     assert.equal((await as(OUTSIDER, `select * from core.org_features($1)`, [org])).rows.length, 0);
     assert.equal((await as(OWNER, `select * from core.org_features($1)`, [org])).rows.length, 3);
 
-    const set = (u, k, v) => asCommit(u, `select core.set_feature($1, $2, $3)`, [org, k, v]);
-    await assert.rejects(set(OUTSIDER, 'finance.vehicles', true), /only owners and admins/);
+    const set = (u, k, v, why = 'customer asked') => asCommit(u, `select core.set_feature($1, $2, $3, $4)`, [org, k, v, why]);
+    // the organization's own owner and any outsider cannot switch anything, nor write the table
+    await assert.rejects(set(OWNER, 'finance.vehicles', true), /not allowed/);
+    await assert.rejects(set(OUTSIDER, 'finance.vehicles', true), /not allowed/);
     await assert.rejects(as(OWNER, `insert into core.org_features values ($1, 'finance.vehicles', true)`, [org]), /permission denied|row-level/);
-    await assert.rejects(set(OWNER, 'finance.sales', false), /needed by finance.emi/);
-    await set(OWNER, 'finance.vehicles', true);
+    await assert.rejects(as(OWNER, `select * from core.platform_org_features($1)`, [org]), /not allowed/);
+    // staff: a reason is required, dependencies hold, no-op changes are refused
+    await assert.rejects(set(FSTAFF, 'finance.vehicles', true, '  '), /give a reason/);
+    await assert.rejects(set(FSTAFF, 'finance.sales', false), /needed by finance.emi/);
+    await assert.rejects(set(FSTAFF, 'finance.sales', true), /already on/);
+    await set(FSTAFF, 'finance.vehicles', true);
     assert.equal(await on(OWNER, 'finance.vehicles'), true);
-    await set(OWNER, 'finance.emi', false);
-    await set(OWNER, 'finance.sales', false);
+    await set(FSTAFF, 'finance.emi', false);
+    await set(FSTAFF, 'finance.sales', false);
     assert.equal(await on(OWNER, 'finance.emi'), false);
-    await assert.rejects(set(OWNER, 'finance.emi', true), /needs finance.sales/);
-    await set(OWNER, 'finance.sales', true);
+    await assert.rejects(set(FSTAFF, 'finance.emi', true), /needs finance.sales/);
+    await set(FSTAFF, 'finance.sales', true);
 
-    const { rows } = await as(OWNER, `select detail from core.audit_log where action = 'feature_set' order by id`);
-    assert.equal(rows.length, 4); // rejected changes leave no audit row
+    const { rows } = await as(FSTAFF, `select feature_key, enabled, has_row from core.platform_org_features($1) order by feature_key`, [org]);
+    assert.deepEqual(rows, [{ feature_key: 'finance.emi', enabled: false, has_row: true }, { feature_key: 'finance.sales', enabled: true, has_row: true }, { feature_key: 'finance.vehicles', enabled: true, has_row: true }]);
+
+    // 4 successful changes: each is in the staff audit with the reason, and in the org's own log without it
+    const pa = (await db.query(`select admin_id, detail from core.platform_audit where action like 'feature:%' order by id`)).rows;
+    assert.equal(pa.length, 4);
+    assert.ok(pa.every((r) => r.admin_id === FSTAFF && r.detail.endsWith('customer asked')));
+    assert.equal((await as(OWNER, `select * from core.audit_log where action = 'feature_set'`)).rows.length, 4);
     assert.equal(await withTrial('-1 hour', async () => (await db.query(`select core.feature_on($1, 'finance.sales') a`, [org])).rows[0].a), false);
   } finally {
-    await db.exec(`delete from core.org_features; delete from core.features; delete from core.audit_log where action = 'feature_set'`);
+    await db.exec(`delete from core.org_features; delete from core.features; delete from core.audit_log where action = 'feature_set';
+      delete from core.platform_audit where action like 'feature:%'; delete from core.platform_admins where user_id = '${FSTAFF}'`);
   }
 });
 
