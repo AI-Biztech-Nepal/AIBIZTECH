@@ -2,6 +2,8 @@ import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { Fingerprint, UserPlus, Shield, ShieldCheck, Edit, Trash2 } from "lucide-react";
 import WarrantyLengthInput from "../components/WarrantyLengthInput";
+import SpeedReport from "../components/SpeedReport";
+import BackupCard from "../components/BackupCard";
 import { useAuth } from "../context/AuthContext";
 import api from "../utils/api";
 import { isNative, isBiometricAvailable, hasSavedCredentials, saveCredentials, deleteCredentials, verifyIdentity } from "../utils/biometric";
@@ -180,7 +182,7 @@ export default function Settings() {
     }
   };
 
-  const ROLE_LABELS = { admin: "Admin", stock_supervisor: "Front Desk", parts_supervisor: "Parts Department", social_media: "Social Media" };
+  const ROLE_LABELS = { admin: "Admin", stock_supervisor: "Front Desk", parts_supervisor: "Parts Department", social_media: "Social Media", sanakhat_officer: "Sanakhat Desk" };
 
   const inp = "w-full h-10 px-3 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500";
 
@@ -408,6 +410,12 @@ export default function Settings() {
         </div>
       )}
 
+      {/* Automatic backups (main company's Admin only; hides itself for anyone else) */}
+      {isAdmin && <BackupCard />}
+
+      {/* How fast each screen really is (Admin only) */}
+      {isAdmin && <SpeedReport />}
+
       {/* App Info — not shown for platform_owner (no company of its own) or Front Desk (showroom staff don't need system/infra details) */}
       {user?.role !== "platform_owner" && user?.role !== "stock_supervisor" && (
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
@@ -456,6 +464,7 @@ export default function Settings() {
                   <option value="stock_supervisor">Front Desk</option>
                   <option value="parts_supervisor">Parts Department</option>
                   <option value="social_media">Social Media</option>
+                  <option value="sanakhat_officer">Sanakhat Desk</option>
                   <option value="admin">Admin</option>
                 </select>
               </div>
@@ -494,6 +503,7 @@ export default function Settings() {
                   <option value="stock_supervisor">Front Desk</option>
                   <option value="parts_supervisor">Parts Department</option>
                   <option value="social_media">Social Media</option>
+                  <option value="sanakhat_officer">Sanakhat Desk</option>
                   <option value="admin">Admin</option>
                 </select>
               </div>

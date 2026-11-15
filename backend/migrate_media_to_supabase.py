@@ -34,13 +34,22 @@ async def rows(db, table, fields):
 
 
 async def copy(db):
+    # A file counts as moved only if it really is in THIS Storage project. The database rows may already say "moved" from an
+    # earlier project (for example before switching to a nearer region): those files go again, from the originals that are
+    # still in the database (they stay there until `purge`, which is never run automatically).
+    print("Looking at which files are already in this Storage project...")
+    _, not_there = await check(db)
+    missing = {(t, i) for t, i, *_ in not_there}
     for table, bucket in KINDS:
-        todo = [r for r in await rows(db, table, ("id", "storage_path")) if not r.get("storage_path")]
-        print(f"{table}: {len(todo)} to copy")
+        todo = [r for r in await rows(db, table, ("id", "storage_path")) if not r.get("storage_path") or (table, r["id"]) in missing]
+        again = sum(1 for r in todo if r.get("storage_path"))
+        print(f"{table}: {len(todo)} to copy" + (f" ({again} were marked as moved but are not in this Storage project)" if again else ""))
         done = failed = 0
         for r in todo:
             row = await getattr(db, table).find_one({"id": r["id"]})
             if not row or not row.get("data"):
+                failed += 1
+                print(f"  {r['id']}: no original left in the database to copy")
                 continue
             content = base64.b64decode(row["data"])
             content_type = row.get("content_type") or "application/octet-stream"
@@ -59,23 +68,32 @@ async def copy(db):
 
 
 async def check(db):
-    """Rows whose file is in Storage at the recorded size, and the ones that are not."""
+    """Rows whose file is in Storage at the recorded size, and the ones that are not. Sixteen files are looked at at a time
+    (one after another it took most of an hour for a few thousand files)."""
     good, bad = {}, []
-    async with httpx.AsyncClient(timeout=60) as client:
-        for table, bucket in KINDS:
-            good[table] = []
-            for r in await rows(db, table, ("id", "storage_path", "size")):
-                if not r.get("storage_path"):
-                    continue
+    gate = asyncio.Semaphore(16)
+
+    async def look(client, table, bucket, r):
+        async with gate:
+            try:
                 # The first byte only: the answer's Content-Range carries the whole file's size.
                 res = await client.get(f"{media_storage._url()}/storage/v1/object/{bucket}/{quote(r['storage_path'])}",
                                        headers={**media_storage._headers(), "Range": "bytes=0-0"})
-                total = (res.headers.get("content-range") or "").rpartition("/")[2]
-                size = int(total) if total.isdigit() else int(res.headers.get("content-length") or -1)
-                if res.status_code < 300 and (not r.get("size") or size in (-1, r["size"])):
+            except Exception:  # a timeout or a dropped connection counts as "not confirmed", never as a crash
+                return table, r, -1, -1
+        total = (res.headers.get("content-range") or "").rpartition("/")[2]
+        size = int(total) if total.isdigit() else int(res.headers.get("content-length") or -1)
+        return table, r, res.status_code, size
+
+    async with httpx.AsyncClient(timeout=60, limits=httpx.Limits(max_connections=16)) as client:
+        for table, bucket in KINDS:
+            good[table] = []
+            todo = [r for r in await rows(db, table, ("id", "storage_path", "size")) if r.get("storage_path")]
+            for _, r, status, size in await asyncio.gather(*(look(client, table, bucket, r) for r in todo)):
+                if 0 <= status < 300 and (not r.get("size") or size in (-1, r["size"])):
                     good[table].append(r["id"])
                 else:
-                    bad.append((table, r["id"], res.status_code, size, r.get("size")))
+                    bad.append((table, r["id"], status, size, r.get("size")))
     return good, bad
 
 

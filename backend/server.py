@@ -6,10 +6,12 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.gzip import GZipMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from passlib.context import CryptContext
-from typing import Optional, List, Literal
+from typing import Optional, List, Literal, Union
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urlparse, quote
 from pathlib import Path
+from collections import OrderedDict
+import tempfile
 import os, logging, jwt, uuid, hmac, html, json, base64, io, asyncio, re, copy, contextvars, secrets, hashlib
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
@@ -23,7 +25,10 @@ from google.genai import types as genai_types
 from google.genai import errors as genai_errors
 import httpx
 import media_storage
+import perf_stats
+import auto_backup
 import crm
+import assistant_api
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
@@ -43,10 +48,28 @@ os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
 # shim over the same db.<collection>.<method>(...) calls below) instead of
 # MongoDB Atlas. Defaults to mongo so this switch is safe to deploy before cutover.
 DB_BACKEND = os.environ.get('DB_BACKEND', 'mongo').lower()
+if DB_BACKEND == 'postgres' and os.environ.get('MYSQL_USER'):
+    # Safety net for a switch nobody is watching: if Supabase cannot be reached when the app starts, run on MariaDB
+    # (still intact) instead of staying down. /api/health then reports "mysql". Anything saved after the switch is in
+    # Supabase only, so a fallback means: fix the Supabase connection, then copy again before switching once more.
+    try:
+        import psycopg
+        with psycopg.connect(os.environ['SUPABASE_DB_URL'], connect_timeout=10, prepare_threshold=None) as _probe:
+            _probe.execute('select 1')
+    except Exception as _e:
+        logging.getLogger("server").error(
+            "DB_BACKEND=postgres but Supabase is not reachable (%s) - FALLING BACK to MariaDB", type(_e).__name__)
+        DB_BACKEND = 'mysql'
 if DB_BACKEND == 'mysql':
     from sqldb import MySQLDatabase
     db = MySQLDatabase()
     client = db  # shutdown() below calls client.close(); same object serves both roles
+elif DB_BACKEND == 'postgres':
+    # Supabase Postgres (backend/pgdb.py, same interface as sqldb.py). Needs SUPABASE_DB_URL; the tables come from
+    # backend/supabase/schema.sql, so none of the MariaDB startup DDL below runs.
+    from pgdb import PostgresDatabase
+    db = PostgresDatabase()
+    client = db
 else:
     mongo_url = os.environ['MONGO_URL']
     _is_atlas = "mongodb+srv" in mongo_url or "mongodb.net" in mongo_url
@@ -80,11 +103,13 @@ TENANT_COLLECTIONS = {
     "sync_logs", "team_members", "vehicle_photos", "vehicles", "vendor_payments", "vendors",
     "audit_logs", "ai_chat_sessions", "settings", "facebook_pages", "bookings",
     "offer_prizes", "offer_codes", "page_views", "crm_followups", "crm_interactions",
-    # The Finance section was removed from the app, but its fin_* tables are still in the database and have foreign
-    # keys to companies, so they stay listed here: deleting a company must still clear whatever rows they hold.
+    # Finance books (see finance_books.py); tables are created by migration_add_finance_books.sql.
     "fin_parties", "fin_bank_accounts", "fin_account_transfers", "fin_expense_categories", "fin_items",
     "fin_transactions", "fin_customer_ledger", "fin_vendor_ledger", "fin_statement_imports",
+    # Rent and the Cash account's details; created by migration_add_finance_rent.sql.
     "fin_rentals", "fin_cash_account",
+    # Ledger types and quotations; created at start-up by finance_books.ensure_schema.
+    "fin_party_types", "fin_quotations",
 }
 
 def company_scope(cu: dict) -> dict:
@@ -212,6 +237,11 @@ logger = logging.getLogger(__name__)
 # so it's safe to deploy before the storefront side is configured.
 # Public address of the storefront; vehicle pages live at <STOREFRONT_URL>/inventory/<vehicle id>.
 STOREFRONT_URL = os.environ.get("STOREFRONT_URL", "https://hamroauto.com.np").rstrip("/")
+# How photos kept in Supabase Storage are handed out. "app" (the default): every photo address stays on this app and the
+# app sends the picture itself - the public storefront only loads photos from an approved list of addresses
+# (next.config remotePatterns) and this app is on it. "cdn": the Supabase address directly (faster), which needs the
+# storefront's list to include the project's host first (e.g. <project>.supabase.co).
+PHOTO_LINKS = os.environ.get("PHOTO_LINKS", "app").lower()
 STOREFRONT_REVALIDATE_URL = os.environ.get("STOREFRONT_REVALIDATE_URL")
 STOREFRONT_REVALIDATE_SECRET = os.environ.get("STOREFRONT_REVALIDATE_SECRET")
 
@@ -354,6 +384,9 @@ ROLE_PERMISSIONS = {
         # Sold vehicle's name-transfer / sanakhat status only (PATCH /vehicles/{vid}/sale-statuses),
         # not general vehicle edits.
         "sale_statuses": {"edit"},
+    },
+    "sanakhat_officer": {  # Sanakhat desk -- sees every vehicle's Sanaakhat status and updates it, nothing else (no prices, no sales)
+        "sanakhat": {"view", "edit"},
     },
     "parts_supervisor": {  # Parts department
         "spare_parts": {"view", "create", "edit", "delete"},
@@ -523,10 +556,18 @@ def _since(items: list, lower: str = "", upper: str = "") -> list:
             and (not upper or (i.get("created_at") or "") <= upper)]
 
 async def enrich_vehicle(v: dict) -> dict:
+    cutoffs, exps, jobs = await asyncio.gather(  # independent reads, asked at the same time
+        _cycle_cutoffs([v["id"]]),
+        db.expenses.find({"vehicle_id": v["id"]}, {"_id": 0}).to_list(200),
+        db.job_cards.find({"vehicle_id": v["id"]}, {"_id": 0}).to_list(200),
+    )
+    cutoff = cutoffs.get(v["id"], "")
+    return _apply_vehicle_costs(v, _since(exps, cutoff), _since(jobs, cutoff))
+
+def _apply_vehicle_costs(v: dict, exps: list, jobs: list) -> dict:
+    """The arithmetic half of enrich_vehicle: aging, total expenses, investment and margin from the vehicle's already-loaded
+    expenses and job cards (of its current cycle)."""
     v["aging"] = stock_aging(v.get("purchase_date", ""))
-    cutoff = (await _cycle_cutoffs([v["id"]])).get(v["id"], "")
-    exps = _since(await db.expenses.find({"vehicle_id": v["id"]}, {"_id": 0}).to_list(200), cutoff)
-    jobs = _since(await db.job_cards.find({"vehicle_id": v["id"]}, {"_id": 0}).to_list(200), cutoff)
     total_exp = sum(e["amount"] for e in exps) + sum(_job_card_cost(j) for j in jobs) + _vehicle_sanakhat(v)
     v["total_expenses"] = total_exp
     v["total_investment"] = v.get("purchase_price", 0) + total_exp + v.get("accessories_cost", 0)
@@ -578,6 +619,12 @@ def _attach_service_history(v: dict, jobs: list, default_days: int) -> None:
     v["sanakhat_total"] = sum(j["sanakhat_cost"] for j in v["service_history"])
     v["resanakhat_total"] = sum(j["resanakhat_cost"] for j in v["service_history"])
 
+async def _nothing():
+    return None
+
+async def _no_rows():
+    return []
+
 async def _default_warranty_days() -> int:
     s = await db.settings.find_one({}, {"_id": 0, "warranty_days_default": 1})
     return int((s or {}).get("warranty_days_default") or VEHICLE_WARRANTY_DAYS)
@@ -616,13 +663,28 @@ async def _vehicle_investment(vehicle_id: str, vehicle: dict, sale: Optional[dic
     cycle for a vehicle (or, given a sale, of that sale's own cycle)."""
     if sale and sale.get("returned") and sale.get("cost_at_return") is not None:
         return sale["cost_at_return"]
-    lower, upper = (await _cycle_cutoffs([vehicle_id])).get(vehicle_id, ""), ""
+    return _investment_from(vehicle, sale, await _investment_inputs(vehicle_id))
+
+async def _investment_inputs(vehicle_id: str):
+    """The three reads behind _vehicle_investment (the vehicle's returned sales, expenses and job cards), asked together."""
+    return await asyncio.gather(
+        db.sales.find({"vehicle_id": vehicle_id, "returned": True}, {"_id": 0, "returned_at": 1}).to_list(20000),
+        db.expenses.find({"vehicle_id": vehicle_id}, {"_id": 0}).to_list(200),
+        db.job_cards.find({"vehicle_id": vehicle_id}, {"_id": 0}).to_list(200),
+    )
+
+def _investment_from(vehicle: dict, sale: Optional[dict], inputs) -> float:
+    """The arithmetic half of _vehicle_investment, from what _investment_inputs read."""
+    returned_rows, all_exps, all_jobs = inputs
+    if sale and sale.get("returned") and sale.get("cost_at_return") is not None:
+        return sale["cost_at_return"]
     if sale:
-        prior = await db.sales.find({"vehicle_id": vehicle_id, "returned": True}, {"_id": 0, "returned_at": 1}).to_list(200)
-        lower = max((r["returned_at"] for r in prior if r.get("returned_at") and r["returned_at"] <= (sale.get("created_at") or "")), default="")
+        lower = max((r["returned_at"] for r in returned_rows if r.get("returned_at") and r["returned_at"] <= (sale.get("created_at") or "")), default="")
         upper = (sale.get("returned_at") or "") if sale.get("returned") else ""
-    exps = _since(await db.expenses.find({"vehicle_id": vehicle_id}, {"_id": 0}).to_list(200), lower, upper)
-    jobs = _since(await db.job_cards.find({"vehicle_id": vehicle_id}, {"_id": 0}).to_list(200), lower, upper)
+    else:
+        lower, upper = max((r.get("returned_at") or "" for r in returned_rows), default=""), ""
+    exps = _since(all_exps, lower, upper)
+    jobs = _since(all_jobs, lower, upper)
     return (vehicle.get("purchase_price", 0) + vehicle.get("accessories_cost", 0) + _vehicle_sanakhat(vehicle)
             + sum(e["amount"] for e in exps) + sum(_job_card_cost(j) for j in jobs))
 
@@ -633,10 +695,13 @@ async def _vehicle_investment(vehicle_id: str, vehicle: dict, sale: Optional[dic
 # never changes what the customer is billed; it only tells the shop what to expect the
 # vehicle's job cards to cost against margin.
 async def _job_card_cost_total(vehicle_id: str, sale: Optional[dict] = None) -> float:
-    jobs = await db.job_cards.find({"vehicle_id": vehicle_id, "is_warranty": {"$ne": True}}, {"_id": 0}).to_list(200)
     if sale:
-        returns = await db.sales.find({"vehicle_id": vehicle_id, "returned": True}, {"_id": 0, "returned_at": 1}).to_list(200)
+        jobs, returns = await asyncio.gather(
+            db.job_cards.find({"vehicle_id": vehicle_id, "is_warranty": {"$ne": True}}, {"_id": 0}).to_list(200),
+            db.sales.find({"vehicle_id": vehicle_id, "returned": True}, {"_id": 0, "returned_at": 1}).to_list(200),
+        )
         return _sale_job_card_cost(sale, jobs, [r.get("returned_at") for r in returns])
+    jobs = await db.job_cards.find({"vehicle_id": vehicle_id, "is_warranty": {"$ne": True}}, {"_id": 0}).to_list(200)
     return sum(_job_card_cost(j) for j in jobs)
 
 # A vehicle that was returned and put back on sale starts a fresh cycle: job cards opened
@@ -766,13 +831,24 @@ async def _batch_vehicle_investment(vehicles: list) -> dict:
     vehicle_ids = [v["id"] for v in vehicles]
     if not vehicle_ids:
         return {}
-    cutoffs = await _cycle_cutoffs(vehicle_ids)
-    all_exps = await db.expenses.find({"vehicle_id": {"$in": vehicle_ids}}, {"_id": 0}).to_list(20000)
+    return _batch_investment_from(vehicles, await _batch_investment_inputs(vehicle_ids))
+
+async def _batch_investment_inputs(vehicle_ids: list):
+    """The three reads behind _batch_vehicle_investment, asked together. They need only the vehicle ids, so a caller that
+    is also reading the vehicles themselves can ask for these at the same moment."""
+    return await asyncio.gather(
+        _cycle_cutoffs(vehicle_ids),
+        db.expenses.find({"vehicle_id": {"$in": vehicle_ids}}, {"_id": 0, "vehicle_id": 1, "amount": 1, "created_at": 1}).to_list(20000),
+        db.job_cards.find({"vehicle_id": {"$in": vehicle_ids}}, {"_id": 0, "vehicle_id": 1, "created_at": 1, "after_sale": 1, "is_warranty": 1, "parts": 1,
+                                                                   "actual_cost": 1, "estimated_cost": 1, "sanakhat_cost": 1, "resanakhat_cost": 1}).to_list(20000),
+    )
+
+def _batch_investment_from(vehicles: list, inputs) -> dict:
+    cutoffs, all_exps, all_jobs = inputs
     exps_by_vehicle: dict = {}
     for e in all_exps:
         if _since([e], cutoffs.get(e["vehicle_id"], "")):
             exps_by_vehicle.setdefault(e["vehicle_id"], []).append(e)
-    all_jobs = await db.job_cards.find({"vehicle_id": {"$in": vehicle_ids}}, {"_id": 0}).to_list(20000)
     job_cost_by_vehicle: dict = {}
     for j in all_jobs:
         if not _since([j], cutoffs.get(j["vehicle_id"], "")):
@@ -788,20 +864,22 @@ async def _batch_vehicle_investment(vehicles: list) -> dict:
 async def _batch_vendor_payable(vendor_ids: list) -> dict:
     if not vendor_ids:
         return {}
-    veh = await db.vehicles.find(
-        {"$or": [{"vendor_id": {"$in": vendor_ids}}, {"linked_contact_type": "vendor", "linked_contact_id": {"$in": vendor_ids}}]},
-        {"_id": 0, "vendor_id": 1, "linked_contact_type": 1, "linked_contact_id": 1, "purchase_price": 1},
-    ).to_list(20000)
+    veh, parts, pmts = await asyncio.gather(
+        db.vehicles.find(
+            {"$or": [{"vendor_id": {"$in": vendor_ids}}, {"linked_contact_type": "vendor", "linked_contact_id": {"$in": vendor_ids}}]},
+            {"_id": 0, "vendor_id": 1, "linked_contact_type": 1, "linked_contact_id": 1, "purchase_price": 1},
+        ).to_list(20000),
+        db.spare_parts.find({"vendor_id": {"$in": vendor_ids}}, {"_id": 0, "id": 1, "vendor_id": 1, "quantity": 1, "unit_cost": 1}).to_list(20000),
+        db.vendor_payments.find({"vendor_id": {"$in": vendor_ids}}, {"_id": 0}).to_list(20000),
+    )
     owed: dict = {}
     for v in veh:
         vid = v.get("vendor_id") or (v.get("linked_contact_id") if v.get("linked_contact_type") == "vendor" else None)
         if vid:
             owed[vid] = owed.get(vid, 0) + v.get("purchase_price", 0)
-    parts = await db.spare_parts.find({"vendor_id": {"$in": vendor_ids}}, {"_id": 0, "id": 1, "vendor_id": 1, "quantity": 1, "unit_cost": 1}).to_list(20000)
     await _attach_bought_qty(parts)
     for p in parts:
         owed[p["vendor_id"]] = owed.get(p["vendor_id"], 0) + _parts_owed([p])
-    pmts = await db.vendor_payments.find({"vendor_id": {"$in": vendor_ids}}, {"_id": 0}).to_list(20000)
     paid: dict = {}
     for p in pmts:
         paid[p["vendor_id"]] = paid.get(p["vendor_id"], 0) + p["amount"]
@@ -824,6 +902,10 @@ async def _batch_emi_remaining(emis: list) -> dict:
     return {e["id"]: max(0.0, e.get("loan_amount", 0) - paid_by_emi.get(e["id"], 0)) for e in emis}
 
 # ── Helper: classify aging counts for a list of available vehicles ────
+# The only vehicle columns the investment arithmetic reads (see _batch_investment_from); reports that need nothing else
+# from a vehicle ask for just these instead of whole rows.
+_INVESTMENT_FIELDS = {"_id": 0, "id": 1, "purchase_price": 1, "accessories_cost": 1, "sanakhat_cost": 1}
+
 def _aging_counts(vehicles: list) -> dict:
     counts = {"fresh": 0, "normal": 0, "slow": 0, "dead": 0}
     for v in vehicles:
@@ -1708,6 +1790,17 @@ class SaleUpdate(BaseModel):
     lead_note: Optional[str] = Field(None, max_length=255)
     referred_by_id: Optional[str] = None
     referred_by_name: Optional[str] = Field(None, max_length=255)
+    # The witness and the exchange, as on SaleCreate. Each group is only changed when the form sends any of it (an empty
+    # value clears it). Changing the exchange also changes the old vehicle's Inventory entry: see _plan_exchange_change.
+    witness_name: Optional[str] = None
+    witness_address: Optional[str] = None
+    witness_phone: Optional[str] = None
+    witness_id_number: Optional[str] = None
+    exchange_valuation: Optional[float] = None
+    exchange_brand: Optional[str] = None
+    exchange_model: Optional[str] = None
+    exchange_reg_no: Optional[str] = None
+    exchange_year: Optional[str] = None
 
 class CustomerCreate(BaseModel):
     name: str; contact_number: str
@@ -1910,10 +2003,9 @@ async def signup(request: Request, req: SignUpRequest):
     companies, which is exactly the UX that confused people before. Using email rather than
     a free-text username sidesteps the "everyone wants to type admin" collision on top of
     that, and is what a real password-reset-by-email flow needs -- see /auth/forgot-password
-    below. New signups must also verify their email before they can log in (see
-    /auth/verify-email) -- staff accounts an admin creates via /auth/register are exempt
-    (that admin is already vouching for the email); only anonymous self-signup is gated,
-    since that's the actual abuse case (throwaway/fake emails claiming a company)."""
+    below. Email verification is no longer required: a new account is signed in straight away
+    (the response carries the same token /auth/login returns). /auth/verify-email and
+    /auth/resend-verification still exist for links already sent."""
     email = req.email.lower()
     existing = await db.users.find_one({"username": email})
     if existing:
@@ -1923,20 +2015,15 @@ async def signup(request: Request, req: SignUpRequest):
     await db.companies.insert_one({"id": company_id, "name": req.company_name, "created_at": now})
     user = {"id": str(uuid.uuid4()), "username": email,
             "password_hash": await hash_pw_async(req.password), "name": req.name, "role": "admin",
-            "company_id": company_id, "email_verified_at": None, "created_at": now}
+            "company_id": company_id, "email_verified_at": now, "created_at": now}
     await db.users.insert_one(user)
     # A settings row is looked up purely by company_id (see get_settings/update_settings) --
     # "id" here is just an arbitrary row id, not a lookup key.
     await db.settings.insert_one({"id": str(uuid.uuid4()), "company_id": company_id,
                                    "business_name": req.company_name})
-    verify_token = await _create_auth_token(user["id"], "verify_email", ttl_minutes=24 * 60)
-    link = f"{FRONTEND_URL}/verify-email?token={verify_token}"
-    await _send_email(email, "Verify your email — Auto Stock Manager",
-                       f"<p>Hi {req.name},</p>"
-                       f"<p>Click below to verify your email and activate <b>{req.company_name}</b>'s workspace:</p>"
-                       f"<p><a href='{link}'>{link}</a></p>"
-                       f"<p>This link expires in 24 hours.</p>")
-    return {"message": "Account created — check your email to verify it before signing in.", "email": email}
+    token = create_token(user["id"], email, "admin", company_id)
+    return {"message": "Account created.", "email": email, "token": token, "username": email,
+            "name": req.name, "role": "admin", "company_name": req.company_name}
 
 @api_router.post("/auth/login")
 @limiter.limit("5/minute")
@@ -1944,8 +2031,6 @@ async def login(request: Request, req: LoginRequest):
     user = await db.users.find_one({"username": req.username})
     if not user or not await verify_pw_async(req.password, user["password_hash"]):
         raise HTTPException(401, "Invalid credentials")
-    if not user.get("email_verified_at"):
-        raise HTTPException(403, "Please verify your email before signing in — check your inbox, or request a new link.")
     token = create_token(user.get("id", ""), user["username"], user.get("role", "admin"), user.get("company_id"))
     company = await db.companies.find_one({"id": user.get("company_id")}, {"_id": 0, "name": 1}) if user.get("company_id") else None
     return {"token": token, "username": user["username"], "name": user.get("name", user["username"]),
@@ -1995,6 +2080,29 @@ async def reset_password(request: Request, req: ResetPasswordRequest):
         raise HTTPException(400, "This reset link is invalid or has expired — request a new one.")
     await db.users.update_one({"id": rec["user_id"]}, {"$set": {"password_hash": await hash_pw_async(req.new_password)}})
     return {"message": "Password reset — you can now sign in with your new password."}
+
+# The stock photo every fresh install used to get as its "logo". It is no longer seeded, and where it is
+# still stored it counts as no logo at all.
+_PLACEHOLDER_LOGO = "https://images.unsplash.com/photo-1777288411485-1eb05bd4a289"
+# The original company's own logo, shipped with the web app (frontend/public/brand/).
+DEFAULT_COMPANY_LOGO = "/brand/default-logo.png"
+
+@api_router.get("/brand")
+async def get_brand(cu: dict = Depends(get_current_user)):
+    """The signed-in company's name and logo for the side panel. Any role may read it (the full /settings
+    is admin-only) and it is read live, so a rename or a new logo shows without signing in again.
+    Logo: the company's own (Settings -> Logo Image URL) if it set a real one; otherwise the original company
+    gets the shipped default logo, and every other company gets none (the panel shows its initials tile)."""
+    if not cu.get("company_id"):
+        return {"company_name": None, "logo_url": None}
+    company, settings = await asyncio.gather(  # independent, asked at the same time (every page load asks for this)
+        db.companies.find_one({"id": cu["company_id"]}, {"_id": 0, "name": 1}),
+        db.settings.find_one({}, {"_id": 0, "logo_url": 1}),
+    )
+    logo = ((settings or {}).get("logo_url") or "").strip()
+    if not logo or logo.startswith(_PLACEHOLDER_LOGO):
+        logo = DEFAULT_COMPANY_LOGO if cu["company_id"] == await _default_company_id() else None
+    return {"company_name": company["name"] if company else None, "logo_url": logo}
 
 @api_router.get("/auth/me")
 async def me(cu: dict = Depends(get_current_user)):
@@ -2152,7 +2260,8 @@ async def platform_delete_company(company_id: str, cu: dict = Depends(platform_o
         try:
             await getattr(db, name).delete_many({"company_id": company_id})
         except Exception as e:
-            # The leftover finance tables may not exist on every database; then there is nothing of theirs to delete.
+            # The finance tables only exist once migration_add_finance_books.sql has been run by hand;
+            # until then there is nothing of theirs to delete.
             if name.startswith("fin_") and ("1146" in str(e) or "doesn't exist" in str(e)):
                 continue
             raise
@@ -2162,38 +2271,46 @@ async def platform_delete_company(company_id: str, cu: dict = Depends(platform_o
 
 # ── VEHICLES ──────────────────────────────────────────────────────────
 @api_router.get("/vehicles")
-async def get_vehicles(status: Optional[str] = None, brand: Optional[str] = None, cu: dict = Depends(require("vehicles", "view"))):
+async def get_vehicles(status: Optional[str] = None, brand: Optional[str] = None, exclude_status: Optional[str] = None, cu: dict = Depends(require("vehicles", "view"))):
     q = {}
     if status and status != "all":
         statuses = [s.strip() for s in status.split(",") if s.strip()]
         q["status"] = {"$in": statuses} if len(statuses) > 1 else statuses[0]
+    elif exclude_status:
+        # Everything except one status (a vehicle with no status counts too). With `status=<that one>` it splits the
+        # list into two exact halves, so a screen can load the half it shows first and the rest afterwards.
+        q["status"] = {"$ne": exclude_status.strip()}
     if brand and brand != "all": q["brand"] = brand
     vehicles = await db.vehicles.find(q, {"_id": 0}).sort("created_at", -1).to_list(1000)
     if not vehicles:
         return []
-    # Batch-load all expenses in one query (avoids N+1)
     vehicle_ids = [v["id"] for v in vehicles]
-    cutoffs = await _cycle_cutoffs(vehicle_ids)
-    all_exps = await db.expenses.find({"vehicle_id": {"$in": vehicle_ids}}, {"_id": 0}).to_list(10000)
+    role = cu.get("role", "admin")
+    # None of these questions needs another's answer, so they are asked at the same time. The database is in another city
+    # (about 45 ms per round trip), and asking them one after another made this screen wait for each in turn.
+    # Expenses and job cards are batch-loaded (avoids N+1); a vehicle's job cards count toward its expense total the same
+    # way a plain expense does (see _job_card_cost). Photos are only ever ids, never the base64 `data` field (same
+    # projection as /public/vehicles), so the inventory card can show a few thumbnails and filter for missing/insufficient
+    # photos without an N+1 fetch of /vehicles/{id}/photos per row, and without inflating this response with image bytes
+    # that the browser could otherwise cache via a stable URL (see _public_photo_url).
+    cutoffs, all_exps, all_jobs, photo_docs, default_days, _ = await asyncio.gather(
+        _cycle_cutoffs(vehicle_ids),
+        db.expenses.find({"vehicle_id": {"$in": vehicle_ids}}, {"_id": 0}).to_list(10000),
+        db.job_cards.find({"vehicle_id": {"$in": vehicle_ids}}, {"_id": 0}).to_list(10000),
+        db.vehicle_photos.find(
+            {"vehicle_id": {"$in": vehicle_ids}}, {"_id": 0, "id": 1, "vehicle_id": 1, "uploaded_at": 1}
+        ).sort(PHOTO_ORDER).to_list(10000),
+        _default_warranty_days() if any(v.get("status") == "sold" for v in vehicles) else _nothing(),
+        _attach_active_bookings(vehicles, role),
+    )
     exps_by_vehicle: dict = {}
     for e in all_exps:
         if _since([e], cutoffs.get(e["vehicle_id"], "")):
             exps_by_vehicle.setdefault(e["vehicle_id"], []).append(e)
-    # Batch-load all job cards too — their cost counts toward a vehicle's expense total
-    # the same way a plain expense entry does (see _job_card_cost).
-    all_jobs = await db.job_cards.find({"vehicle_id": {"$in": vehicle_ids}}, {"_id": 0}).to_list(10000)
     jobs_by_vehicle: dict = {}
     for j in all_jobs:
         if _since([j], cutoffs.get(j["vehicle_id"], "")):
             jobs_by_vehicle.setdefault(j["vehicle_id"], []).append(j)
-    # Batch-load each vehicle's photo ids in one query (never the base64 `data` field — same
-    # projection as /public/vehicles), so the frontend can show a few thumbnails directly on the
-    # inventory card (and filter for missing/insufficient photos) without an N+1 fetch of
-    # /vehicles/{id}/photos per row, and without inflating this response with image bytes that
-    # the browser could otherwise cache via a stable URL (see _public_photo_url).
-    photo_docs = await db.vehicle_photos.find(
-        {"vehicle_id": {"$in": vehicle_ids}}, {"_id": 0, "id": 1, "vehicle_id": 1, "uploaded_at": 1}
-    ).sort(PHOTO_ORDER).to_list(10000)
     photos_by_vehicle: dict = {}
     for p in photo_docs:
         photos_by_vehicle.setdefault(p["vehicle_id"], []).append(p)
@@ -2224,18 +2341,37 @@ async def get_vehicles(status: Optional[str] = None, brand: Optional[str] = None
         # latter is scoped to one storefront company via _scope_to_default_company and
         # would 404 every thumbnail here for any tenant other than that one company.
         v["thumb_photos"] = [
-            {"id": p["id"], "url": f"/api/vehicle-photos/{p['id']}/file"}
+            {"id": p["id"], "url": f"/api/vehicle-photos/{p['id']}/file",
+             "thumb": f"/api/vehicle-photos/{p['id']}/file?w=240"}
             for p in vehicle_photos[:3]
         ]
         return v
-    role = cu.get("role", "admin")
-    if any(v.get("status") == "sold" for v in vehicles):
-        default_days = await _default_warranty_days()
+    if default_days is not None:
         for v in vehicles:
             if v.get("status") == "sold":
                 _attach_service_history(v, jobs_by_vehicle.get(v["id"], []), default_days)
-    await _attach_active_bookings(vehicles, role)
     return [_hide_financials_for_role(enrich_with_expenses(v, exps_by_vehicle.get(v["id"], []), jobs_by_vehicle.get(v["id"], [])), role) for v in vehicles]
+
+@api_router.get("/vehicles/attention")
+async def get_vehicles_attention(cu: dict = Depends(require("vehicles", "view"))):
+    """What the sidebar bell needs from the vehicle list: each unsold vehicle's name, plate and how many photos it has, so the
+    app can flag a missing plate number or too few photos. The bell asks on every page load and every few minutes, and the
+    full list (/vehicles) is about 1 MB of prices, expenses and job cards that the bell never shows. Same vehicles, order and
+    cap as /vehicles; the app decides what counts as "missing"."""
+    vehicles, photo_rows = await asyncio.gather(  # independent, asked at the same time
+        db.vehicles.find({}, {"_id": 0, "id": 1, "brand": 1, "model": 1, "status": 1, "registration_number": 1}).sort("created_at", -1).to_list(1000),
+        db.vehicle_photos.find({}, {"_id": 0, "vehicle_id": 1}).to_list(100000),
+    )
+    photos_per_vehicle: dict = {}
+    for p in photo_rows:
+        photos_per_vehicle[p["vehicle_id"]] = photos_per_vehicle.get(p["vehicle_id"], 0) + 1
+    out = []
+    for v in vehicles:
+        if v.get("status") in ("sold", "scrap"):
+            continue
+        n = photos_per_vehicle.get(v["id"], 0)
+        out.append({**v, "photo_count": n, "has_photo": n > 0})
+    return out
 
 # A vehicle sold more than 30 days ago that comes back is entered as brand-new stock under
 # its same plate — its old sold record no longer counts as a duplicate anywhere.
@@ -2944,13 +3080,21 @@ async def import_sales(file: UploadFile = File(...), confirm: bool = False, cu: 
 async def get_vehicle(vid: str, cu: dict = Depends(require("vehicles", "view"))):
     v = await db.vehicles.find_one({"id": vid}, {"_id": 0})
     if not v: raise HTTPException(404, "Vehicle not found")
-    v = await enrich_vehicle(v)
-    cutoff = (await _cycle_cutoffs([vid])).get(vid, "")
-    v["expenses"] = _since(await db.expenses.find({"vehicle_id": vid}, {"_id": 0}).to_list(200), cutoff)
-    v["job_cards"] = _since(await db.job_cards.find({"vehicle_id": vid}, {"_id": 0}).to_list(100), cutoff)
-    if v.get("status") == "sold":
-        _attach_service_history(v, v["job_cards"], await _default_warranty_days())
-    await _attach_active_bookings([v], cu.get("role", "admin"))
+    # Everything else needs only the vehicle, not each other, so it is read in one go (this screen used to wait for nine
+    # reads in a row, three of them the same ones twice).
+    cutoffs, exps, jobs, default_days, _ = await asyncio.gather(
+        _cycle_cutoffs([vid]),
+        db.expenses.find({"vehicle_id": vid}, {"_id": 0}).to_list(200),
+        db.job_cards.find({"vehicle_id": vid}, {"_id": 0}).to_list(200),
+        _default_warranty_days() if v.get("status") == "sold" else _nothing(),
+        _attach_active_bookings([v], cu.get("role", "admin")),
+    )
+    cutoff = cutoffs.get(vid, "")
+    _apply_vehicle_costs(v, _since(exps, cutoff), _since(jobs, cutoff))
+    v["expenses"] = _since(exps, cutoff)
+    v["job_cards"] = _since(jobs[:100], cutoff)
+    if default_days is not None:
+        _attach_service_history(v, v["job_cards"], default_days)
     return _hide_financials_for_role(v, cu.get("role", "admin"))
 
 class SaleStatusesUpdate(BaseModel):
@@ -2962,6 +3106,41 @@ async def update_sale_statuses(vid: str, body: SaleStatusesUpdate, cu: dict = De
     """Name-transfer and sanakhat progress on a sold vehicle. Separate from update_vehicle so
     front desk can keep these current without getting general vehicle edit access."""
     upd = {k: val for k, val in body.model_dump().items() if val is not None}
+    if not upd:
+        raise HTTPException(400, "Nothing to update")
+    res = await db.vehicles.update_one({"id": vid}, {"$set": {**upd, "updated_at": datetime.now(timezone.utc).isoformat()}})
+    if not res.matched_count:
+        raise HTTPException(404, "Vehicle not found")
+    return upd
+
+# ── SANAKHAT DESK ─────────────────────────────────────────────────────
+# One screen for whoever handles Sanaakhat (ownership termination) cases: every vehicle in the company, whatever its
+# stock status, with only the fields needed to find it and its Sanaakhat progress. No prices, purchase details or sales.
+SANAKHAT_DESK_FIELDS = {"_id": 0, "id": 1, "brand": 1, "model": 1, "year": 1, "type": 1, "registration_number": 1, "color": 1,
+                        "status": 1, "ownership_termination_status": 1, "sanakhat_date": 1, "created_at": 1}
+
+@api_router.get("/sanakhat/vehicles")
+async def sanakhat_vehicles(cu: dict = Depends(require("sanakhat", "view"))):
+    rows = await db.vehicles.find({}, SANAKHAT_DESK_FIELDS).to_list(5000)
+    for v in rows:
+        v["ownership_termination_status"] = v.get("ownership_termination_status") if v.get("ownership_termination_status") in ("yes", "no") else "pending"
+    rows.sort(key=lambda v: v.get("created_at") or "", reverse=True)
+    return rows
+
+class SanakhatUpdate(BaseModel):
+    ownership_termination_status: Optional[Literal["yes", "no", "pending"]] = None
+    sanakhat_date: Optional[str] = None  # YYYY-MM-DD; "" clears it
+
+@api_router.patch("/sanakhat/vehicles/{vid}")
+async def sanakhat_update(vid: str, body: SanakhatUpdate, cu: dict = Depends(require("sanakhat", "edit"))):
+    upd = {}
+    if body.ownership_termination_status is not None:
+        upd["ownership_termination_status"] = body.ownership_termination_status
+    if body.sanakhat_date is not None:
+        d = body.sanakhat_date.strip()
+        if d and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", d):
+            raise HTTPException(400, "Date must look like 2026-11-06")
+        upd["sanakhat_date"] = d or None
     if not upd:
         raise HTTPException(400, "Nothing to update")
     res = await db.vehicles.update_one({"id": vid}, {"$set": {**upd, "updated_at": datetime.now(timezone.utc).isoformat()}})
@@ -3320,16 +3499,19 @@ async def get_jobs(status: Optional[str] = None, vehicle_id: Optional[str] = Non
     status_by_vehicle: dict = {}
     service_no: dict = {}
     if ids:
-        vs = await db.vehicles.find({"id": {"$in": ids}}, {"_id": 0, "id": 1, "status": 1, "sold_date": 1}).to_list(10000)
+        # The vehicles and their job cards are read at the same time (only the sold vehicles' cards are used, picked out below).
+        vs, all_cards = await asyncio.gather(
+            db.vehicles.find({"id": {"$in": ids}}, {"_id": 0, "id": 1, "status": 1, "sold_date": 1}).to_list(10000),
+            db.job_cards.find({"vehicle_id": {"$in": ids}},
+                              {"_id": 0, "id": 1, "vehicle_id": 1, "job_date": 1, "created_at": 1, "is_warranty": 1, "after_sale": 1}).to_list(20000),
+        )
         status_by_vehicle = {v["id"]: v.get("status") for v in vs}
         # 1st / 2nd / ... service after the sale, numbered over all of the vehicle's job cards
         # (not just this filtered page) so the number doesn't shift with the filter.
         sold = [v for v in vs if v.get("status") == "sold"]
         if sold:
             sold_jobs: dict = {}
-            for j in await db.job_cards.find(
-                    {"vehicle_id": {"$in": [v["id"] for v in sold]}},
-                    {"_id": 0, "id": 1, "vehicle_id": 1, "job_date": 1, "created_at": 1, "is_warranty": 1, "after_sale": 1}).to_list(20000):
+            for j in all_cards:
                 sold_jobs.setdefault(j["vehicle_id"], []).append(j)
             for v in sold:
                 service_no.update(_service_numbers(v, sold_jobs.get(v["id"], [])))
@@ -3534,24 +3716,31 @@ async def delete_job(jid: str, cu: dict = Depends(require("jobs", "delete"))):
 async def get_warranties(cu: dict = Depends(require("warranty", "view"))):
     """Every sold vehicle with its warranty window, the buyer's contact, and its in-shop
     warranty service history (warranty job cards), so front desk can follow up."""
-    default_days = await _default_warranty_days()
-    vehicles = await db.vehicles.find(
-        {"status": "sold"},
-        {"_id": 0, "id": 1, "brand": 1, "model": 1, "variant": 1, "year": 1, "registration_number": 1,
-         "status": 1, "sold_date": 1, "customer_id": 1, "warranty_days": 1, "warranty_void": 1,
-         "warranty_void_reason": 1, "warranty_voided_at": 1, "warranty_voided_by": 1},
-    ).to_list(5000)
+    # Independent reads are asked at the same time (the database is in another city): the company's warranty length with the
+    # sold vehicles, then the buyers with the job cards.
+    default_days, vehicles = await asyncio.gather(
+        _default_warranty_days(),
+        db.vehicles.find(
+            {"status": "sold"},
+            {"_id": 0, "id": 1, "brand": 1, "model": 1, "variant": 1, "year": 1, "registration_number": 1,
+             "status": 1, "sold_date": 1, "customer_id": 1, "warranty_days": 1, "warranty_void": 1,
+             "warranty_void_reason": 1, "warranty_voided_at": 1, "warranty_voided_by": 1},
+        ).to_list(5000),
+    )
     if not vehicles:
         return {"default_days": default_days, "warranties": []}
     ids = [v["id"] for v in vehicles]
     cust_ids = list({v["customer_id"] for v in vehicles if v.get("customer_id")})
-    customers = {c["id"]: c for c in (await db.customers.find(
-        {"id": {"$in": cust_ids}}, {"_id": 0, "id": 1, "name": 1, "contact_number": 1}).to_list(5000) if cust_ids else [])}
-    jobs_by_vehicle: dict = {}
-    for j in await db.job_cards.find(
+    customer_rows, job_rows = await asyncio.gather(
+        db.customers.find({"id": {"$in": cust_ids}}, {"_id": 0, "id": 1, "name": 1, "contact_number": 1}).to_list(5000) if cust_ids else _no_rows(),
+        db.job_cards.find(
             {"vehicle_id": {"$in": ids}},
             {"_id": 0, "id": 1, "vehicle_id": 1, "job_number": 1, "job_date": 1, "created_at": 1, "status": 1,
-             "work_description": 1, "is_warranty": 1, "after_sale": 1}).to_list(20000):
+             "work_description": 1, "is_warranty": 1, "after_sale": 1}).to_list(20000),
+    )
+    customers = {c["id"]: c for c in customer_rows}
+    jobs_by_vehicle: dict = {}
+    for j in job_rows:
         jobs_by_vehicle.setdefault(j["vehicle_id"], []).append(j)
     out = []
     for v in vehicles:
@@ -3716,31 +3905,31 @@ async def get_sales(start_date: Optional[str] = None, end_date: Optional[str] = 
 
     vehicle_ids = list({s["vehicle_id"] for s in sales if s.get("vehicle_id")})
     customer_ids = list({s["customer_id"] for s in sales if s.get("customer_id")})
-    vehicles_by_id, customers_by_id = {}, {}
-    if vehicle_ids:
-        vs = await db.vehicles.find({"id": {"$in": vehicle_ids}}, {"_id": 0, "id": 1, "brand": 1, "model": 1, "year": 1, "registration_number": 1}).to_list(len(vehicle_ids))
-        vehicles_by_id = {v["id"]: v for v in vs}
-    if customer_ids:
-        cs = await db.customers.find({"id": {"$in": customer_ids}}, {"_id": 0, "id": 1, "name": 1, "contact_number": 1}).to_list(len(customer_ids))
-        customers_by_id = {c["id"]: c for c in cs}
-    jobs_by_vehicle: dict = {}
-    returns_by_vehicle: dict = {}
-    if vehicle_ids:
-        all_jobs = await db.job_cards.find({"vehicle_id": {"$in": vehicle_ids}, "is_warranty": {"$ne": True}}, {"_id": 0}).to_list(20000)
-        for j in all_jobs:
-            jobs_by_vehicle.setdefault(j["vehicle_id"], []).append(j)
-        rets = await db.sales.find({"vehicle_id": {"$in": vehicle_ids}, "returned": True}, {"_id": 0, "vehicle_id": 1, "returned_at": 1}).to_list(20000)
-        for r in rets:
-            returns_by_vehicle.setdefault(r["vehicle_id"], []).append(r.get("returned_at"))
-
     # Margin/profit reveal what the shop paid for the vehicle — restricted to Admin,
     # same as get_sale (single). Only fetched for admins so the query is skipped
     # entirely for roles that would never see the result anyway.
+    with_profit = cu.get("role", "admin") == "admin" and bool(vehicle_ids)
+    # None of these needs another's answer, so they are asked at the same time (the database is in another city).
+    vs, cs, all_jobs, rets, full_vehicles, batch_inputs = await asyncio.gather(
+        db.vehicles.find({"id": {"$in": vehicle_ids}}, {"_id": 0, "id": 1, "brand": 1, "model": 1, "year": 1, "registration_number": 1}).to_list(len(vehicle_ids)) if vehicle_ids else _no_rows(),
+        db.customers.find({"id": {"$in": customer_ids}}, {"_id": 0, "id": 1, "name": 1, "contact_number": 1}).to_list(len(customer_ids)) if customer_ids else _no_rows(),
+        db.job_cards.find({"vehicle_id": {"$in": vehicle_ids}, "is_warranty": {"$ne": True}}, {"_id": 0}).to_list(20000) if vehicle_ids else _no_rows(),
+        db.sales.find({"vehicle_id": {"$in": vehicle_ids}, "returned": True}, {"_id": 0, "vehicle_id": 1, "returned_at": 1}).to_list(20000) if vehicle_ids else _no_rows(),
+        db.vehicles.find({"id": {"$in": vehicle_ids}}, {"_id": 0, "id": 1, "purchase_price": 1, "accessories_cost": 1, "sanakhat_cost": 1}).to_list(len(vehicle_ids)) if with_profit else _no_rows(),
+        _batch_investment_inputs(vehicle_ids) if with_profit else _nothing(),
+    )
+    vehicles_by_id = {v["id"]: v for v in vs}
+    customers_by_id = {c["id"]: c for c in cs}
+    jobs_by_vehicle: dict = {}
+    returns_by_vehicle: dict = {}
+    for j in all_jobs:
+        jobs_by_vehicle.setdefault(j["vehicle_id"], []).append(j)
+    for r in rets:
+        returns_by_vehicle.setdefault(r["vehicle_id"], []).append(r.get("returned_at"))
     investment_by_vehicle: dict = {}
     purchase_price_by_vehicle: dict = {}
-    if cu.get("role", "admin") == "admin" and vehicle_ids:
-        full_vehicles = await db.vehicles.find({"id": {"$in": vehicle_ids}}, {"_id": 0, "id": 1, "purchase_price": 1, "accessories_cost": 1, "sanakhat_cost": 1}).to_list(len(vehicle_ids))
-        investment_by_vehicle = await _batch_vehicle_investment(full_vehicles)
+    if with_profit:
+        investment_by_vehicle = _batch_investment_from(full_vehicles, batch_inputs) if full_vehicles else {}
         purchase_price_by_vehicle = {v["id"]: v.get("purchase_price", 0) for v in full_vehicles}
 
     for s in sales:
@@ -3768,7 +3957,7 @@ async def get_sales(start_date: Optional[str] = None, end_date: Optional[str] = 
             s["profit_margin"] = round((revenue - investment) / revenue * 100, 2) if revenue else None
     return sales
 
-async def _exchange_vehicle_for_sale(sale: SaleCreate, sold: dict, sale_date: str, exchange_valuation: float, cu: dict) -> Optional[dict]:
+async def _exchange_vehicle_for_sale(sale: Union[SaleCreate, SaleUpdate], sold: dict, sale_date: str, exchange_valuation: float, cu: dict) -> Optional[dict]:
     """The inventory record for the old vehicle a customer hands over in part payment, ready to insert, so it can
     be resold without anyone re-keying it into Inventory. It costs the shop its valuation and stays unlisted until
     it is priced. None when the sale has no exchange. Writes nothing: a plate already in stock raises here,
@@ -3807,6 +3996,56 @@ async def _exchange_vehicle_for_sale(sale: SaleCreate, sold: dict, sale_date: st
         "created_by": cu.get("username"),
     })
     return v
+
+SALE_WITNESS_FIELDS = {"witness_name", "witness_address", "witness_phone", "witness_id_number"}
+SALE_EXCHANGE_FIELDS = {"exchange_valuation", "exchange_brand", "exchange_model", "exchange_reg_no", "exchange_year"}
+
+async def _exchange_entry(sale_doc: dict):
+    """The Inventory entry made for a sale's exchange vehicle, and whether it is still just that: unlisted (so never
+    priced) with no expense or job card on it. Only an untouched entry may follow the sale when it is edited or deleted;
+    once it has been priced, sold or worked on it is real stock. Returns (entry or None, untouched)."""
+    vid = sale_doc.get("exchange_vehicle_id")
+    entry = await db.vehicles.find_one({"id": vid}, {"_id": 0}) if vid else None
+    if not entry:
+        return None, False
+    worked_on = await db.expenses.find_one({"vehicle_id": vid}, {"_id": 0, "id": 1}) or await db.job_cards.find_one({"vehicle_id": vid}, {"_id": 0, "id": 1})
+    return entry, entry.get("status") == "unlisted" and not worked_on
+
+async def _plan_exchange_change(existing: dict, sale: SaleUpdate, sold: dict, sale_date: str, valuation: float, cu: dict) -> dict:
+    """What editing the exchange on a recorded sale does to the old vehicle's Inventory entry, worked out before
+    anything is written (a plate already in stock raises here). Returns {"insert": a new entry, "update": (id, fields),
+    "delete": id, "link": the sale's exchange_vehicle_id afterwards, "note": a sentence for the user or None}.
+    - an untouched entry follows the edit: its details and cost are changed, or it is removed if the exchange is gone;
+    - one that has been priced or worked on is left as it is (the sale's own exchange record still changes);
+    - a sale that had no exchange gets an entry, as a new sale does."""
+    brand, model = (sale.exchange_brand or "").strip(), (sale.exchange_model or "").strip()
+    reg_no, year = (sale.exchange_reg_no or "").strip(), (sale.exchange_year or "").strip()
+    has_exchange = valuation > 0 or bool(brand or model or reg_no or year)
+    entry, untouched = await _exchange_entry(existing)
+    plan = {"insert": None, "update": None, "delete": None, "link": entry["id"] if entry else None, "note": None}
+    if not has_exchange:
+        if entry and untouched:
+            plan["delete"], plan["link"] = entry["id"], None
+        elif entry:
+            plan["note"] = "The exchange vehicle stays in Inventory: it has been priced or worked on."
+        return plan
+    if entry:
+        if not untouched:
+            plan["note"] = "The exchange vehicle in Inventory was left as it is: it has been priced or worked on."
+            return plan
+        if reg_no and reg_no.lower() != (entry.get("registration_number") or "").strip().lower():
+            holder = await _vehicle_holding_plate(reg_no)
+            if holder and holder.get("id") != entry["id"] and holder.get("status") not in ("sold", "scrap"):
+                raise HTTPException(400, f"Exchange vehicle '{reg_no}' is already in stock")
+        plan["update"] = (entry["id"], {
+            "brand": brand or "Unknown", "model": model or "Unknown", "year": int(year) if year.isdigit() else None,
+            "registration_number": reg_no, "purchase_price": valuation,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        })
+        return plan
+    plan["insert"] = await _exchange_vehicle_for_sale(sale, sold, sale_date, valuation, cu)
+    plan["link"] = plan["insert"]["id"]
+    return plan
 
 @api_router.post("/sales")
 async def create_sale(sale: SaleCreate, cu: dict = Depends(require("sales", "create"))):
@@ -3943,11 +4182,15 @@ async def reconcile_sales(cu: dict = Depends(admin_only)):
     that skips the auto-create-sale logic (e.g. bulk import, or a direct DB edit), and is checked
     separately below."""
     sales = await db.sales.find({}, {"_id": 0}).to_list(1000)
+    # One lookup for every vehicle these sales point at (and one for "which vehicles have an active sale"), instead of one
+    # database round trip per sale: with a database that is not on this machine that was ~700 trips and over a minute.
+    vehicle_ids = list({s.get("vehicle_id") for s in sales if not s.get("returned") and s.get("vehicle_id")})
+    vehicles_by_id = {v["id"]: v for v in await db.vehicles.find({"id": {"$in": vehicle_ids}}, {"_id": 0}).to_list(None)} if vehicle_ids else {}
     mismatches = []
     for s in sales:
         if s.get("returned"):
             continue
-        v = await db.vehicles.find_one({"id": s.get("vehicle_id")}, {"_id": 0})
+        v = vehicles_by_id.get(s.get("vehicle_id"))
         if not v:
             mismatches.append({
                 "sale_id": s["id"], "vehicle_id": s.get("vehicle_id"), "issue": "vehicle_deleted",
@@ -3963,9 +4206,9 @@ async def reconcile_sales(cu: dict = Depends(admin_only)):
             })
 
     sold_vehicles = await db.vehicles.find({"status": "sold"}, {"_id": 0}).to_list(1000)
+    has_active_sale = {x.get("vehicle_id") for x in await db.sales.find({"returned": {"$ne": True}}, {"_id": 0, "vehicle_id": 1}).to_list(None)}
     for v in sold_vehicles:
-        active_sale = await db.sales.find_one({"vehicle_id": v["id"], "returned": {"$ne": True}}, {"_id": 0, "id": 1})
-        if not active_sale:
+        if v["id"] not in has_active_sale:
             mismatches.append({
                 "sale_id": None, "vehicle_id": v["id"], "issue": "orphan_sold_vehicle",
                 "vehicle_info": f"{v.get('brand','')} {v.get('model','')} {v.get('year','')}".strip(),
@@ -4009,23 +4252,33 @@ async def get_sale(sid: str, cu: dict = Depends(require("sales", "view"))):
     # Self-heal: strip out any job-card item a now-removed code path already billed onto
     # this sale — see _strip_job_card_extra_expenses.
     await _strip_job_card_extra_expenses(s)
-    v = await db.vehicles.find_one({"id": s.get("vehicle_id")}, {"_id": 0})
+    is_admin = cu.get("role", "admin") == "admin"
+    # The vehicle, the customer, the job-card cost and the investment inputs only need the sale, not each other, so they
+    # are read at the same time (this used to be nine reads in a row, the same returned-sales read three times).
+    v, job_card_cost, c, investment_inputs = await asyncio.gather(
+        db.vehicles.find_one({"id": s.get("vehicle_id")}, {"_id": 0}),
+        _job_card_cost_total(s["vehicle_id"], s) if s.get("vehicle_id") else _nothing(),
+        db.customers.find_one({"id": s.get("customer_id")}, {"_id": 0}) if s.get("customer_id") else _nothing(),
+        _investment_inputs(s["vehicle_id"]) if (is_admin and s.get("vehicle_id") and not (s.get("returned") and s.get("cost_at_return") is not None)) else _nothing(),
+    )
     if v:
         s["vehicle_info"] = f"{v.get('brand','')} {v.get('model','')} {v.get('year','')}".strip()
         s["vehicle_brand"] = v.get("brand"); s["vehicle_model"] = v.get("model")
         s["vehicle_year"] = v.get("year"); s["registration_number"] = v.get("registration_number")
         s["engine_cc"] = v.get("engine_cc"); s["fuel_type"] = v.get("fuel_type")
         s["vehicle_status"] = v.get("status")
-    s["job_card_cost"] = await _job_card_cost_total(s["vehicle_id"], s) if s.get("vehicle_id") else 0
-    c = await db.customers.find_one({"id": s.get("customer_id")}, {"_id": 0}) if s.get("customer_id") else None
+    s["job_card_cost"] = job_card_cost if s.get("vehicle_id") else 0
     s["customer_name"] = c["name"] if c else "Walk-in Customer"
     s["customer_contact"] = c.get("contact_number") if c else None
     s["customer_address"] = c.get("address") if c else None
     s["customer_id_number"] = c.get("id_number") if c else None
     # Margin/profit reveal what the shop paid for the vehicle — restricted to Admin
     # to keep that number away from front desk, same as the vehicle-level fields.
-    if cu.get("role", "admin") == "admin" and v:
-        investment = await _vehicle_investment(s["vehicle_id"], v, s)
+    if is_admin and v:
+        if s.get("returned") and s.get("cost_at_return") is not None:
+            investment = s["cost_at_return"]
+        else:
+            investment = _investment_from(v, s, investment_inputs if investment_inputs is not None else await _investment_inputs(s["vehicle_id"]))
         total = _sale_revenue(s)
         s["total_investment"] = investment
         s["profit"] = total - investment
@@ -4042,10 +4295,14 @@ async def update_sale(sid: str, sale: SaleUpdate, cu: dict = Depends(get_current
     if not v: raise HTTPException(404, "Vehicle not found")
     expenses_total = sum(float(e.get("amount", 0)) for e in sale.extra_expenses)
     total_amount = sale.sale_price + expenses_total
-    paid_total = (sale.paid_cash or 0) + (sale.paid_bank or 0) + (sale.advance_payment or 0) + (existing.get("exchange_valuation") or 0)
+    # The exchange counts as paid at the valuation the form sends, or at the saved one when it does not send it.
+    exchange_sent = bool(sale.model_fields_set & SALE_EXCHANGE_FIELDS)
+    exchange_valuation = max(sale.exchange_valuation or 0, 0) if exchange_sent else (existing.get("exchange_valuation") or 0)
+    paid_total = (sale.paid_cash or 0) + (sale.paid_bank or 0) + (sale.advance_payment or 0) + exchange_valuation
     due_amount = round(sale.due_amount, 2) if sale.due_amount is not None else max(round(total_amount - paid_total, 2), 0)
     payment_status = "Paid" if due_amount <= 0 else ("Partial" if paid_total > 0 else "Unpaid")
     sale_date = sale.sale_date or existing.get("sale_date")
+    exchange_plan = await _plan_exchange_change(existing, sale, v, sale_date, exchange_valuation, cu) if exchange_sent else None
     update_doc = {
         "vehicle_id": sale.vehicle_id,
         "customer_id": sale.customer_id,
@@ -4066,6 +4323,17 @@ async def update_sale(sid: str, sale: SaleUpdate, cu: dict = Depends(get_current
         "updated_by": cu.get("username"),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
+    if sale.model_fields_set & SALE_WITNESS_FIELDS:
+        update_doc.update({k: (getattr(sale, k) or "").strip() or None for k in SALE_WITNESS_FIELDS})
+    if exchange_plan:
+        update_doc.update({
+            "exchange_valuation": exchange_valuation,
+            "exchange_brand": (sale.exchange_brand or "").strip() or None,
+            "exchange_model": (sale.exchange_model or "").strip() or None,
+            "exchange_reg_no": (sale.exchange_reg_no or "").strip() or None,
+            "exchange_year": (sale.exchange_year or "").strip() or None,
+            "exchange_vehicle_id": exchange_plan["link"],
+        })
     # A form that does not show the seller must not clear it; and nothing is written when there is no seller
     # before or after, so an ordinary edit leaves the sold_by columns alone.
     if "sold_by_id" in sale.model_fields_set and (sale.sold_by_id or existing.get("sold_by_id")):
@@ -4076,7 +4344,25 @@ async def update_sale(sid: str, sale: SaleUpdate, cu: dict = Depends(get_current
         lead = await crm.lead_for_sale(sale.model_dump(), replace=True)
         if any(lead.values()) or any(existing.get(k) for k in lead):
             update_doc.update(lead)
-    await db.sales.update_one({"id": sid}, {"$set": update_doc})
+    if exchange_plan and exchange_plan["insert"]:
+        await db.vehicles.insert_one(exchange_plan["insert"])
+    try:
+        await db.sales.update_one({"id": sid}, {"$set": update_doc})
+    except Exception:
+        # Otherwise a retry would trip over the half-made entry's own plate ("already in stock").
+        if exchange_plan and exchange_plan["insert"]:
+            await db.vehicles.delete_one({"id": exchange_plan["insert"]["id"]})
+        raise
+    if exchange_plan:
+        if exchange_plan["update"]:
+            await db.vehicles.update_one({"id": exchange_plan["update"][0]}, {"$set": exchange_plan["update"][1]})
+        if exchange_plan["delete"]:
+            await db.vehicles.delete_one({"id": exchange_plan["delete"]})
+        if exchange_plan["insert"]:
+            ins = exchange_plan["insert"]
+            await db.audit_logs.insert_one({"action": "vehicle_created", "vehicle_id": ins["id"],
+                "user": cu["username"], "timestamp": datetime.now(timezone.utc).isoformat(),
+                "details": f"Added {ins['brand']} {ins['model']} {ins['year'] or ''}".strip() + " (taken in exchange)"})
     # Keep vehicle record in sync (price/date/customer may have changed). Re-saving an active
     # sale also re-asserts status "sold", so a vehicle that drifted out of Sold Stock (e.g.
     # status edited from Inventory) is repaired by simply saving its sale again.
@@ -4092,6 +4378,8 @@ async def update_sale(sid: str, sale: SaleUpdate, cu: dict = Depends(get_current
     if sale.customer_id:
         await db.customers.update_one({"id": sale.customer_id}, {"$set": {"last_purchase_date": sale_date}})
     updated = await db.sales.find_one({"id": sid}, {"_id": 0})
+    if exchange_plan and exchange_plan["note"]:
+        updated["exchange_note"] = exchange_plan["note"]  # not saved: just tells the form what happened to the Inventory entry
     return updated
 
 @api_router.post("/sales/{sid}/resync-vehicle")
@@ -4124,14 +4412,12 @@ async def delete_sale(sid: str, cu: dict = Depends(get_current_user)):
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }})
     message = "Sale deleted, vehicle restored to available"
-    exchange_id = s.get("exchange_vehicle_id")
-    exchange = await db.vehicles.find_one({"id": exchange_id}, {"_id": 0, "status": 1}) if exchange_id else None
+    exchange, untouched = await _exchange_entry(s)
     if exchange:
         # The old vehicle was only taken in because of this sale. Still unlisted with no spend on it, it goes too; once
         # it has been priced, sold or worked on it is real stock and stays.
-        worked_on = await db.expenses.find_one({"vehicle_id": exchange_id}, {"_id": 0, "id": 1}) or await db.job_cards.find_one({"vehicle_id": exchange_id}, {"_id": 0, "id": 1})
-        if exchange.get("status") == "unlisted" and not worked_on:
-            await db.vehicles.delete_one({"id": exchange_id})
+        if untouched:
+            await db.vehicles.delete_one({"id": exchange["id"]})
             message += ", and the exchange vehicle removed from inventory"
         else:
             message += ". The exchange vehicle stays in inventory"
@@ -4155,17 +4441,25 @@ async def set_sale_review(sid: str, body: dict, cu: dict = Depends(admin_only)):
 @api_router.get("/team")
 async def get_team(cu: dict = Depends(require("team", "view"))):
     members = await db.team_members.find({}, {"_id": 0}).to_list(100)
+    mechanic_ids = [m["id"] for m in members if m.get("role") == "mechanic"]
+    total_by_mechanic: dict = {}
+    done_by_mechanic: dict = {}
+    if mechanic_ids:  # one read for everyone (two database round trips per mechanic before)
+        for j in await db.job_cards.find({"mechanic_id": {"$in": mechanic_ids}}, {"_id": 0, "mechanic_id": 1, "status": 1}).to_list(200000):
+            total_by_mechanic[j["mechanic_id"]] = total_by_mechanic.get(j["mechanic_id"], 0) + 1
+            if j.get("status") == "completed":
+                done_by_mechanic[j["mechanic_id"]] = done_by_mechanic.get(j["mechanic_id"], 0) + 1
     for m in members:
         if m.get("role") == "mechanic":
-            m["total_jobs"] = await db.job_cards.count_documents({"mechanic_id": m["id"]})
-            m["completed_jobs"] = await db.job_cards.count_documents({"mechanic_id": m["id"], "status": "completed"})
+            m["total_jobs"] = total_by_mechanic.get(m["id"], 0)
+            m["completed_jobs"] = done_by_mechanic.get(m["id"], 0)
             m["completion_rate"] = round(m["completed_jobs"] / m["total_jobs"] * 100) if m["total_jobs"] > 0 else 0
     return members
 
 # ── BOOKINGS ──────────────────────────────────────────────────────────
 # A booking is a customer's deposit on a vehicle before the sale. It is NOT a sale: nothing
 # here counts toward sales/revenue. The vehicle sits at "reserved" while the booking is active;
-# the booking then ends one of two ways — "Record Sale" (POST /sales with booking_id, which
+# the booking then ends one of two ways — "Sale Vehicle" (POST /sales with booking_id, which
 # marks it converted and the deposit rides along as the sale's advance payment) or a
 # withdrawal (cancel below, which frees the vehicle and records how much deposit was refunded).
 async def _enrich_bookings(bookings: list) -> list:
@@ -4376,27 +4670,32 @@ async def delete_partner(pid: str, cu: dict = Depends(admin_only)):
 # ── VENDORS ───────────────────────────────────────────────────────────
 @api_router.get("/vendors")
 async def get_vendors(cu: dict = Depends(require("vendors", "view"))):
-    vendors = await db.vendors.find({}, {"_id": 0}).to_list(200)
+    # The vendors, their vehicles, parts and payments are all read at the same time (the database is in another city). The
+    # others are read for every vendor and sorted out below by vendor id, which gives the same totals as asking for the listed
+    # vendors only; and only the columns the totals use are read, not whole rows.
+    vendors, all_vehicles, all_parts, all_payments = await asyncio.gather(
+        db.vendors.find({}, {"_id": 0}).to_list(200),
+        db.vehicles.find({"$or": [{"vendor_id": {"$exists": True}}, {"linked_contact_type": "vendor"}]},
+                         {"_id": 0, "vendor_id": 1, "linked_contact_type": 1, "linked_contact_id": 1, "purchase_price": 1}).to_list(20000),
+        db.spare_parts.find({"vendor_id": {"$exists": True}}, {"_id": 0, "id": 1, "vendor_id": 1, "quantity": 1, "unit_cost": 1}).to_list(20000),
+        db.vendor_payments.find({}, {"_id": 0, "vendor_id": 1, "amount": 1}).to_list(20000),
+    )
     vendor_ids = [v["id"] for v in vendors]
+    listed = set(vendor_ids)
 
     vehicles_by_vendor, parts_by_vendor, payments_by_vendor = {}, {}, {}
     if vendor_ids:
-        all_vehicles = await db.vehicles.find(
-            {"$or": [{"vendor_id": {"$in": vendor_ids}}, {"linked_contact_type": "vendor", "linked_contact_id": {"$in": vendor_ids}}]},
-            {"_id": 0},
-        ).to_list(20000)
         for vh in all_vehicles:
             vid = vh.get("vendor_id") or (vh.get("linked_contact_id") if vh.get("linked_contact_type") == "vendor" else None)
-            if vid: vehicles_by_vendor.setdefault(vid, []).append(vh)
+            if vid in listed: vehicles_by_vendor.setdefault(vid, []).append(vh)
 
-        all_parts = await db.spare_parts.find({"vendor_id": {"$in": vendor_ids}}, {"_id": 0}).to_list(20000)
+        all_parts = [p for p in all_parts if p["vendor_id"] in listed]
         await _attach_bought_qty(all_parts)
         for p in all_parts:
             parts_by_vendor.setdefault(p["vendor_id"], []).append(p)
 
-        all_payments = await db.vendor_payments.find({"vendor_id": {"$in": vendor_ids}}, {"_id": 0}).to_list(20000)
         for p in all_payments:
-            payments_by_vendor.setdefault(p["vendor_id"], []).append(p)
+            if p["vendor_id"] in listed: payments_by_vendor.setdefault(p["vendor_id"], []).append(p)
 
     for v in vendors:
         vehicles = vehicles_by_vendor.get(v["id"], [])
@@ -4558,32 +4857,39 @@ async def add_emi_payment(payment: EMIPaymentCreate, cu: dict = Depends(admin_on
 # ── FINANCE ───────────────────────────────────────────────────────────
 @api_router.get("/finance/summary")
 async def finance_summary(cu: dict = Depends(admin_only)):
-    # Inventory value (available vehicles)
-    avail = await db.vehicles.find({"status": "available"}, {"_id": 0}).to_list(1000)
-    inventory_value = sum((await _batch_vehicle_investment(avail)).values())
-    # Revenue & COGS from Sales table (single source of truth)
-    sales_records = await db.sales.find({}, {"_id": 0}).to_list(1000)
+    # Five pieces of work that do not depend on each other, run at the same time (the database is in another city, so
+    # one after another this waited for every step in turn).
+    async def stock_value():  # inventory value (available vehicles)
+        avail = await db.vehicles.find({"status": "available"}, _INVESTMENT_FIELDS).to_list(1000)
+        return avail, sum((await _batch_vehicle_investment(avail)).values())
+
+    async def sales_and_cogs():  # revenue & COGS from the Sales table (single source of truth)
+        sales_records = await db.sales.find({}, {"_id": 0}).to_list(1000)
+        # Dedupe: a vehicle sold, returned, then resold appears in two sales rows but its
+        # investment (purchase price + expenses) should only count once toward COGS.
+        sold_vehicle_ids = list({s["vehicle_id"] for s in sales_records})
+        sold_vehicles = (
+            await db.vehicles.find({"id": {"$in": sold_vehicle_ids}}, _INVESTMENT_FIELDS).to_list(5000)
+            if sold_vehicle_ids else []
+        )
+        return sales_records, sum((await _batch_vehicle_investment(sold_vehicles)).values())
+
+    async def vendor_payables_total():
+        vendors = await db.vendors.find({}, {"_id": 0}).to_list(100)
+        return sum((await _batch_vendor_payable([v["id"] for v in vendors])).values())
+
+    async def emi_receivables_total():
+        emis = await db.emi_records.find({"status": "active"}, {"_id": 0}).to_list(200)
+        return sum((await _batch_emi_remaining(emis)).values())
+
+    async def partner_capital():
+        partners = await db.partners.find({}, {"_id": 0}).to_list(100)
+        return sum(p.get("capital_contribution", 0) for p in partners)
+
+    ((avail, inventory_value), (sales_records, total_cogs), vendor_payables, emi_receivables, total_capital) = await asyncio.gather(
+        stock_value(), sales_and_cogs(), vendor_payables_total(), emi_receivables_total(), partner_capital())
     total_revenue = sum(_sale_revenue(s) for s in sales_records)
-    # Dedupe: a vehicle sold, returned, then resold appears in two sales rows but its
-    # investment (purchase price + expenses) should only count once toward COGS.
-    sold_vehicle_ids = list({s["vehicle_id"] for s in sales_records})
-    sold_vehicles = (
-        await db.vehicles.find({"id": {"$in": sold_vehicle_ids}}, {"_id": 0}).to_list(5000)
-        if sold_vehicle_ids else []
-    )
-    total_cogs = sum((await _batch_vehicle_investment(sold_vehicles)).values())
     gross_profit = total_revenue - total_cogs
-
-    # Vendor payables
-    vendors = await db.vendors.find({}, {"_id": 0}).to_list(100)
-    vendor_payables = sum((await _batch_vendor_payable([v["id"] for v in vendors])).values())
-
-    # EMI receivables
-    emis = await db.emi_records.find({"status": "active"}, {"_id": 0}).to_list(200)
-    emi_receivables = sum((await _batch_emi_remaining(emis)).values())
-
-    partners = await db.partners.find({}, {"_id": 0}).to_list(100)
-    total_capital = sum(p.get("capital_contribution", 0) for p in partners)
 
     return {
         "inventory_value": inventory_value,
@@ -4598,35 +4904,120 @@ async def finance_summary(cu: dict = Depends(admin_only)):
         "vehicles_sold": len(sales_records),
     }
 
+# ── ASSISTANT (read-only; for the Hanuman voice assistant) ─────────────
+@api_router.get("/assistant/briefing")
+@limiter.limit("60/minute")
+async def assistant_briefing(request: Request):
+    """The owner's numbers (today's and this month's sales, dues, profit, stock) for the phone assistant.
+
+    Authenticated by a per-company key in the X-Assistant-Key header, not by a user login: either an
+    entry in the ASSISTANT_KEYS env or the key derived from JWT_SECRET (see assistant_api.py and
+    /assistant/key). It reads this one summary for that one company and nothing else; there is no
+    write route behind it."""
+    presented = request.headers.get("x-assistant-key", "")
+    cid = (assistant_api.company_for_key(presented, os.environ.get("ASSISTANT_KEYS", ""))
+           or assistant_api.company_for_derived_key(presented, JWT_SECRET))
+    if not cid:
+        raise HTTPException(401, "Invalid assistant key")
+    current_company_id.set(cid)          # every db.<collection> call below is now scoped to this company
+    finance = await finance_summary({"role": "admin"})
+    sales = await db.sales.find({}, {"_id": 0}).to_list(50000)
+    today, month = assistant_api.nepal_today()
+    # Customers, the CRM's lead stages, follow-ups due and the team, counted as the CRM page counts them.
+    customers = await db.customers.find({}, {"_id": 0, "id": 1, "created_at": 1, "lead_status": 1}).to_list(50000)
+    followups = await db.crm_followups.find({"status": "pending"}, {"_id": 0, "due_at": 1}).to_list(50000)
+    team = await db.team_members.find({}, {"_id": 0, "role": 1, "is_active": 1}).to_list(500)
+    people = assistant_api.people_briefing(
+        customers, sales, followups, team, datetime.fromisoformat(today).date(),
+        crm.effective_status, crm.npt_date)
+    return assistant_api.build_briefing(sales, finance, today, month, _sale_revenue, people=people)
+
+@api_router.get("/assistant/key")
+@limiter.limit("10/minute")
+async def assistant_key(request: Request, cu: dict = Depends(admin_only)):
+    """The assistant key for the signed-in admin's own company, to hand to the Hanuman voice assistant.
+
+    Admin-only. The key is derived from JWT_SECRET (nothing is stored) and can only read /assistant/briefing."""
+    cid = cu.get("company_id")
+    if not cid:
+        raise HTTPException(400, "This account has no company")
+    return {"company_id": cid, "key": assistant_api.derive_key(JWT_SECRET, cid)}
+
+class AssistantLookup(BaseModel):
+    name: str = Field(max_length=20)
+    args: dict = Field(default_factory=dict)
+
+@api_router.post("/assistant/lookup")
+@limiter.limit("60/minute")
+async def assistant_lookup(request: Request, body: AssistantLookup):
+    """One named, read-only lookup for the phone assistant (customer, dues, sales, vehicle): see assistant_api.run_lookup.
+
+    Same X-Assistant-Key as /assistant/briefing, so it only ever reads one company's data. It runs a fixed list
+    of lookups with a few options each, never free-form queries, and every result is small."""
+    presented = request.headers.get("x-assistant-key", "")
+    cid = (assistant_api.company_for_key(presented, os.environ.get("ASSISTANT_KEYS", ""))
+           or assistant_api.company_for_derived_key(presented, JWT_SECRET))
+    if not cid:
+        raise HTTPException(401, "Invalid assistant key")
+    current_company_id.set(cid)
+    data = {}
+    if body.name in ("customer", "dues", "sales"):
+        data["sales"] = await db.sales.find({}, {"_id": 0}).to_list(50000)
+    if body.name in ("customer", "dues"):
+        data["customers"] = await db.customers.find({}, {"_id": 0, "id": 1, "name": 1, "contact_number": 1}).to_list(50000)
+    if body.name in ("sales", "vehicle"):
+        data["vehicles"] = await db.vehicles.find({}, {"_id": 0, "id": 1, "brand": 1, "model": 1, "variant": 1, "year": 1, "color": 1,
+                                                       "registration_number": 1, "status": 1, "selling_price": 1, "purchase_price": 1,
+                                                       "kilometer_run": 1}).to_list(50000)
+    today = datetime.fromisoformat(assistant_api.nepal_today()[0]).date()
+    return assistant_api.run_lookup(body.name, body.args, data, today, _sale_revenue)
+
 # ── REPORTS ───────────────────────────────────────────────────────────
 @api_router.get("/reports/dashboard")
 async def dashboard_stats(cu: dict = Depends(admin_only)):
-    # These 4 counts are independent — running them concurrently instead of one
-    # await after another turns 4 round-trips into the time of the slowest one.
-    total, available, reserved, in_repair = await asyncio.gather(
-        db.vehicles.count_documents({}),
-        db.vehicles.count_documents({"status": "available"}),
-        db.vehicles.count_documents({"status": "reserved"}),
-        db.vehicles.count_documents({"status": "in_repair"}),
-    )
+    # The figures come from four pieces of work that do not depend on each other, so they run at the same time:
+    # the database is in another city (about 45 ms per round trip) and one after another this screen waited for
+    # every step in turn.
+    async def counts():
+        return await asyncio.gather(
+            db.vehicles.count_documents({}),
+            db.vehicles.count_documents({"status": "available"}),
+            db.vehicles.count_documents({"status": "reserved"}),
+            db.vehicles.count_documents({"status": "in_repair"}),
+            db.job_cards.count_documents({"status": "pending"}),
+            db.job_cards.count_documents({"status": "in_progress"}),
+            db.customers.count_documents({}),
+            db.vendors.count_documents({}),
+        )
 
-    avail_v = await db.vehicles.find({"status": "available"}, {"_id": 0}).to_list(1000)
-    investment_by_vehicle = await _batch_vehicle_investment(avail_v)
+    async def stock_for_sale():
+        avail_v = await db.vehicles.find({"status": "available"}, {**_INVESTMENT_FIELDS, "purchase_date": 1}).to_list(1000)
+        return avail_v, await _batch_vehicle_investment(avail_v)
+
+    async def sales_and_their_vehicles():
+        # Use Sales table as single source of truth for sold count & profit
+        sales_records = await db.sales.find({}, {"_id": 0}).to_list(1000)
+        # Sold vehicles' investment feeds both the profit loop below and total_cogs —
+        # fetch + batch-compute once instead of once per sale/vehicle.
+        sold_vehicle_ids = list({s["vehicle_id"] for s in sales_records})
+        sold_vehicles = (
+            await db.vehicles.find({"id": {"$in": sold_vehicle_ids}}, _INVESTMENT_FIELDS).to_list(5000)
+            if sold_vehicle_ids else []
+        )
+        return sales_records, sold_vehicles, await _batch_vehicle_investment(sold_vehicles)
+
+    async def vendor_dues():
+        vendors = await db.vendors.find({}, {"_id": 0}).to_list(100)
+        return await _batch_vendor_payable([v["id"] for v in vendors])
+
+    ((total, available, reserved, in_repair, pending_jobs, in_progress_jobs, total_customers, total_vendors),
+     (avail_v, investment_by_vehicle),
+     (sales_records, sold_vehicles, sold_investment_by_vehicle),
+     payable_by_vendor) = await asyncio.gather(counts(), stock_for_sale(), sales_and_their_vehicles(), vendor_dues())
+
     locked_capital = sum(investment_by_vehicle.values())
     aging = _aging_counts(avail_v)
-
-    # Use Sales table as single source of truth for sold count & profit
-    sales_records = await db.sales.find({}, {"_id": 0}).to_list(1000)
     sold = len(sales_records)
-
-    # Sold vehicles' investment feeds both the profit loop below and total_cogs —
-    # fetch + batch-compute once instead of once per sale/vehicle.
-    sold_vehicle_ids = list({s["vehicle_id"] for s in sales_records})
-    sold_vehicles = (
-        await db.vehicles.find({"id": {"$in": sold_vehicle_ids}}, {"_id": 0}).to_list(5000)
-        if sold_vehicle_ids else []
-    )
-    sold_investment_by_vehicle = await _batch_vehicle_investment(sold_vehicles)
     sold_vehicle_ids_existing = {v["id"] for v in sold_vehicles}
 
     total_profit = 0
@@ -4645,16 +5036,7 @@ async def dashboard_stats(cu: dict = Depends(admin_only)):
     # investment (purchase price + expenses) should only count once toward COGS.
     total_cogs = sum(sold_investment_by_vehicle.values())
 
-    vendors = await db.vendors.find({}, {"_id": 0}).to_list(100)
-    payable_by_vendor = await _batch_vendor_payable([v["id"] for v in vendors])
     total_vendor_due = sum(payable_by_vendor.values())
-
-    pending_jobs, in_progress_jobs, total_customers, total_vendors = await asyncio.gather(
-        db.job_cards.count_documents({"status": "pending"}),
-        db.job_cards.count_documents({"status": "in_progress"}),
-        db.customers.count_documents({}),
-        db.vendors.count_documents({}),
-    )
 
     return {
         "total_vehicles": total, "available": available, "sold": sold,
@@ -4699,8 +5081,9 @@ async def inventory_report(cu: dict = Depends(admin_only)):
 
 @api_router.get("/reports/financial")
 async def financial_report(cu: dict = Depends(admin_only)):
-    sold = await db.vehicles.find({"status": "sold"}, {"_id": 0}).to_list(1000)
-    investment_by_vehicle = await _batch_vehicle_investment(sold)
+    sold = await db.vehicles.find({"status": "sold"}, {**_INVESTMENT_FIELDS, "sold_date": 1, "updated_at": 1, "selling_price": 1}).to_list(1000)
+    investment_by_vehicle, partners = await asyncio.gather(  # independent, asked at the same time
+        _batch_vehicle_investment(sold), db.partners.find({}, {"_id": 0}).to_list(100))
     monthly = {}
     for v in sold:
         sd = v.get("sold_date") or v.get("updated_at", "")
@@ -4712,7 +5095,6 @@ async def financial_report(cu: dict = Depends(admin_only)):
         monthly[month]["investment"] += inv
         monthly[month]["profit"] += sp - inv
         monthly[month]["count"] += 1
-    partners = await db.partners.find({}, {"_id": 0}).to_list(100)
     total_profit = sum(m["profit"] for m in monthly.values())
     partner_shares = [{"name": p["name"], "stake": p["stake_percentage"],
                        "capital": p["capital_contribution"],
@@ -4730,29 +5112,33 @@ async def _enriched_sales_for_closing(start_date: Optional[str] = None, end_date
     query = {}
     if start_date and end_date:
         query["sale_date"] = {"$gte": start_date, "$lte": end_date}
-    sales = await db.sales.find(query, {"_id": 0}).sort("sale_date", 1).to_list(5000)
+    # Only the columns this report reads are fetched (whole sale and vehicle rows are mostly text it never looks at), and
+    # everything that needs only the sales' ids is read at the same time (the database is in another city).
+    sales = await db.sales.find(query, {"_id": 0, "id": 1, "sale_date": 1, "sale_price": 1, "due_amount": 1, "returned": 1, "retained_amount": 1,
+                                        "vehicle_id": 1, "customer_id": 1, "created_at": 1, "returned_at": 1, "cost_at_return": 1}).sort("sale_date", 1).to_list(5000)
     vehicle_ids = list({s["vehicle_id"] for s in sales if s.get("vehicle_id")})
     customer_ids = list({s["customer_id"] for s in sales if s.get("customer_id")})
-    vehicles_by_id, customers_by_id = {}, {}
-    if vehicle_ids:
-        vs = await db.vehicles.find({"id": {"$in": vehicle_ids}}, {"_id": 0}).to_list(len(vehicle_ids))
-        vehicles_by_id = {v["id"]: v for v in vs}
-    if customer_ids:
-        cs = await db.customers.find({"id": {"$in": customer_ids}}, {"_id": 0, "id": 1, "name": 1, "contact_number": 1}).to_list(len(customer_ids))
-        customers_by_id = {c["id"]: c for c in cs}
+    vs, cs, returned_rows, all_exps, all_jobs = await asyncio.gather(
+        db.vehicles.find({"id": {"$in": vehicle_ids}}, {"_id": 0, "id": 1, "brand": 1, "model": 1, "year": 1, "registration_number": 1,
+                                                         "purchase_price": 1, "accessories_cost": 1, "sanakhat_cost": 1}).to_list(len(vehicle_ids)) if vehicle_ids else _no_rows(),
+        db.customers.find({"id": {"$in": customer_ids}}, {"_id": 0, "id": 1, "name": 1, "contact_number": 1}).to_list(len(customer_ids)) if customer_ids else _no_rows(),
+        db.sales.find({"vehicle_id": {"$in": vehicle_ids}, "returned": True}, {"_id": 0, "vehicle_id": 1, "returned_at": 1}).to_list(20000) if vehicle_ids else _no_rows(),
+        db.expenses.find({"vehicle_id": {"$in": vehicle_ids}}, {"_id": 0, "vehicle_id": 1, "amount": 1, "created_at": 1}).to_list(20000) if vehicle_ids else _no_rows(),
+        db.job_cards.find({"vehicle_id": {"$in": vehicle_ids}, "is_warranty": {"$ne": True}}, {"_id": 0, "vehicle_id": 1, "created_at": 1, "after_sale": 1, "is_warranty": 1,
+                                                                                               "parts": 1, "actual_cost": 1, "estimated_cost": 1, "sanakhat_cost": 1, "resanakhat_cost": 1}).to_list(20000) if vehicle_ids else _no_rows(),
+    )
+    vehicles_by_id = {v["id"]: v for v in vs}
+    customers_by_id = {c["id"]: c for c in cs}
     exps_by_vehicle: dict = {}
     jobs_by_vehicle: dict = {}
     returned_by_vehicle: dict = {}
-    if vehicle_ids:
-        for r in await db.sales.find({"vehicle_id": {"$in": vehicle_ids}, "returned": True}, {"_id": 0, "vehicle_id": 1, "returned_at": 1}).to_list(20000):
-            if r.get("returned_at"):
-                returned_by_vehicle.setdefault(r["vehicle_id"], []).append(r["returned_at"])
-        all_exps = await db.expenses.find({"vehicle_id": {"$in": vehicle_ids}}, {"_id": 0}).to_list(20000)
-        for e in all_exps:
-            exps_by_vehicle.setdefault(e["vehicle_id"], []).append(e)
-        all_jobs = await db.job_cards.find({"vehicle_id": {"$in": vehicle_ids}, "is_warranty": {"$ne": True}}, {"_id": 0}).to_list(20000)
-        for j in all_jobs:
-            jobs_by_vehicle.setdefault(j["vehicle_id"], []).append(j)
+    for r in returned_rows:
+        if r.get("returned_at"):
+            returned_by_vehicle.setdefault(r["vehicle_id"], []).append(r["returned_at"])
+    for e in all_exps:
+        exps_by_vehicle.setdefault(e["vehicle_id"], []).append(e)
+    for j in all_jobs:
+        jobs_by_vehicle.setdefault(j["vehicle_id"], []).append(j)
 
     out = []
     for s in sales:
@@ -5312,36 +5698,41 @@ async def inventory_pipeline_export(cu: dict = Depends(require("vehicles", "view
 @api_router.get("/reports/accounting-summary")
 async def accounting_summary(start_date: str, end_date: str, cu: dict = Depends(admin_only)):
     """Returns cost/sales/profit for vehicles purchased/sold within [start_date, end_date]."""
-    # Vehicles purchased in period (total cost = purchase + expenses)
-    purchased = await db.vehicles.find(
-        {"purchase_date": {"$gte": start_date, "$lte": end_date}}, {"_id": 0}
-    ).to_list(5000)
+    # The purchases side and the sales side do not depend on each other, so they are worked out at the same time.
+    async def purchases_in_period():
+        # Vehicles purchased in period (total cost = purchase + expenses)
+        purchased = await db.vehicles.find(
+            {"purchase_date": {"$gte": start_date, "$lte": end_date}}, _INVESTMENT_FIELDS
+        ).to_list(5000)
+        return purchased, sum((await _batch_vehicle_investment(purchased)).values())
+
+    async def sales_in_the_period():
+        # Sales in period — use Sales table as source of truth
+        sales_in_period = await db.sales.find(
+            {"sale_date": {"$gte": start_date, "$lte": end_date}}, {"_id": 0}
+        ).to_list(5000)
+        # Retained refund fee (returned sales) has no cost basis subtracted — the vehicle's
+        # investment is still attributed to inventory until it's actually resold. Note this
+        # intentionally does NOT dedupe by vehicle_id: if the same vehicle was sold, returned,
+        # and resold (all non-returned sales) within the period, its investment is meant to
+        # count once per sale here — this mirrors the original per-sale-record calculation.
+        non_returned = [s for s in sales_in_period if not s.get("returned")]
+        sold_vehicle_ids = list({s["vehicle_id"] for s in non_returned})
+        sold_vehicles = (
+            await db.vehicles.find({"id": {"$in": sold_vehicle_ids}}, _INVESTMENT_FIELDS).to_list(5000)
+            if sold_vehicle_ids else []
+        )
+        return sales_in_period, non_returned, await _batch_vehicle_investment(sold_vehicles)
+
+    (purchased, total_cost), (sales_in_period, non_returned, investment_by_vehicle) = await asyncio.gather(
+        purchases_in_period(), sales_in_the_period())
     purchase_count = len(purchased)
-    total_cost = sum((await _batch_vehicle_investment(purchased)).values())
     # Bare purchase price only (no accessories/repairs) — the "Vehicle Purchase Cost"
     # tile shows this; total_cost stays the fuller investment figure for anything
     # that still wants it.
     total_purchase_price = sum(v.get("purchase_price", 0) for v in purchased)
-
-    # Sales in period — use Sales table as source of truth
-    sales_in_period = await db.sales.find(
-        {"sale_date": {"$gte": start_date, "$lte": end_date}}, {"_id": 0}
-    ).to_list(5000)
     sold_count = len(sales_in_period)
     total_sales = sum(_sale_revenue(s) for s in sales_in_period)
-
-    # Retained refund fee (returned sales) has no cost basis subtracted — the vehicle's
-    # investment is still attributed to inventory until it's actually resold. Note this
-    # intentionally does NOT dedupe by vehicle_id: if the same vehicle was sold, returned,
-    # and resold (all non-returned sales) within the period, its investment is meant to
-    # count once per sale here — this mirrors the original per-sale-record calculation.
-    non_returned = [s for s in sales_in_period if not s.get("returned")]
-    sold_vehicle_ids = list({s["vehicle_id"] for s in non_returned})
-    sold_vehicles = (
-        await db.vehicles.find({"id": {"$in": sold_vehicle_ids}}, {"_id": 0}).to_list(5000)
-        if sold_vehicle_ids else []
-    )
-    investment_by_vehicle = await _batch_vehicle_investment(sold_vehicles)
     total_investment_sold = sum(
         investment_by_vehicle[s["vehicle_id"]] for s in non_returned if s["vehicle_id"] in investment_by_vehicle
     )
@@ -5365,7 +5756,8 @@ async def report_purchases(start_date: str, end_date: str, cu: dict = Depends(ad
     Dashboard's Total Cost popup with a line-item list that reconciles with that tile,
     the same way /sales already powers the Total Sales / Net Profit popups."""
     purchased = await db.vehicles.find(
-        {"purchase_date": {"$gte": start_date, "$lte": end_date}}, {"_id": 0}
+        {"purchase_date": {"$gte": start_date, "$lte": end_date}},
+        {**_INVESTMENT_FIELDS, "brand": 1, "model": 1, "year": 1, "registration_number": 1, "purchase_source": 1, "purchase_date": 1, "status": 1},
     ).to_list(5000)
     if not purchased:
         return []
@@ -5445,6 +5837,13 @@ async def get_leads(request: Request, cu: dict = Depends(admin_only)):
             "status": v.get("status"), "website_url": f"{STOREFRONT_URL}/inventory/{v['id']}",
             "photo": _public_photo_url(request, v["id"], cover[v["id"]]["id"], cover[v["id"]].get("storage_path")) if v["id"] in cover else None}
     return leads
+
+@api_router.get("/leads/new-count")
+async def get_new_leads_count(cu: dict = Depends(admin_only)):
+    """How many website leads are still new and unopened (the sidebar badge). The sidebar asks every minute, so this reads
+    two small columns instead of every lead together with the photos some of them carry (megabytes)."""
+    rows = await db.leads.find({"status": "new"}, {"_id": 0, "id": 1, "seen_at": 1}).to_list(100000)
+    return {"count": sum(1 for l in rows if not l.get("seen_at"))}
 
 # ── LEADS: every website lead is either accepted or rejected ─────────────
 # A new lead is pending (status "new"). Accepting it puts the person in the CRM (source: Website; someone who is already
@@ -5602,12 +6001,18 @@ def _ga4_token() -> str:
     creds.refresh(GoogleRequest())
     return creds.token
 
+_BIKE_PATH = re.compile(r"/inventory/([0-9a-fA-F-]{36})/?")
+
 async def _name_vehicle_pages(summary: dict) -> dict:
     """Swap /inventory/<id> paths in top_pages for the vehicle (brand model year) so the admin
     sees which bike or car was viewed rather than a long id."""
     pat = re.compile(r"/inventory/([0-9a-fA-F-]{36})/?")
+    if "top_bikes" not in summary:  # Google Analytics only reports page views, not who the viewers were
+        summary["top_bikes"] = [{"id": m.group(1), "path": r["name"], "name": m.group(1), "views": r["views"], "customers": None}
+                                for r in summary.get("top_pages", []) if (m := pat.fullmatch(r["name"]))]
     for r in summary.get("top_pages", []): r["path"] = r["name"]
     ids = {m.group(1) for r in summary.get("top_pages", []) if (m := pat.fullmatch(r["name"]))}
+    ids |= {b["id"] for b in summary["top_bikes"]}
     for v in summary.get("visit_list", []):
         ids |= {m.group(1) for p in v["paths"] if (m := pat.fullmatch(p))}
         ids |= {m.group(1) for st in v.get("steps", []) if (m := pat.fullmatch(st["path"]))}
@@ -5618,6 +6023,7 @@ async def _name_vehicle_pages(summary: dict) -> dict:
             if label: labels[v["id"]] = label
         name = lambda p: labels.get(m.group(1), p) if (m := pat.fullmatch(p)) else p
         for r in summary.get("top_pages", []): r["name"] = name(r["name"])
+        for b in summary["top_bikes"]: b["name"] = labels.get(b["id"], b["name"])
         for v in summary.get("visit_list", []):
             v["paths"] = [name(p) for p in v["paths"]]
             for st in v.get("steps", []): st["label"] = name(st["path"])
@@ -5686,7 +6092,11 @@ async def visits_search(days: int = 30, skip: int = 0, cu: dict = Depends(admin_
     days = max(1, min(days, 365)); skip = max(0, min(skip, 30))
     if not GSC_CREDENTIALS_JSON:
         return {"configured": False}
-    token = await asyncio.to_thread(_gsc_token)
+    try:
+        token = await asyncio.to_thread(_gsc_token)
+    except Exception as ex:  # bad or missing key, wrong key format, Google refusing the sign-in
+        logger.exception("Search Console sign-in failed")
+        raise HTTPException(502, f"Could not sign in to Google Search Console ({type(ex).__name__}). Check GSC_CREDENTIALS_JSON on the backend.")
     end = datetime.now(timezone.utc).date() - timedelta(days=skip)
     start = end - timedelta(days=days - 1)
     url = f"https://searchconsole.googleapis.com/webmasters/v3/sites/{quote(GSC_SITE_URL, safe='')}/searchAnalytics/query"
@@ -5696,13 +6106,22 @@ async def visits_search(days: int = 30, skip: int = 0, cu: dict = Depends(admin_
                 "startDate": start.isoformat(), "endDate": end.isoformat(),
                 "dimensions": [dim], "rowLimit": limit})
         if resp.status_code != 200:
-            raise HTTPException(502, f"Google Search Console error: {resp.json().get('error', {}).get('message', resp.status_code)}")
+            try: why = resp.json().get("error", {}).get("message") or resp.status_code
+            except Exception: why = resp.status_code
+            raise HTTPException(502, f"Google Search Console error: {why}")
         return [{"name": r["keys"][0], "clicks": int(r["clicks"]), "impressions": int(r["impressions"]),
                  "position": round(r["position"], 1)} for r in resp.json().get("rows", [])]
-    queries, countries, pages, daily = await asyncio.gather(
-        query("query", 500), query("country", 100), query("page", 100), query("date", 400))
+    try:
+        queries, countries, pages, daily = await asyncio.gather(
+            query("query", 500), query("country", 100), query("page", 100), query("date", 400))
+    except HTTPException:
+        raise
+    except Exception as ex:  # timeout / network error reaching Google
+        logger.exception("Search Console request failed")
+        raise HTTPException(502, f"Could not reach Google Search Console ({type(ex).__name__}). Try again in a minute.")
     for p in pages:  # show the path, not the full address
         p["name"] = urlparse(p["name"]).path or "/"
+    for p in pages: p["views"] = p["clicks"]  # _name_vehicle_pages reads "views" on every page row (GA/beacon rows have it, Search Console rows don't)
     pages = (await _name_vehicle_pages({"top_pages": pages}))["top_pages"]
     daily = sorted(({"date": d["name"], "clicks": d["clicks"], "impressions": d["impressions"]} for d in daily), key=lambda d: d["date"])
     months = {}
@@ -5729,6 +6148,7 @@ async def visits_summary(days: int = 30, skip: int = 0, cu: dict = Depends(admin
     by_day, pages, refs, devices = {}, {}, {}, {"mobile": 0, "desktop": 0}
     visitors, today_views, today_visitors = set(), 0, set()
     stamps = {}  # visitor -> page-view times, to estimate how long each visit lasted
+    emails = {r["visitor_id"]: r["email"] for r in sorted(rows, key=lambda x: x["created_at"]) if r.get("email")}  # who each registered visitor is
     for r in rows:
         ts = datetime.fromisoformat(r["created_at"])
         stamps.setdefault(r["visitor_id"], []).append((ts, r))
@@ -5752,6 +6172,14 @@ async def visits_summary(days: int = 30, skip: int = 0, cu: dict = Depends(admin
     # A visit = one visitor's page views with no gap over 30 minutes. We only see when a page opens,
     # not when the person leaves, so time on site = first to last page of the visit; a one-page
     # visit has no measurable time and counts as a quick visit.
+    # Bikes ranked by how often their page was opened, and by how many different people (browsers) opened it.
+    bike_views = {}
+    for r in rows:
+        if m := _BIKE_PATH.fullmatch(r["path"]):
+            e = bike_views.setdefault(m.group(1), {"views": 0, "people": set()})
+            e["views"] += 1; e["people"].add(r["visitor_id"])
+    top_bikes = [{"id": k, "path": f"/inventory/{k}", "name": k, "views": e["views"], "customers": len(e["people"])}
+                 for k, e in sorted(bike_views.items(), key=lambda kv: (-kv[1]["views"], -len(kv[1]["people"])))[:20]]
     visits, spans, visit_list = 0, [], []
     def close_visit(vid, pv):
         nonlocal visits
@@ -5760,7 +6188,7 @@ async def visits_summary(days: int = 30, skip: int = 0, cu: dict = Depends(admin
         if len(pv) > 1: spans.append(secs)
         first = pv[0][1]
         visit_list.append({"started": pv[0][0].astimezone(npt).strftime("%Y-%m-%d %H:%M"), "seconds": int(secs),
-                           "pages": len(pv), "visitor": vid[:6], "device": first.get("device") or "desktop",
+                           "pages": len(pv), "visitor": vid[:6], "email": emails.get(vid), "device": first.get("device") or "desktop",
                            "source": first.get("referrer") or "Direct", "paths": [p[1]["path"] for p in pv][:8],
                            "steps": [{"path": p[1]["path"], "time": p[0].astimezone(npt).strftime("%H:%M:%S"),
                                       "after": int((p[0] - pv[i - 1][0]).total_seconds()) if i else 0}
@@ -5779,7 +6207,7 @@ async def visits_summary(days: int = 30, skip: int = 0, cu: dict = Depends(admin
                   "quick_visit_pct": round(100 * (visits - len(spans)) / visits) if visits else 0}
     return await _name_vehicle_pages({"days": days, "total_views": len(rows), "unique_visitors": len(visitors),
             "today_views": today_views, "today_visitors": len(today_visitors), "daily": daily,
-            "top_pages": top(pages), "sources": top(refs), "devices": devices,
+            "top_pages": top(pages), "top_bikes": top_bikes, "sources": top(refs), "devices": devices,
             "storefront_url": STOREFRONT_URL, "source": "beacon", "engagement": engagement, "visit_list": visit_list[:200]})
 
 # ── SETTINGS (storefront branding/contact info) ────────────────────────
@@ -5796,6 +6224,54 @@ async def update_settings(settings: SettingsUpdate, cu: dict = Depends(admin_onl
     await db.settings.update_one({}, {"$set": updates}, upsert=True)
     asyncio.create_task(_notify_storefront())
     return await db.settings.find_one({}, {"_id": 0})
+
+# ── REAL TIMINGS (see perf_stats.py) ─────────────────────────────────────
+class PerfSample(BaseModel):
+    p: str = Field(max_length=200)           # the request's path, e.g. /vehicles/<id>
+    ms: float                                 # how long it took in the browser, including the trip and the download
+    m: Optional[str] = Field(default="GET", max_length=7)
+    kb: Optional[float] = None                # size of the answer, if the browser said
+    st: Optional[int] = None                  # HTTP status
+
+class PerfBoot(BaseModel):                    # how long the app itself took to open on this device
+    ttfb: Optional[float] = None
+    dcl: Optional[float] = None
+    load: Optional[float] = None
+    js_kb: Optional[float] = None
+    cached: Optional[bool] = None
+
+class PerfReport(BaseModel):
+    samples: List[PerfSample] = Field(default_factory=list, max_length=100)
+    boot: Optional[PerfBoot] = None
+
+@api_router.post("/perf/report")
+async def perf_report(body: PerfReport, cu: dict = Depends(get_current_user)):
+    """Timings as seen from a staff device, sent in small batches by the web app. Nothing about the data itself, only
+    which screen and how long it took. Kept in memory only."""
+    perf_stats.add_client(body.samples, body.boot)
+    return {"ok": True}
+
+@api_router.get("/admin/performance")
+async def admin_performance(cu: dict = Depends(admin_only)):
+    """Per screen: how long the app took and how many database questions it asked, next to how long staff devices waited."""
+    return perf_stats.snapshot()
+
+# ── AUTOMATIC BACKUPS (see auto_backup.py) ───────────────────────────────
+async def _backup_admin(cu: dict = Depends(admin_only)):
+    """The backup covers the whole database (every company), so only an admin of the main company may see or start it."""
+    if cu.get("company_id") != await _default_company_id():
+        raise HTTPException(403, "Backups are managed by the main company's admin")
+    return cu
+
+@api_router.get("/admin/backups")
+async def backups_status(cu: dict = Depends(_backup_admin)):
+    return {**auto_backup.snapshot(), "available": DB_BACKEND == "postgres"}
+
+@api_router.post("/admin/backups/run")
+async def backups_run_now(cu: dict = Depends(_backup_admin)):
+    if DB_BACKEND != "postgres":
+        raise HTTPException(409, "Backups need the Supabase database, which the app is not using right now")
+    return {"started": auto_backup.start_manual()}   # False: one is already running
 
 # ── STARTUP ───────────────────────────────────────────────────────────
 @app.on_event("startup")
@@ -5814,6 +6290,8 @@ async def _startup_with_retry():
         try:
             await _run_startup_tasks()
             logger.info("Startup tasks completed")
+            if DB_BACKEND == "postgres":
+                auto_backup.start_scheduler()   # nightly backup of the Supabase data (auto_backup.py); never raises
             return
         except Exception:
             logger.error("Startup tasks failed (database not ready?) — retrying in %ss", delay, exc_info=True)
@@ -5982,6 +6460,7 @@ async def _run_startup_tasks():
             ("customers", "assigned_to_id", "VARCHAR(36)"),
             ("customers", "assigned_to_name", "VARCHAR(255)"),
             # Website leads: who the visitor is, and what was decided about the lead (Accept / Reject, see LEADS below).
+            ("page_views", "email", "VARCHAR(255)"),  # a registered visitor's email, so the Visits page can say who they are
             ("leads", "email", "VARCHAR(255)"),
             ("leads", "address", "VARCHAR(500)"),
             ("leads", "remark", "TEXT"),
@@ -6021,6 +6500,16 @@ async def _run_startup_tasks():
                 await db.execute_raw(_ddl)
             except Exception:
                 logger.warning("Could not ensure offers tables", exc_info=True)
+        try:
+            await finance_books.ensure_schema(db)  # Finance's Rent tables and bill-service columns (never raises)
+        except Exception:
+            logger.warning("Could not ensure the Finance rent tables", exc_info=True)
+    if DB_BACKEND == "postgres":
+        # Supabase: the tables and columns come from backend/supabase/schema.sql; this only registers Finance's late-added ones.
+        try:
+            await finance_books.ensure_schema_postgres(db)
+        except Exception:
+            logger.warning("Could not check the Finance columns", exc_info=True)
     try:
         await _backfill_booking_receipt_numbers()
     except Exception:
@@ -6034,7 +6523,7 @@ async def _run_startup_tasks():
     if not await db.settings.find_one({"id": "general"}):
         await db.settings.insert_one({
             "id": "general", "company_id": default_company_id,
-            "logo_url": "https://images.unsplash.com/photo-1777288411485-1eb05bd4a289?q=80&w=880&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D",
+            "logo_url": "",
             "business_name": "My Auto Dealership",
             "contact_phone": "98XXXXXXXX",
             "contact_email": "info@example.com",
@@ -6048,6 +6537,8 @@ async def _run_startup_tasks():
     # those caps existed, or from a run that got interrupted last time. See
     # _compress_oversized_photos / _compress_oversized_documents.
     asyncio.create_task(_compress_oversized_photos())
+    _spawn(_warm_thumbnails())
+    _spawn(_move_all_lead_images())
     asyncio.create_task(_compress_oversized_documents())
 
 _cors_origins_raw = os.environ.get('CORS_ORIGINS')
@@ -6063,6 +6554,8 @@ app.add_middleware(CORSMiddleware, allow_credentials=True,
 # Compresses JSON responses over 1KB (list endpoints especially) before they hit the
 # network — no API/behavior change, just a smaller wire payload.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
+# Outermost (added last): times every /api request, counts its database questions and adds a Server-Timing header (perf_stats.py).
+app.add_middleware(perf_stats.PerfMiddleware)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -6148,7 +6641,7 @@ async def _get_photo_bytes(filt: dict) -> tuple[bytes, str]:
     p = await db.vehicle_photos.find_one(filt, {"_id": 0})
     if not p:
         raise HTTPException(404, "Photo not found")
-    if p.get("storage_path"):
+    if p.get("storage_path") and media_storage.enabled():  # not enabled here: the original is still in the database
         raw = await media_storage.download(media_storage.PHOTO_BUCKET, p["storage_path"])
     else:
         raw = base64.b64decode(p["data"])
@@ -6164,8 +6657,8 @@ async def _photo_redirect(filt: dict) -> Optional[RedirectResponse]:
     p = await db.vehicle_photos.find_one(filt, {"_id": 0, "id": 1, "storage_path": 1})
     if not p:
         raise HTTPException(404, "Photo not found")
-    if not p.get("storage_path"):
-        return None
+    if not (p.get("storage_path") and media_storage.enabled() and PHOTO_LINKS == "cdn"):
+        return None  # app mode: _get_photo_bytes sends it (from Storage if that is where it is)
     return RedirectResponse(media_storage.public_url(media_storage.PHOTO_BUCKET, p["storage_path"]), status_code=302,
                             headers={"Cache-Control": "public, max-age=86400"})
 
@@ -6174,6 +6667,156 @@ def _evict_photo_cache(photo_id: str):
     cached = _PHOTO_BYTES_CACHE.pop(photo_id, None)
     if cached is not None:
         _PHOTO_BYTES_CACHE_SIZE -= len(cached[0])
+    _evict_thumbs(photo_id)
+
+# ── Small photo versions ────────────────────────────────────────────────────
+# The inventory cards and table rows show a photo about 44 pixels wide, but used to download the whole ~380 KB picture for it.
+# `/vehicle-photos/{id}/file?w=240` returns a ~10-20 KB version instead, made once (from the stored original) and kept both in
+# memory and in a folder on this server, so it survives restarts. Only the widths listed are served; any other `w` gets the
+# normal full-size photo, and if a small version cannot be made the full photo is sent. The full-size URL is unchanged.
+THUMB_WIDTHS = (240, 480)
+def _default_thumb_dir() -> Path:
+    try:
+        return Path.home() / ".asm-thumbs"   # kept across restarts and reboots (the system temp folder is cleared now and then)
+    except RuntimeError:                      # no home folder for the user the app runs as
+        return Path(tempfile.gettempdir()) / "asm-thumbs"
+
+THUMB_DIR = Path(os.environ.get("THUMB_CACHE_DIR") or _default_thumb_dir())
+THUMB_MEM_MAX = 60 * 1024 * 1024
+_THUMBS: "OrderedDict[tuple, bytes]" = OrderedDict()
+_THUMBS_SIZE = 0
+
+def _make_thumb(content: bytes, width: int) -> bytes:
+    """Runs in a worker process (see _run_isolated), like _compress_photo."""
+    img = Image.open(io.BytesIO(content))
+    img = ImageOps.exif_transpose(img)
+    if img.mode not in ("RGB", "L"):
+        img = img.convert("RGB")
+    img.thumbnail((width, width), Image.LANCZOS)
+    out = io.BytesIO()
+    img.save(out, format="JPEG", quality=72, optimize=True)
+    return out.getvalue()
+
+def _remember_thumb(key: tuple, data: bytes):
+    global _THUMBS_SIZE
+    if key in _THUMBS:
+        _THUMBS_SIZE -= len(_THUMBS.pop(key))
+    _THUMBS[key] = data
+    _THUMBS_SIZE += len(data)
+    while _THUMBS_SIZE > THUMB_MEM_MAX and _THUMBS:
+        _, old = _THUMBS.popitem(last=False)
+        _THUMBS_SIZE -= len(old)
+
+async def _store_thumb(photo_id: str, width: int, data: bytes, keep_in_memory: bool = True) -> None:
+    """Saves a small version in THUMB_DIR (and, for ones likely to be asked for soon, in memory). Never raises."""
+    try:
+        THUMB_DIR.mkdir(parents=True, exist_ok=True)
+        path = THUMB_DIR / f"{photo_id}-{width}.jpg"
+        tmp = path.with_suffix(".tmp")
+        await asyncio.to_thread(tmp.write_bytes, data)
+        os.replace(tmp, path)
+    except OSError:
+        pass  # a read-only disk only means it is made again next time
+    if keep_in_memory:
+        _remember_thumb((photo_id, width), data)
+
+async def _make_and_store_thumbs(photo_id: str, raw: bytes, keep_in_memory: bool = True) -> bool:
+    """Makes and saves every small version of a photo that is not saved yet. False if the image could not be read."""
+    for width in THUMB_WIDTHS:
+        if (THUMB_DIR / f"{photo_id}-{width}.jpg").exists():
+            continue
+        try:
+            data = await _run_isolated(_make_thumb, raw, width)
+        except Exception:  # noqa: BLE001 - an unreadable or unusual image: it is sent as the original when asked for
+            logger.warning("Could not make a small version of photo %s", photo_id, exc_info=True)
+            return False
+        await _store_thumb(photo_id, width, data, keep_in_memory)
+    return True
+
+_bg_tasks: set = set()
+
+def _spawn(coro) -> None:
+    """Runs a coroutine in the background, keeping a reference so it is not dropped half-way."""
+    task = asyncio.get_running_loop().create_task(coro)
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
+
+_thumb_warmup_started = False
+
+async def _warm_thumbnails():
+    """Makes the small versions of every photo that does not have them yet, one photo at a time in the background, newest photos
+    first (the vehicles staff look at most), so no one waits for them the first time a vehicle is opened. Skips what is already
+    saved, so after the first time it only finds new photos. THUMB_WARMUP=off turns it off; it stays off for a test schema."""
+    global _thumb_warmup_started
+    mode = os.environ.get("THUMB_WARMUP", "auto").lower()
+    if _thumb_warmup_started or mode == "off" or (mode == "auto" and os.environ.get("PG_SCHEMA")):
+        return
+    _thumb_warmup_started = True
+    await asyncio.sleep(float(os.environ.get("THUMB_WARMUP_DELAY", "300")))   # let the app settle after a start
+    try:
+        THUMB_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        logger.info("Small photo versions are not pre-made: %s cannot be written to", THUMB_DIR)
+        return
+    try:
+        photos = await db.vehicle_photos.find({}, {"_id": 0, "id": 1, "storage_path": 1}).sort("uploaded_at", -1).to_list(100000)
+        todo = [p for p in photos if not all((THUMB_DIR / f"{p['id']}-{w}.jpg").exists() for w in THUMB_WIDTHS)]
+        if not todo:
+            return
+        logger.info("Making small versions of %d photo(s) in the background...", len(todo))
+        made = 0
+        for p in todo:
+            try:
+                if p.get("storage_path") and media_storage.enabled():
+                    raw = await media_storage.download(media_storage.PHOTO_BUCKET, p["storage_path"])
+                else:
+                    row = await db.vehicle_photos.find_one({"id": p["id"]}, {"_id": 0, "data": 1})
+                    if not row or not row.get("data"):
+                        continue
+                    raw = base64.b64decode(row["data"])
+                if await _make_and_store_thumbs(p["id"], raw, keep_in_memory=False):
+                    made += 1
+            except Exception:  # noqa: BLE001 - one bad photo must not stop the rest
+                logger.warning("Skipped photo %s while making small versions", p["id"], exc_info=True)
+            await asyncio.sleep(0.05)   # a breather, so this never competes with people using the app
+        logger.info("Small photo versions ready (%d made).", made)
+    except Exception:  # noqa: BLE001
+        logger.warning("Making small photo versions stopped early", exc_info=True)
+
+async def _get_thumb_bytes(photo_id: str, width: int) -> Optional[bytes]:
+    """The small version, or None if one cannot be made (the caller then sends the full photo)."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", photo_id):
+        return None  # not a photo id we ever made (it is also used in a file name below)
+    key = (photo_id, width)
+    hit = _THUMBS.get(key)
+    if hit is not None:
+        _THUMBS.move_to_end(key)
+        return hit
+    path = THUMB_DIR / f"{photo_id}-{width}.jpg"
+    try:
+        data = await asyncio.to_thread(path.read_bytes)
+    except OSError:
+        raw, _ctype = await _get_photo_bytes({"id": photo_id})  # 404s for a photo that does not exist
+        try:
+            data = await _run_isolated(_make_thumb, raw, width)
+        except Exception:  # noqa: BLE001 - an unreadable or unusual image: just send the original
+            logger.warning("Could not make a small version of photo %s", photo_id, exc_info=True)
+            return None
+        await _store_thumb(photo_id, width, data, keep_in_memory=False)
+    _remember_thumb(key, data)
+    return data
+
+def _evict_thumbs(photo_id: str):
+    global _THUMBS_SIZE
+    for w in THUMB_WIDTHS:
+        old = _THUMBS.pop((photo_id, w), None)
+        if old is not None:
+            _THUMBS_SIZE -= len(old)
+        try:
+            (THUMB_DIR / f"{photo_id}-{w}.jpg").unlink()
+        except OSError:
+            pass
+
 
 def _compress_photo(content: bytes) -> tuple[bytes, str]:
     """Downscales and re-encodes an uploaded photo as JPEG. Raw phone-camera
@@ -6210,8 +6853,10 @@ def _photo_out(p: dict) -> dict:
     # base64 inline here -- that was ~33% larger than the raw bytes and could never be cached
     # by the browser, so reopening the same vehicle re-sent every photo's full bytes every
     # time, on a single-worker server, blocking every other request for the duration.
+    # `thumb` is a ~25 KB version for grid tiles (see _get_thumb_bytes); `url` stays the full-size original for the big preview.
     return {"id": p["id"], "filename": p["filename"], "uploaded_at": p["uploaded_at"],
-            "size": p["size"], "content_type": p["content_type"], "url": f"/api/vehicle-photos/{p['id']}/file"}
+            "size": p["size"], "content_type": p["content_type"], "url": f"/api/vehicle-photos/{p['id']}/file",
+            "thumb": f"/api/vehicle-photos/{p['id']}/file?w=480"}
 
 async def _compress_oversized_photos():
     """Same idea as _compress_oversized_documents (below), for vehicle_photos —
@@ -6276,12 +6921,17 @@ async def get_vehicle_photos(vid: str, cu: dict = Depends(require("vehicle_photo
     return [_photo_out(p) for p in photos]
 
 @api_router.get("/vehicle-photos/{photo_id}/file")
-async def get_vehicle_photo_file(photo_id: str):
+async def get_vehicle_photo_file(photo_id: str, w: Optional[int] = None):
     """Serves one vehicle photo as a real image response (see _photo_out for why). Deliberately
     unauthenticated with no company scoping: photo_id is an unguessable UUID, so this is safe
     for every tenant, unlike /public/vehicles/*/photos/* below, which is intentionally locked
     to one storefront company via _scope_to_default_company and would 404 for anyone else's
     vehicles -- this route exists precisely so the in-app photo tab isn't limited to that."""
+    if w in THUMB_WIDTHS:  # a small version for thumbnails (see _get_thumb_bytes); never a redirect to the full photo
+        small = await _get_thumb_bytes(photo_id, w)
+        if small is not None:
+            return Response(content=small, media_type="image/jpeg",
+                            headers={"Cache-Control": "public, max-age=31536000, immutable"})
     redirect = await _photo_redirect({"id": photo_id})
     if redirect:
         return redirect
@@ -6325,6 +6975,7 @@ async def upload_vehicle_photo(vid: str, file: UploadFile = File(...), cu: dict 
         except Exception:
             logger.warning(f"Supabase upload failed for a photo of vehicle {vid}, keeping it in the database", exc_info=True)
     await db.vehicle_photos.insert_one(photo)
+    _spawn(_make_and_store_thumbs(photo_id, content))   # the small versions, ready before anyone opens the vehicle
     asyncio.create_task(_notify_storefront())
     return _photo_out(photo)
 
@@ -6333,7 +6984,7 @@ async def delete_vehicle_photo(vid: str, photo_id: str, cu: dict = Depends(requi
     p = await db.vehicle_photos.find_one({"id": photo_id, "vehicle_id": vid}, {"_id": 0, "storage_path": 1})
     r = await db.vehicle_photos.delete_one({"id": photo_id, "vehicle_id": vid})
     if r.deleted_count == 0: raise HTTPException(404, "Photo not found")
-    if p and p.get("storage_path"):
+    if p and p.get("storage_path") and media_storage.enabled():
         await media_storage.remove(media_storage.PHOTO_BUCKET, p["storage_path"])
     _evict_photo_cache(photo_id)
     asyncio.create_task(_notify_storefront())
@@ -6366,7 +7017,7 @@ async def _get_doc_bytes(filt: dict) -> tuple[bytes, str]:
     d = await db.legal_documents.find_one(filt, {"_id": 0})
     if not d:
         raise HTTPException(404, "Document not found")
-    if d.get("storage_path"):
+    if d.get("storage_path") and media_storage.enabled():
         raw = await media_storage.download(media_storage.DOC_BUCKET, d["storage_path"])
     else:
         raw = base64.b64decode(d["data"])
@@ -6474,7 +7125,7 @@ async def get_legal_document_file(doc_id: str):
     d = await db.legal_documents.find_one({"id": doc_id}, {"_id": 0, "id": 1, "storage_path": 1})
     if not d:
         raise HTTPException(404, "Document not found")
-    if d.get("storage_path"):
+    if d.get("storage_path") and media_storage.enabled():
         url = await media_storage.signed_url(media_storage.DOC_BUCKET, d["storage_path"])
         return RedirectResponse(url, status_code=302, headers={"Cache-Control": "no-store"})
     content, content_type = await _get_doc_bytes({"id": doc_id})
@@ -6572,7 +7223,7 @@ async def delete_legal_document(vid: str, doc_id: str, cu: dict = Depends(requir
     d = await db.legal_documents.find_one({"id": doc_id, "vehicle_id": vid}, {"_id": 0, "storage_path": 1})
     r = await db.legal_documents.delete_one({"id": doc_id, "vehicle_id": vid})
     if r.deleted_count == 0: raise HTTPException(404, "Document not found")
-    if d and d.get("storage_path"):
+    if d and d.get("storage_path") and media_storage.enabled():
         await media_storage.remove(media_storage.DOC_BUCKET, d["storage_path"])
     _evict_doc_cache(doc_id)
     return {"message": "Document deleted"}
@@ -6583,8 +7234,10 @@ async def storage_usage(cu: dict = Depends(admin_only)):
     the only two collections holding binary file data (base64 in Mongo, not disk).
     `bytes` here is the decoded file size recorded at upload time; the base64 text
     actually stored is ~33% larger than that on top."""
-    photos = await db.vehicle_photos.find({}, {"_id": 0, "vehicle_id": 1, "size": 1}).to_list(100000)
-    docs = await db.legal_documents.find({}, {"_id": 0, "vehicle_id": 1, "size": 1}).to_list(100000)
+    photos, docs = await asyncio.gather(  # independent reads, asked at the same time
+        db.vehicle_photos.find({}, {"_id": 0, "vehicle_id": 1, "size": 1}).to_list(100000),
+        db.legal_documents.find({}, {"_id": 0, "vehicle_id": 1, "size": 1}).to_list(100000),
+    )
     photos_bytes = sum(p.get("size", 0) or 0 for p in photos)
     docs_bytes = sum(d.get("size", 0) or 0 for d in docs)
 
@@ -6595,8 +7248,11 @@ async def storage_usage(cu: dict = Depends(admin_only)):
 
     top = sorted(by_vehicle.items(), key=lambda kv: kv[1], reverse=True)[:10]
     top_vehicles = []
+    # the ten vehicles' names in one read (one read for each of them, one after another, before)
+    named = {v["id"]: v for v in await db.vehicles.find({"id": {"$in": [vid for vid, _ in top if vid]}},
+                                                         {"_id": 0, "id": 1, "brand": 1, "model": 1, "registration_number": 1}).to_list(50)}
     for vid, size in top:
-        v = await db.vehicles.find_one({"id": vid}, {"_id": 0, "brand": 1, "model": 1, "registration_number": 1})
+        v = named.get(vid)
         label = f"{v['brand']} {v['model']}" if v else "Unknown vehicle"
         if v and v.get("registration_number"): label += f" ({v['registration_number']})"
         top_vehicles.append({"vehicle_id": vid, "label": label, "bytes": size})
@@ -6928,7 +7584,7 @@ async def break_kit(pid: str, req: BreakKitRequest, cu: dict = Depends(require("
 # ── WEBSITE SYNC (hamroauto.com.np) ───────────────────────────────────
 # ══════════════════════════════════════════════════════════════════════
 @api_router.get("/sync/export")
-async def export_for_website(cu: dict = Depends(admin_only)):
+async def export_for_website(request: Request, cu: dict = Depends(admin_only)):
     """Export available inventory in a listing format an external storefront can consume
     (originally built for hamroauto.com.np's site, but the shape/fields aren't specific to
     any one tenant -- "contact"/"source" below reflect whichever company is calling this,
@@ -6960,7 +7616,7 @@ async def export_for_website(cu: dict = Depends(admin_only)):
                 "bluebook": v.get("bluebook_status"), "insurance": v.get("insurance_status"),
                 "tax": v.get("tax_clearance_status"), "transfer": v.get("transfer_status"),
             },
-            "photos": [media_storage.public_url(media_storage.PHOTO_BUCKET, p["storage_path"]) if p.get("storage_path")
+            "photos": [_public_photo_url(request, v["id"], p["id"], p["storage_path"]) if p.get("storage_path") and media_storage.enabled()
                        else f"data:{p['content_type']};base64,{p['data']}" for p in photos],
             "contact": contact,
             "source": source,
@@ -7016,7 +7672,7 @@ def _public_vehicle_fields(v: dict) -> dict:
         "created_at": v.get("created_at"),
     }
 
-def _public_photo_url(request: Request, vid: str, photo_id: str, storage_path: Optional[str] = None) -> str:
+def _public_photo_url(request: Request, vid: str, photo_id: str, storage_path: Optional[str] = None) -> str:  # storage_path counts only when Storage is switched on here
     """Builds an absolute URL from the client-facing scheme/host, not request.base_url —
     that reflects whatever uvicorn itself saw, which is plain http behind an
     nginx/Caddy TLS-terminating reverse proxy (the typical VPS setup) unless
@@ -7029,7 +7685,7 @@ def _public_photo_url(request: Request, vid: str, photo_id: str, storage_path: O
 
     A photo kept in Supabase Storage gets its CDN address instead, so the storefront loads it without
     touching this server at all."""
-    if storage_path:
+    if storage_path and media_storage.enabled() and PHOTO_LINKS == "cdn":
         return media_storage.public_url(media_storage.PHOTO_BUCKET, storage_path)
     scheme = request.headers.get("x-forwarded-proto", request.url.scheme).split(",")[0].strip()
     host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc).split(",")[0].strip()
@@ -7144,8 +7800,11 @@ async def public_record_visit(request: Request):
     if not visitor: return {"ok": False}
     ref_host = (urlparse(str(body.get("referrer") or "")).hostname or "").lower().removeprefix("www.")[:100]
     if ref_host.endswith("hamroauto.com.np"): ref_host = ""  # internal navigation isn't a source
+    # A signed-in visitor's email rides along, but only one that really is a registered account is kept (the beacon is public).
+    email = _lead_email(body.get("email"))
+    if email and not await db.leads.find_one({"type": "signup", "email": email}, {"_id": 0, "id": 1}): email = None
     await db.page_views.insert_one({
-        "id": str(uuid.uuid4()), "visitor_id": visitor, "path": path, "referrer": ref_host,
+        "id": str(uuid.uuid4()), "visitor_id": visitor, "path": path, "referrer": ref_host, "email": email,
         "device": _visit_device(request.headers.get("user-agent", "")),
         "created_at": datetime.now(timezone.utc).isoformat()})
     return {"ok": True}
@@ -7180,7 +7839,72 @@ async def _insert_lead(l: dict) -> dict:
     l["created_at"] = datetime.now(timezone.utc).isoformat()
     await db.leads.insert_one(l)
     l.pop("_id", None)
+    if media_storage.enabled() and any(isinstance(x, str) and x.startswith("data:image") for x in (l.get("images") or [])):
+        _spawn(_move_lead_images_to_storage(l["id"]))   # the lead is saved first; its photos follow into Storage a moment later
     return l
+
+# Photos a customer attaches to a Sell / Exchange form arrive as text (data:image/jpeg;base64,...) and used to stay inside the leads
+# table, which made every read of the Leads list (the sidebar used to ask for it every minute) carry megabytes. They are moved to
+# Storage, byte for byte, and the lead keeps the address instead. The move is checked (the copy in Storage is read back and compared
+# with the original) before the text is replaced, so a photo is never lost; if anything fails the lead keeps the text, and the
+# next start tries again.
+_DATA_IMAGE = re.compile(r"^data:(image/[A-Za-z0-9.+-]+);base64,(.*)$", re.S)
+_lead_images_lock = asyncio.Lock()
+
+async def _move_lead_images_to_storage(lead_id: str) -> int:
+    """Moves one lead's attached photos to Storage. Returns how many were moved."""
+    if not media_storage.enabled():
+        return 0
+    async with _lead_images_lock:
+        lead = await db.leads.find_one({"id": lead_id}, {"_id": 0, "id": 1, "company_id": 1, "images": 1})
+        images = list((lead or {}).get("images") or [])
+        moved = 0
+        for i, img in enumerate(images):
+            m = _DATA_IMAGE.match(img) if isinstance(img, str) else None
+            if not m:
+                continue   # already an address, or something else: left exactly as it is
+            try:
+                encoded = m.group(2).strip()
+                raw = base64.b64decode(encoded + "=" * (-len(encoded) % 4))
+                if not raw:
+                    continue
+                ctype = m.group(1).lower()
+                path = media_storage.object_path(lead.get("company_id"), f"leads-{lead_id}", str(uuid.uuid4()), ctype)
+                await media_storage.upload(media_storage.PHOTO_BUCKET, path, raw, ctype)
+                if hashlib.sha256(await media_storage.download(media_storage.PHOTO_BUCKET, path)).digest() != hashlib.sha256(raw).digest():
+                    raise RuntimeError("the copy in Storage does not match the original")
+                images[i] = media_storage.public_url(media_storage.PHOTO_BUCKET, path)
+                moved += 1
+            except Exception:  # noqa: BLE001 - the text stays in the lead; tried again at the next start
+                logger.warning("Could not move photo %d of lead %s to Storage; it stays in the database", i + 1, lead_id, exc_info=True)
+        if moved:
+            await db.leads.update_one({"id": lead_id}, {"$set": {"images": images}})
+            logger.info("Moved %d photo(s) of lead %s to Storage", moved, lead_id)
+        return moved
+
+_lead_sweep_started = False
+
+async def _move_all_lead_images():
+    """Start-up sweep for the leads that still hold photos as text. LEAD_IMAGES_SWEEP=off turns it off; it stays off for a test schema."""
+    global _lead_sweep_started
+    mode = os.environ.get("LEAD_IMAGES_SWEEP", "auto").lower()
+    if _lead_sweep_started or mode == "off" or (mode == "auto" and os.environ.get("PG_SCHEMA")) or not media_storage.enabled():
+        return
+    _lead_sweep_started = True
+    await asyncio.sleep(float(os.environ.get("LEAD_IMAGES_SWEEP_DELAY", "120")))   # let the app settle after a start
+    try:
+        leads = await db.leads.find({"images": {"$exists": True}}, {"_id": 0, "id": 1, "images": 1}).to_list(100000)
+        todo = [l["id"] for l in leads if any(isinstance(x, str) and x.startswith("data:image") for x in (l.get("images") or []))]
+        if not todo:
+            return
+        logger.info("Moving the photos of %d website lead(s) to Storage...", len(todo))
+        moved = 0
+        for lead_id in todo:
+            moved += await _move_lead_images_to_storage(lead_id)
+            await asyncio.sleep(0.2)
+        logger.info("Lead photos moved to Storage: %d.", moved)
+    except Exception:  # noqa: BLE001
+        logger.warning("Moving lead photos to Storage stopped early", exc_info=True)
 
 @api_router.post("/public/leads/click", dependencies=[Depends(_scope_to_default_company)])
 @limiter.limit("30/minute")
@@ -7281,9 +8005,18 @@ async def public_dashain_spin(request: Request, req: OfferSpin):
 
 @app.on_event("shutdown")
 async def shutdown():
-    client.close()
+    closing = client.close()  # the Postgres pool closes asynchronously
+    if asyncio.iscoroutine(closing):
+        await closing
     _compress_pool.shutdown(wait=False, cancel_futures=True)
 
+import finance_books
+finance_books.register(api_router, db, admin_only)
 crm.register(api_router, db, admin_only, _sale_revenue)
+
+# TEMPORARY - the owner-only tool that moves the data to Supabase without a login on the server. To remove it once the
+# move is finished: delete backend/migration_tool.py and tools/run_migration.py, and delete this comment and the two lines below.
+import migration_tool
+migration_tool.register(api_router, db, get_current_user, logger, lambda: DB_BACKEND)
 
 app.include_router(api_router)

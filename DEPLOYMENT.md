@@ -129,12 +129,12 @@ Search Console data runs 2 to 3 days behind and only exists from when the site w
 
 Vehicle photos and legal documents used to live in MySQL as base64 and pass through the backend on every
 view (with up to 300MB of them cached in its memory). With Supabase Storage switched on, they are kept in the
-FINANCE Supabase project instead (`backend/media_storage.py`): photos in the public `asm-photos` bucket, served
+Auto Stock Manager's own Supabase project instead (`backend/media_storage.py`): photos in the public `asm-photos` bucket, served
 by its CDN; documents in the private `asm-documents` bucket, opened through hour-long signed links. The app's
 `/file` links keep working and redirect there, and the storefront gets the CDN links directly.
 
-1. Supabase (FINANCE project) → SQL Editor: run `FINANCE/supabase/migrations/0013_asm_media_buckets.sql`.
-2. On the VPS, in the backend's `.env`: `SUPABASE_URL=https://boiiqzkkbyzqkqsxuzyp.supabase.co` and
+1. Supabase (this app's project) → SQL Editor: run `backend/supabase/0001_media_buckets.sql`.
+2. On the VPS, in the backend's `.env`: `SUPABASE_URL=https://<your-project-ref>.supabase.co` and
    `SUPABASE_SERVICE_ROLE_KEY=` (Project Settings → API → service_role; server-side only, never the
    frontend). Restart the backend. From here on new uploads go to Storage.
 3. Move what is already there, from `~/auto-stock-manager/backend/`:
@@ -147,19 +147,11 @@ by its CDN; documents in the private `asm-documents` bucket, opened through hour
 
 Without the two settings nothing changes: uploads keep going into MySQL, as before.
 
-## Copying the database to Supabase (MySQL stays as it is)
+## Moving the database from MySQL/MariaDB to Supabase
 
-`backend/copy_mysql_to_supabase.py` copies every MySQL table into the FINANCE Supabase project as
-`asm_<table>` (Row Level Security on, no policies: only the service role key can reach them). It only reads
-MySQL; the app keeps running on it. Re-run any time to bring Supabase up to date. Uses the same two Supabase
-settings as above. From `~/auto-stock-manager/backend/`:
-
-```bash
-venv/bin/python copy_mysql_to_supabase.py schema   # writes supabase_schema.sql
-cat supabase_schema.sql                            # paste into Supabase SQL Editor -> Run
-venv/bin/python copy_mysql_to_supabase.py copy
-venv/bin/python copy_mysql_to_supabase.py check    # row counts side by side
-```
+The backend can run on Supabase's Postgres instead of MySQL (`DB_BACKEND=postgres`, code in `backend/pgdb.py`). It is
+a switch in the backend's `.env`, so pushing this code changes nothing until you flip it. The step-by-step guide,
+including how to go back, is in [docs/SUPABASE_MIGRATION.md](docs/SUPABASE_MIGRATION.md).
 
 ## Auto-deploy on push to main
 
@@ -313,7 +305,9 @@ Everyone signs in once more on the new address, because the browser keeps the lo
 ### Backend (VPS)
 | Variable | Required | Description |
 |---|---|---|
-| `DB_BACKEND` | ❌ | `mongo` (default) or `mysql` |
+| `DB_BACKEND` | ❌ | `mongo` (default), `mysql` or `postgres` (Supabase, see [docs/SUPABASE_MIGRATION.md](docs/SUPABASE_MIGRATION.md)) |
+| `SUPABASE_DB_URL` | ✅ if `DB_BACKEND=postgres` | Supabase → Connect → connection string (Session pooler URI), with your database password filled in |
+| `PG_POOL_MIN` / `PG_POOL_MAX` | ❌ | Supabase connections kept open and warm (default 8) and the most allowed (default 10). A connection to a database in another city takes about a second to open, and a page asks for many things at once, so several are kept ready (measured: opening the Dashboard took about 25% less time with 8 ready than with 4). Keep `PG_POOL_MAX` comfortably under the Session pooler's limit for the project (15 by default, Supabase -> Database -> Settings -> Connection pooling), because the backup tool and anything else you run also need a connection. `PG_POOL_IDLE`, `PG_POOL_RECYCLE` (seconds, default 3600) and `PG_KEEPALIVE` (seconds between pings, default 240) tune how long they stay. |
 | `MONGO_URL` | ✅ if `DB_BACKEND=mongo` | MongoDB Atlas connection string |
 | `DB_NAME` | ✅ | `hamro_gng_auto` |
 | `MYSQL_HOST` / `MYSQL_PORT` / `MYSQL_USER` / `MYSQL_PASSWORD` / `MYSQL_DB` | ✅ if `DB_BACKEND=mysql` | MySQL connection details |
@@ -323,7 +317,11 @@ Everyone signs in once more on the new address, because the browser keeps the lo
 | `RESEND_API_KEY` | ❌ (but see below) | Sends email-verification and password-reset emails. Without it, signup/reset still work but no email is ever sent — accounts get stuck unverified. |
 | `RESEND_FROM` | ❌ | Sender address, e.g. `Auto Stock Manager <no-reply@yourdomain.com>`. Defaults to Resend's sandbox address, which can only email your own Resend account — real users won't receive anything until you verify a domain and set this. |
 | `FRONTEND_URL` | ✅ if `RESEND_API_KEY` set | Your deployed frontend's URL (no trailing slash) — used to build the links inside verification/reset emails. Defaults to `http://localhost:3000`, which is wrong for production. |
-| `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` | ❌ | Keeps vehicle photos and legal documents in Supabase Storage instead of MySQL (see **Photos and documents in Supabase Storage**). Without them they stay in MySQL. |
+| `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` | ❌ | Keeps vehicle photos and legal documents in Supabase Storage instead of the database (see **Photos and documents in Supabase Storage**). Without them they stay in the database. |
+| `PHOTO_LINKS` | ❌ | `app` (default): photos kept in Supabase Storage are still addressed (and sent) through this app, which the public storefront already accepts. `cdn`: direct Supabase addresses (faster), only after the storefront's `next.config` `remotePatterns` includes the project's host (`<project>.supabase.co`) — otherwise every storefront photo breaks. |
+| `AUTO_BACKUP` / `BACKUP_DIR` / `BACKUP_AT` | ❌ | The app backs up the Supabase data by itself (see **Automatic backups** in `docs/SUPABASE_MIGRATION.md`). `AUTO_BACKUP=off` turns it off; `BACKUP_DIR` is where the backups are kept (default `~/AutoStockBackups` of the user the app runs as); `BACKUP_AT` is the time, Nepal time, default `02:30`. Needs `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` and `SUPABASE_DB_URL` in `backend/.env`, which the app needs anyway. |
+| `LEAD_IMAGES_SWEEP` | ❌ | Photos attached to website leads (Sell / Exchange forms) arrive as text and used to stay inside the database. With Supabase Storage on, each new lead's photos are moved to Storage a moment after the lead is saved, and a job 2 minutes after the app starts moves the ones already there. The move is checked first (the copy is read back and compared byte for byte), so nothing is lost; a photo that cannot be moved stays in the lead and is retried at the next start. `LEAD_IMAGES_SWEEP=off` turns the start-up job off. |
+| `THUMB_CACHE_DIR` / `THUMB_WARMUP` | ❌ | Folder where the small (240 px / 480 px) photo versions used by the Inventory list and the vehicle page are kept (default `.asm-thumbs` in the home folder of the user the app runs as, so they survive restarts). They are made when a photo is uploaded, and for photos already there by a background job that starts 5 minutes after the app starts, newest photos first (about 40 KB per photo; `THUMB_WARMUP=off` turns that job off). Deleting the folder is harmless: they are made again. |
 | `FB_APP_ID` / `FB_APP_SECRET` | ❌ | Turns on "Post to Facebook Page" on the Share tab (see **Facebook Page posting** below). Without them the button is hidden. Also needs `FRONTEND_URL`. |
 
 ### Vercel (Frontend)
