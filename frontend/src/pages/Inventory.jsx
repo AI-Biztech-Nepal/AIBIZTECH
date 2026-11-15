@@ -877,7 +877,7 @@ export default function Inventory() {
                           <div className="min-w-0">
                             <div className="font-semibold text-gray-900 truncate" style={{ fontFamily: "Manrope" }}>{v.model}</div>
                             <div className="text-[11px] text-gray-500 truncate">
-                              {v.year} · {formatOwnership(v.ownership_number)}{v.status === "reserved" && v.booking?.customer_name ? ` · Booked by ${v.booking.customer_name}` : ""}{isAdmin && v.created_by ? ` · by ${v.created_by}` : ""}
+                              {v.year || "—"} · {formatOwnership(v.ownership_number)}{v.status === "reserved" && v.booking?.customer_name ? ` · Booked by ${v.booking.customer_name}` : ""}{isAdmin && v.created_by ? ` · by ${v.created_by}` : ""}
                             </div>
                           </div>
                         </div>
@@ -952,7 +952,7 @@ export default function Inventory() {
                 <div className="flex items-start justify-between gap-2 mb-3">
                   <div className="min-w-0">
                     <div className="font-bold text-slate-900 text-sm truncate" style={{ fontFamily: "Manrope" }}>{v.brand} {v.model}</div>
-                    <div className="text-xs text-slate-500 mt-0.5">{v.year} · {v.engine_cc}cc · {v.fuel_type} · {formatOwnership(v.ownership_number)}</div>
+                    <div className="text-xs text-slate-500 mt-0.5">{v.year || "—"} · {v.engine_cc}cc · {v.fuel_type} · {formatOwnership(v.ownership_number)}</div>
                     {v.registration_number && <div className="text-xs font-mono text-slate-500 mt-0.5">{v.registration_number}</div>}
                     {v.purchase_source === "Exchange" && <span className="inline-block mt-1 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide bg-purple-100 text-purple-800" data-testid="exchange-tag">Exchange</span>}
                     {isAdmin && v.created_by && <div className="text-[11px] text-slate-400 mt-0.5" data-testid="vehicle-author">Added by {v.created_by}</div>}

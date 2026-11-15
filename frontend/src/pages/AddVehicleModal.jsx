@@ -233,7 +233,7 @@ export function VehicleFormBody({
               <input id="pv-model" data-testid="model-input" value={form.model ?? ""} onChange={e => set({ model: e.target.value })} placeholder={ph("e.g. CB Shine, FZ-S")} className={`${BOX} ${bad("model") ? BAD : OK}`} />
             </div>
             <div>
-              <label htmlFor="pv-year" className={LBL}>Year <span className="text-red-600">*</span></label>
+              <label htmlFor="pv-year" className={LBL}>Year</label>
               <input id="pv-year" type="text" inputMode="numeric" pattern="[0-9]*" value={form.year ?? ""} onChange={e => set({ year: e.target.value })} placeholder={ph("e.g. 2020")} className={`${BOX} ${OK}`} />
             </div>
             <div>
