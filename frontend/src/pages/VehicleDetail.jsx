@@ -648,7 +648,7 @@ export function VehicleDetailModal({ id, onClose }) {
                   <Row label="Registration"><span className="text-sm font-medium text-slate-900 sm:text-right">{vehicle.registration_number || "Not entered"}</span></Row>
                   <Row label="Color"><span className="text-sm font-medium text-slate-900 sm:text-right">{vehicle.color || "Not specified"}</span></Row>
                   <Row label="Condition"><span className="text-sm font-medium text-slate-900 sm:text-right">{vehicle.condition}</span></Row>
-                  <Row label="Purchase Source"><span className="text-sm font-medium text-slate-900 sm:text-right">{vehicle.purchase_source}</span></Row>
+                  <Row label="Purchase Source"><span className="text-sm font-medium text-slate-900 sm:text-right">{vehicle.purchase_source}{vehicle.purchase_source === "Exchange" && <span className="ml-2 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase bg-purple-100 text-purple-800">Exchange</span>}</span></Row>
                   <Row label="Name of Source">
                     {vehicle.linked_contact_name ? (
                       <span className="text-sm font-medium text-slate-900 sm:text-right flex items-center gap-1.5 sm:justify-end">
