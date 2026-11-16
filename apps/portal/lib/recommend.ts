@@ -34,6 +34,16 @@ export function recommend({ business_type, business_needs, team_size }: Profile)
   return Object.keys(SERVICE_LABELS).filter((k) => keys.has(k));
 }
 
+// Which Stock features suit each kind of business. Only a hint shown in Settings: nothing is switched on from here, the owner
+// ticks what they want and asks, and platform staff approve (core.request_features). Warranty is already on for everyone.
+const FEATURE_STARTERS: Record<string, string[]> = {
+  vehicles: ['stock.vehicles', 'stock.sanakhat', 'stock.job_cards'],
+  workshop: ['stock.job_cards', 'stock.spare_parts'],
+};
+
+export const suggestedFeatures = (business_type: string | null): string[] =>
+  business_type && Object.hasOwn(FEATURE_STARTERS, business_type) ? FEATURE_STARTERS[business_type] : [];
+
 // Form values are untrusted: keep only known answers
 export function parseProfile(f: { get(k: string): unknown; getAll(k: string): unknown[] }): Profile {
   const one = (k: string, allowed: readonly string[]) => (allowed.includes(String(f.get(k))) ? String(f.get(k)) : null);

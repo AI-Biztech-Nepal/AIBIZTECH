@@ -4,6 +4,7 @@ import { getContext, type Member } from '@/lib/supabase';
 import { cancelFeatureRequest, requestFeatures, updateOrganization, updateProfile } from '../actions';
 import { Header } from '../header';
 import { Notice, type Search } from '../notice';
+import { suggestedFeatures } from '@/lib/recommend';
 
 const date = (d: string) => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kathmandu' });
 const days = (d: string) => Math.ceil((new Date(d).getTime() - Date.now()) / 864e5);
@@ -21,7 +22,7 @@ export default async function Settings({ searchParams }: { searchParams: Search 
   // The organization sections are for owners and admins; RLS only returns these rows to them
   const none = { data: null };
   const [{ data: details }, { data: rows }, { data: services }, { data: enabled }, { data: pending }, { data: profile }, { data: claims }, { data: flags }, { data: catalogue }, { data: openRequest }] = await Promise.all([
-    isAdmin ? core.from('organizations').select('name, address, phone, email, owner_name, owner_phone, owner_email, pan_no, created_at, verified_at').eq('id', org.id).single() : none,
+    isAdmin ? core.from('organizations').select('name, address, phone, email, owner_name, owner_phone, owner_email, pan_no, created_at, verified_at, business_type').eq('id', org.id).single() : none,
     isAdmin ? core.rpc('org_members', { p_org: org.id }) : none,
     isAdmin ? core.from('services').select('key, name, roles').eq('is_active', true).order('name') : none,
     isAdmin ? core.from('org_services').select('service_key, status, trial_ends_at, enabled_at').eq('org_id', org.id) : none,
@@ -36,6 +37,7 @@ export default async function Settings({ searchParams }: { searchParams: Search 
   const active = members.filter((m) => m.status === 'active');
   const disabled = members.length - active.length;
   const expiredInvites = (pending ?? []).filter((i) => new Date(i.expires_at) <= new Date()).length;
+  const suggested = new Set(suggestedFeatures(details?.business_type ?? null));
   const isOn = new Map(((flags ?? []) as { feature_key: string; enabled: boolean }[]).map((f) => [f.feature_key, f.enabled]));
   const names = new Map((catalogue ?? []).map((f) => [f.key, f.name]));
   const shown = (catalogue ?? []).filter((f) => isOn.has(f.key)); // only features of services this organization has
@@ -115,7 +117,7 @@ export default async function Settings({ searchParams }: { searchParams: Search 
                           <label key={f.key} className="choice">
                             <input type="checkbox" name="want" value={f.key} defaultChecked={isOn.get(f.key)} />
                             <span>
-                              <strong>{f.name}</strong>
+                              <strong>{f.name}</strong>{suggested.has(f.key) && !isOn.get(f.key) && <> <em className="state trial">Suggested for your business</em></>}
                               <span className="sub"> {f.description}{f.requires.length > 0 && ` Needs ${f.requires.map((r: string) => names.get(r) ?? r).join(', ')}.`}</span>
                             </span>
                           </label>

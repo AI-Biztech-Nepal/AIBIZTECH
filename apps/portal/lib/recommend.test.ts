@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseProfile, recommend } from './recommend.ts';
+import { parseProfile, recommend, suggestedFeatures } from './recommend.ts';
 
 const p = (business_type: string | null, business_needs: string[] | null, team_size: string | null) => ({ business_type, business_needs, team_size });
 
@@ -25,4 +25,12 @@ test('unknown form values are dropped', () => {
   f.append('business_needs', 'hack');
   f.set('team_size', '20+');
   assert.deepEqual(parseProfile(f), p(null, ['finance'], '20+'));
+});
+
+test('suggested features follow the business type, and unknown or missing types suggest nothing', () => {
+  assert.deepEqual(suggestedFeatures('vehicles'), ['stock.vehicles', 'stock.sanakhat', 'stock.job_cards']);
+  assert.deepEqual(suggestedFeatures('workshop'), ['stock.job_cards', 'stock.spare_parts']);
+  assert.deepEqual(suggestedFeatures('retail'), []);
+  assert.deepEqual(suggestedFeatures(null), []);
+  assert.deepEqual(suggestedFeatures('constructor'), []);
 });
