@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation';
 const ITEMS = [
   { href: '/platform', label: 'Overview', exact: true },
   { href: '/platform/orgs', label: 'Organizations', exact: false },
+  { href: '/platform/requests', label: 'Feature requests', exact: false },
 ];
 
 export function PlatformNav() {

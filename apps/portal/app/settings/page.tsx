@@ -1,7 +1,7 @@
 import { SubmitButton } from '@/app/submit-button';
 import { redirect } from 'next/navigation';
 import { getContext, type Member } from '@/lib/supabase';
-import { updateOrganization, updateProfile } from '../actions';
+import { cancelFeatureRequest, requestFeatures, updateOrganization, updateProfile } from '../actions';
 import { Header } from '../header';
 import { Notice, type Search } from '../notice';
 
@@ -20,7 +20,7 @@ export default async function Settings({ searchParams }: { searchParams: Search 
   const core = supabase.schema('core');
   // The organization sections are for owners and admins; RLS only returns these rows to them
   const none = { data: null };
-  const [{ data: details }, { data: rows }, { data: services }, { data: enabled }, { data: pending }, { data: profile }, { data: claims }] = await Promise.all([
+  const [{ data: details }, { data: rows }, { data: services }, { data: enabled }, { data: pending }, { data: profile }, { data: claims }, { data: flags }, { data: catalogue }, { data: openRequest }] = await Promise.all([
     isAdmin ? core.from('organizations').select('name, address, phone, email, owner_name, owner_phone, owner_email, pan_no, created_at, verified_at').eq('id', org.id).single() : none,
     isAdmin ? core.rpc('org_members', { p_org: org.id }) : none,
     isAdmin ? core.from('services').select('key, name, roles').eq('is_active', true).order('name') : none,
@@ -28,11 +28,17 @@ export default async function Settings({ searchParams }: { searchParams: Search 
     isAdmin ? core.from('invitations').select('id, email, org_role, expires_at').eq('org_id', org.id).is('accepted_at', null) : none,
     core.from('profiles').select('phone').eq('user_id', ctx.user_id).maybeSingle(),
     supabase.auth.getClaims(),
+    isAdmin ? core.rpc('org_features', { p_org: org.id }) : none,
+    isAdmin ? core.from('features').select('key, service_key, name, description, requires').eq('is_active', true).order('key') : none,
+    isAdmin ? core.from('feature_requests').select('id, turn_on, turn_off, note, created_at').eq('org_id', org.id).eq('status', 'pending').maybeSingle() : none,
   ]);
   const members = (rows ?? []) as Member[];
   const active = members.filter((m) => m.status === 'active');
   const disabled = members.length - active.length;
   const expiredInvites = (pending ?? []).filter((i) => new Date(i.expires_at) <= new Date()).length;
+  const isOn = new Map(((flags ?? []) as { feature_key: string; enabled: boolean }[]).map((f) => [f.feature_key, f.enabled]));
+  const names = new Map((catalogue ?? []).map((f) => [f.key, f.name]));
+  const shown = (catalogue ?? []).filter((f) => isOn.has(f.key)); // only features of services this organization has
   const enabledBy = new Map((enabled ?? []).map((s) => [s.service_key, s]));
 
   // What needs the admin's attention, most urgent first
@@ -84,6 +90,43 @@ export default async function Settings({ searchParams }: { searchParams: Search 
                 ) : <p className="sub">Nothing needs your attention.</p>}
               </div>
             </section>
+
+            {shown.length > 0 && (
+              <section className="setting">
+                <div><h2>Features</h2><p className="sub">Choose what your portal includes. We review your request and set it up; nothing changes until then.</p></div>
+                <div>
+                  {openRequest ? (
+                    <>
+                      <p className="sub">Waiting for review since {date(openRequest.created_at)}.</p>
+                      <ul className="alerts">
+                        {openRequest.turn_on.map((k: string) => <li key={k}>Add {names.get(k) ?? k}</li>)}
+                        {openRequest.turn_off.map((k: string) => <li key={k}>Remove {names.get(k) ?? k}</li>)}
+                      </ul>
+                      <form action={cancelFeatureRequest}>
+                        <input type="hidden" name="id" value={openRequest.id} />
+                        <SubmitButton className="ghost">Cancel request</SubmitButton>
+                      </form>
+                    </>
+                  ) : (
+                    <form action={requestFeatures}>
+                      <input type="hidden" name="org_id" value={org.id} />
+                      <ul className="rows">
+                        {shown.map((f) => (
+                          <li key={f.key} className="svc">
+                            <label className="grow">
+                              <input type="checkbox" name="want" value={f.key} defaultChecked={isOn.get(f.key)} /> <strong>{f.name}</strong>
+                              <span className="sub"> {f.description}{f.requires.length > 0 && ` Needs ${f.requires.map((r: string) => names.get(r) ?? r).join(', ')}.`}</span>
+                            </label>
+                          </li>
+                        ))}
+                      </ul>
+                      <label>Anything we should know? (optional)<input name="note" maxLength={500} placeholder="e.g. we repair fridges and sell parts" /></label>
+                      <SubmitButton>Send request</SubmitButton>
+                    </form>
+                  )}
+                </div>
+              </section>
+            )}
 
             <section className="setting">
               <div><h2>Organization</h2><p className="sub">Contact details shown to your team.</p></div>

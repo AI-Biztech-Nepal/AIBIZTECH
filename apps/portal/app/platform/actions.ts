@@ -36,3 +36,15 @@ export async function setFeature(form: FormData) {
   revalidatePath('/platform', 'layout');
   back(org, 'message', 'Feature updated.');
 }
+
+export async function decideRequest(form: FormData) {
+  const approve = str(form, 'decision') === 'approve';
+  const amount = str(form, 'amount');
+  const { error } = await (await createClient()).schema('core').rpc('decide_feature_request', {
+    p_id: Number(str(form, 'id')), p_approve: approve, p_note: str(form, 'note') || null,
+    p_amount: amount ? Number(amount) : null, p_quote_note: str(form, 'quote_note') || null,
+  });
+  if (error) redirect(`/platform/requests?error=${encodeURIComponent(error.message)}`);
+  revalidatePath('/platform', 'layout');
+  redirect(`/platform/requests?message=${encodeURIComponent(approve ? 'Approved: the features are set up.' : 'Declined.')}`);
+}

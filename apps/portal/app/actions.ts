@@ -221,3 +221,29 @@ export async function updateOrganization(form: FormData) {
   revalidatePath('/', 'layout');
   redirect('/settings?message=' + encodeURIComponent('Organization details saved.'));
 }
+
+// Owners and admins do not switch features: they ask, and platform staff approve (see core.request_features).
+// The form lists every feature with a tick for "I want this on"; the difference from today's state is the request.
+export async function requestFeatures(form: FormData) {
+  const { supabase, ctx } = await getContext();
+  const org = str(form, 'org_id');
+  if (ctx!.orgs.find((o) => o.id === org)?.org_role === 'member') fail('/settings', 'Only owners and admins can ask for features.');
+  const core = supabase.schema('core');
+  const { data: current } = await core.rpc('org_features', { p_org: org });
+  const want = new Set(form.getAll('want').map(String));
+  const now = new Set(((current ?? []) as { feature_key: string; enabled: boolean }[]).filter((f) => f.enabled).map((f) => f.feature_key));
+  const known = ((current ?? []) as { feature_key: string }[]).map((f) => f.feature_key);
+  const on = known.filter((k) => want.has(k) && !now.has(k));
+  const off = known.filter((k) => !want.has(k) && now.has(k));
+  if (!on.length && !off.length) fail('/settings', 'You have not changed anything.');
+  const { error } = await core.rpc('request_features', { p_org: org, p_on: on, p_off: off, p_note: str(form, 'note') || null });
+  if (error) fail('/settings', error.message);
+  redirect('/settings?message=' + encodeURIComponent('Request sent. We will review it and set your features up.'));
+}
+
+export async function cancelFeatureRequest(form: FormData) {
+  const { supabase } = await getContext();
+  const { error } = await supabase.schema('core').rpc('cancel_feature_request', { p_id: Number(str(form, 'id')) });
+  if (error) fail('/settings', error.message);
+  redirect('/settings?message=' + encodeURIComponent('Request cancelled.'));
+}
