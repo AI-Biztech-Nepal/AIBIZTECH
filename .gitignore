@@ -17,3 +17,4 @@ next-env.d.ts
 .env.migrate
 backups/
 scripts/migrate/node_modules
+*.egg-info/

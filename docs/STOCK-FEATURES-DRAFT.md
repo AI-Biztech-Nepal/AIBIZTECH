@@ -57,3 +57,17 @@ Nothing is written to the database. The migration waits for your answers.
 - Public address per org: custom domain, slug as fallback; VPS only (nginx + automatic HTTPS).
 - Leads: wired to the business's own website. Two key kinds are offered: a public form key (allowed origins + captcha) and a secret server key (signed requests). Recommend the secret key to anyone with a server.
 - Optional packs (off for new orgs): vehicles, sanakhat, job cards (incl. In Repair), spare parts. Warranty stays and becomes generic.
+
+## Database role for Stock's bridge (tested in `supabase/tests/stock_bridge_sql.test.mjs`)
+
+Stock reads the portal database through `PORTAL_DB_URL`. Use a dedicated read-only role with exactly these grants; the test
+runs the bridge's real queries as this role. Create it yourself in the portal project and set the password there (never in git):
+
+```sql
+create role stock_bridge login password '<set in the dashboard>' bypassrls;  -- legacy_tenant_map has RLS and no policy for it
+grant usage on schema core to stock_bridge;
+grant select on core.service_roles, core.memberships, core.org_services, core.legacy_tenant_map to stock_bridge;
+grant execute on function core.feature_on(uuid, text) to stock_bridge;       -- feature_on is revoked from public by default
+```
+
+It can read, never write (the test checks that). `bypassrls` only lets it see those four tables; it has no grants on anything else.
