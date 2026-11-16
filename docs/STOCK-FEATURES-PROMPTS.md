@@ -60,6 +60,22 @@ After you confirm the table:
 Write the migration supabase/migrations/<next timestamp>_stock_features.sql following 20261101000100_finance_features.sql: catalogue rows, per-org backfill (what each org sees today), default_on per my confirmed table. Add PGlite tests in supabase/tests like finance_features.test.mjs: off refuses, on works, missing row falls back to default, requires is enforced, expired trial turns all off. Run npm test and show the result.
 ```
 
+## Prompt 2a — Accept the portal login and resolve the org in Stock (Stock repo, runs BEFORE Prompt 2)
+
+Added after Prompt 0 showed Stock cannot verify the portal login yet. Facts (checked): the portal already has `core.legacy_tenant_map (service_key, legacy_id text, org_id)`, built for this: Stock company ids go in with `service_key='stock'`. Hamro G&G Auto already exists as a portal org (it came from Finance and Attendance); its Stock `company_id` is NOT its org id, so it needs a map row. Deeva does not use Stock. The `stock.*` feature and feature-request migrations are already applied to the live portal database (do not touch it). Migrated portal users keep their old UUID.
+
+```
+Read docs/SCAFFOLD.md (Family B), python/aibiz_auth/aibiz_auth/__init__.py in the portal repo (decode_token, check_access, require_service, require_feature) and supabase/migrations/20261027000000_core_init.sql (core.legacy_tenant_map, core.service_roles, the roles of service 'stock').
+In Auto-Stock-Manager read backend/server.py get_current_user, ROLE_PERMISSIONS, require(), the users and companies tables, and /auth/login and /auth/signup.
+Plan first, wait for my OK, new branch, LOCAL test setup only (local Postgres or a throwaway Supabase; never the live portal or Stock project):
+1. A bridge, not a rewrite: get_current_user accepts EITHER the old Stock token (unchanged, so installed apps and the live site keep working) OR a portal Supabase token. A portal token needs X-Org-Id; verify it with the portal's public keys (aibiz_auth.decode_token), read the role from core.service_roles, and map it to a Stock role (admin, stock_supervisor, parts_supervisor, social_media). Propose how sanakhat_officer fits, since core.services.stock does not list it.
+2. Company to org: resolve company_id from org_id through core.legacy_tenant_map (service_key='stock'), cached. Write a script that prints the proposed map rows (Hamro first) as a DRY RUN; I apply it to the live portal myself.
+3. People: Stock users have their own passwords. Propose how a Stock user becomes a portal user (same UUID, same bcrypt hash if compatible, shared emails = one login, see docs/MIGRATION-MAPPING.md) and how someone in several companies picks an org. Do not migrate anyone.
+4. Then support require_feature('stock.x') (aibiz_auth.check_feature) behind the bridge, with a seam so tests can fake core.feature_on.
+5. Remove nothing yet: Stock's own /auth/signup and staff screens stay until the cut-over; list what must change then.
+Tests: old token still works; portal token works with the right role; wrong org, wrong service, expired trial, a member without a role are refused; missing X-Org-Id is refused. Show output and list what you could not check.
+```
+
 ## Prompt 2 — Guard every feature in the backend (Stock repo, branch off portal-supabase)
 
 ```
