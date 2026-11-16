@@ -49,3 +49,22 @@ def require_service(service_key: str, roles: set[str] | None = None, get_db=None
         return check_access(db, claims, x_org_id, service_key, roles)
 
     return dep
+
+
+def check_feature(db, org_id: str, feature_key: str) -> None:
+    # core.feature_on without a signed-in user asks: service live for the org, feature active, requires on, switch on
+    if not db.fetch_value("select core.feature_on(%s, %s)", (org_id, feature_key)):
+        raise HTTPException(403, "This feature is not enabled for your organization")
+
+
+def require_feature(feature_key: str, roles: set[str] | None = None, get_db=None):
+    # The service is the key's prefix ('finance.emi' -> 'finance'); access rules are exactly require_service's
+    service_key = feature_key.split(".", 1)[0]
+
+    def dep(authorization: str = Header(...), x_org_id: str = Header(...), db=Depends(get_db)):
+        claims = decode_token(authorization.removeprefix("Bearer ").strip())
+        ctx = check_access(db, claims, x_org_id, service_key, roles)
+        check_feature(db, x_org_id, feature_key)
+        return ctx
+
+    return dep

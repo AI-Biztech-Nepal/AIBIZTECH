@@ -65,3 +65,18 @@ export async function apiFetch(url: string, orgId: string, init: RequestInit = {
   headers.set('X-Org-Id', orgId);
   return fetch(url, { ...init, headers });
 }
+
+// Every feature of one org in a single call, e.g. { 'finance.emi': true }. A key that is missing means the catalogue
+// default, which the service must apply itself (installed apps and bridges must never treat missing as off).
+export async function loadFeatures(orgId: string): Promise<Record<string, boolean>> {
+  const { data } = await getSupabase().schema('core').rpc('org_features', { p_org: orgId });
+  return Object.fromEntries(((data ?? []) as { feature_key: string; enabled: boolean }[]).map((f) => [f.feature_key, f.enabled]));
+}
+
+// requireService for the feature's service, then the switch; denied sends the person to the portal like a missing service
+export async function requireFeature(featureKey: string, next = location.href): Promise<Access> {
+  const access = await requireService(featureKey.split('.')[0], next);
+  if (!access.ok) return access;
+  const features = await loadFeatures(access.orgId);
+  return features[featureKey] ? access : { ok: false, redirectTo: deniedUrl(featureKey) };
+}

@@ -26,3 +26,13 @@ export async function setService(form: FormData) {
   revalidatePath('/platform', 'layout');
   back(org, 'message', 'Subscription updated.');
 }
+
+export async function setFeature(form: FormData) {
+  const org = str(form, 'org_id');
+  const { error } = await (await createClient()).schema('core').rpc('set_feature', {
+    p_org: org, p_feature: str(form, 'feature'), p_enabled: str(form, 'enabled') === 'true', p_reason: str(form, 'reason'),
+  });
+  if (error) back(org, 'error', error.message);
+  revalidatePath('/platform', 'layout');
+  back(org, 'message', 'Feature updated.');
+}

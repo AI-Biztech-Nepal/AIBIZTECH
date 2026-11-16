@@ -10,7 +10,7 @@ Every business gets only what it needs. Not everyone wants EMI, Jageer sync or v
 
 1. **One schema for everyone.** No per-customer tables or columns. Flags change behavior, not structure.
 2. **Switching a feature off hides it, never deletes data.** Switching it on again restores everything.
-3. **Existing orgs must see no change.** Every feature that exists today is backfilled as ON for every current org.
+3. **Existing orgs must see no change.** Backfill each org's flags to what that org sees today. That is not always "everything ON": Finance shows Rent, EMI, Marketing and website listing to one account each, so the service supplies the per-org backfill.
 4. **Enforce in three places:** database, API, UI. Hiding a menu item is not enforcement.
 5. **A flag is added only when a real second customer needs the feature absent.** No speculative flags.
 6. Feature keys are `service.feature` in snake case, e.g. `finance.emi`. Keys are permanent: renaming one is a migration.
@@ -75,7 +75,7 @@ If a "feature" cannot be switched off without breaking the rest of the service, 
 ## Work per codebase (all start after Step 0)
 
 ### Portal
-- Migration for the two tables, `feature_on`, `org_features`, the audit table, the backfill (all ON for all existing orgs), and the `finance.vehicles` backfill. Add PGlite tests in `supabase/tests`: default behavior, `requires`, owners can write and members cannot, an expired trial turns every feature off.
+- Migration for the two tables, `feature_on`, `org_features`, the audit table, and the backfill. Each service supplies its per-org backfill from the inventory (what each account sees today), including `finance.vehicles` from `org_settings`. Add PGlite tests in `supabase/tests`: default behavior, `requires`, owners can write and members cannot, an expired trial turns every feature off.
 - `packages/auth` (TypeScript) and `python/aibiz_auth`: add `require_feature(key)` next to `require_service`, and a cached `features_for(org)` helper.
 - Settings page: a **Features** section for owners and admins, grouped by service, a switch per feature with its description, and a clear message when a dependency blocks a change.
 - Builder: map business type to a starter feature set, replacing the service-level recommendation. Preselect, never enable silently: the owner confirms.
@@ -89,6 +89,17 @@ If a "feature" cannot be switched off without breaking the rest of the service, 
 ### Attendance
 - Same four items as Finance, with the Attendance features from the inventory.
 - Mobile apps and bridges already installed in the field must keep working: treat a missing flag as the catalogue default, never as off.
+
+## Work against the portal-integrated branch
+
+Each service repo has a standalone version (its own database, keyed by owner) and a branch that talks to the portal database (`portal-supabase` in Finance and Attendance). Build on the portal branch: `core.feature_on()` only exists there. A standalone checkout has nothing to attach to.
+
+## Lessons from the Finance inventory
+
+1. **Hidden tabs are not enforcement.** Today a hidden screen can still be opened by URL, and owner-only policies let it write rows. The database and API guards are the point of this work.
+2. **`security definer` functions bypass RLS.** Functions open to anonymous callers (website listing, spin wheel, visit tracking) need the flag check inside the function body.
+3. **Off means paused, not emptied.** A feature that feeds a sync (Finance's wage sync deletes any line missing from its source view) must stop the sync when switched off, not empty its source, or switching it off deletes ledger lines.
+4. **Name-based branches are what this replaces.** Checks like `sellsVehicles` or `isAllInOneAbroad` (regex on a business name) become flags in the backfill, then are deleted.
 
 ## Done means
 

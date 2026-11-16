@@ -4,10 +4,11 @@ import { platformClient, fmt } from '@/lib/platform';
 import { BUSINESS_TYPES, NEEDS } from '@/lib/recommend';
 import { SubmitButton } from '@/app/submit-button';
 import { Notice } from '../../../notice';
-import { reviewOrg, setService } from '../../actions';
+import { reviewOrg, setFeature, setService } from '../../actions';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 type Svc = { key: string; name: string; status: string; trial_ends_at: string; enabled_at: string; people: number };
+type Feature = { feature_key: string; service_key: string; name: string; description: string; requires: string[]; enabled: boolean };
 type Member = { name: string | null; email: string; org_role: string; status: string };
 
 const left = (d: string) => Math.ceil((new Date(d).getTime() - Date.now()) / 864e5);
@@ -21,6 +22,8 @@ export default async function Org({ params, searchParams }: { params: Promise<{ 
   const { data: org, error: loadError } = await supabase.schema('core').rpc('platform_org', { p_org: id });
   if (loadError || !org) notFound();
   const photo = org.pan_photo_path ? (await supabase.storage.from('pan-cards').createSignedUrl(org.pan_photo_path, 300)).data?.signedUrl : null;
+
+  const { data: features } = await supabase.schema('core').rpc('platform_org_features', { p_org: id });
 
   const status: string = org.verification_status;
   const tone = status === 'verified' ? 'live' : status === 'pending' ? 'warn' : 'bad';
@@ -105,6 +108,30 @@ export default async function Org({ params, searchParams }: { params: Promise<{ 
                 </li>
               );
             })}
+          </ul>
+        )}
+      </section>
+
+      <section className="setting">
+        <div><h2>Features</h2><p className="sub">Switching off hides a feature and blocks it everywhere; data is kept. Every change needs a reason and is audited.</p></div>
+        {!(features as Feature[] | null)?.length ? <p className="empty">No switchable features yet.</p> : (
+          <ul className="rows">
+            {(features as Feature[]).map((f) => (
+              <li key={f.feature_key} className="svc">
+                <div className="grow">
+                  <h3>{f.name}</h3>
+                  <span className="sub">{f.description}{f.requires.length > 0 && ` Needs ${f.requires.join(', ')}.`}</span>
+                </div>
+                <span className={`state ${f.enabled ? 'live' : 'bad'}`}>{f.enabled ? 'On' : 'Off'}</span>
+                <form action={setFeature} className="actions">
+                  <input type="hidden" name="org_id" value={id} />
+                  <input type="hidden" name="feature" value={f.feature_key} />
+                  <input type="hidden" name="enabled" value={String(!f.enabled)} />
+                  <input name="reason" maxLength={300} required placeholder="Reason" aria-label={`Reason for switching ${f.name} ${f.enabled ? 'off' : 'on'}`} />
+                  <SubmitButton className="ghost">{f.enabled ? 'Switch off' : 'Switch on'}</SubmitButton>
+                </form>
+              </li>
+            ))}
           </ul>
         )}
       </section>
