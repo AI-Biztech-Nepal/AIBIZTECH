@@ -29,7 +29,7 @@ export default async function Settings({ searchParams }: { searchParams: Search 
     core.from('profiles').select('phone').eq('user_id', ctx.user_id).maybeSingle(),
     supabase.auth.getClaims(),
     isAdmin ? core.rpc('org_features', { p_org: org.id }) : none,
-    isAdmin ? core.from('features').select('key, service_key, name, description, requires').eq('is_active', true).order('key') : none,
+    isAdmin ? core.from('features').select('key, service_key, name, description, requires').eq('is_active', true).order('name') : none,
     isAdmin ? core.from('feature_requests').select('id, turn_on, turn_off, note, created_at').eq('org_id', org.id).eq('status', 'pending').maybeSingle() : none,
   ]);
   const members = (rows ?? []) as Member[];
@@ -110,16 +110,17 @@ export default async function Settings({ searchParams }: { searchParams: Search 
                   ) : (
                     <form action={requestFeatures}>
                       <input type="hidden" name="org_id" value={org.id} />
-                      <ul className="rows">
+                      <div className="choice-list">
                         {shown.map((f) => (
-                          <li key={f.key} className="svc">
-                            <label className="grow">
-                              <input type="checkbox" name="want" value={f.key} defaultChecked={isOn.get(f.key)} /> <strong>{f.name}</strong>
+                          <label key={f.key} className="choice">
+                            <input type="checkbox" name="want" value={f.key} defaultChecked={isOn.get(f.key)} />
+                            <span>
+                              <strong>{f.name}</strong>
                               <span className="sub"> {f.description}{f.requires.length > 0 && ` Needs ${f.requires.map((r: string) => names.get(r) ?? r).join(', ')}.`}</span>
-                            </label>
-                          </li>
+                            </span>
+                          </label>
                         ))}
-                      </ul>
+                      </div>
                       <label>Anything we should know? (optional)<input name="note" maxLength={500} placeholder="e.g. we repair fridges and sell parts" /></label>
                       <SubmitButton>Send request</SubmitButton>
                     </form>

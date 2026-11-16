@@ -142,6 +142,10 @@ main.card { width: calc(100% - 32px); }
 
 /* Builder choices */
 label.choice { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text); font-size: 1rem; cursor: pointer; transition: border-color .15s, background-color .15s; }
+/* the feature picker in Settings */
+.choice-list { display: grid; gap: 8px; margin-bottom: 14px; }
+label.choice { align-items: flex-start; }
+label.choice > span { display: grid; gap: 2px; }
 label.choice:hover { border-color: var(--text); }
 label.choice:has(input:checked) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
 input[type="radio"], input[type="checkbox"] { width: 18px; height: 18px; min-height: 0; padding: 0; margin: 0; flex: none; }
