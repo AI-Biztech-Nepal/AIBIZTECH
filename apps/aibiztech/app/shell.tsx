@@ -12,8 +12,8 @@ export async function Shell({ org, orgs = [], page, children }: { org: Org | nul
   const { data: services } = await (await createClient()).schema('core').from('services').select('key, name').eq('is_active', true).order('name');
   const isAdmin = !!org && org.org_role !== 'member';
   const initials = (org?.name ?? 'AIBIZTECH').split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
-  const item = (href: string, icon: string, label: string, active = false, extra?: ReactNode) => (
-    <Link href={href} className={`nav-item${active ? ' active' : ''}`} aria-current={active ? 'page' : undefined} {...(href.startsWith('/go/') ? { target: '_blank', rel: 'noopener' } : {})}>
+  const item = (href: string, icon: string, label: string, active = false, extra?: ReactNode, newTab = href.startsWith('/go/')) => (
+    <Link href={href} className={`nav-item${active ? ' active' : ''}`} aria-current={active ? 'page' : undefined} {...(newTab ? { target: '_blank', rel: 'noopener' } : {})}>
       <Icon name={icon} size={18} /><span>{label}</span>{extra}
     </Link>
   );
@@ -51,8 +51,8 @@ export async function Shell({ org, orgs = [], page, children }: { org: Org | nul
               // Finance runs inside AIBIZTECH (served at /finance); the other apps are still opened through single sign-on
               return on && s.key === 'finance'
                 ? item('/finance', serviceIcon(s.key, s.name), s.name)
-                : on && s.key === 'attendance' && process.env.ATTENDANCE_URL
-                ? item('/attendance', serviceIcon(s.key, s.name), s.name)
+                : on && (s.key === 'attendance' || s.key === 'stock')
+                ? item(`/${s.key}`, serviceIcon(s.key, s.name), s.name, false, undefined, !(s.key === 'attendance' && process.env.ATTENDANCE_URL))
                 : on
                 ? item(`/go/${s.key}`, serviceIcon(s.key, s.name), s.name)
                 : item(org ? '/' : '/onboarding', serviceIcon(s.key, s.name), s.name, false, <Icon name="lockmini" size={14} />);
