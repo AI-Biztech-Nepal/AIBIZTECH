@@ -27,7 +27,7 @@ function getErrMsg(err, fallback) {
 }
 
 // Status tags from the sold vehicle's own record (what the old Sold Stock tab showed):
-// returned marker, name-transfer status and warranty. Sanakhat cost has its own column.
+// returned marker and warranty. The name-transfer status has its own column (and line on phones).
 function SaleTags({ sale, vehicle, booking }) {
   const fromBooking = booking && (
     <span className="px-1.5 py-0.5 rounded-full text-xs font-semibold uppercase tracking-wide bg-yellow-100 text-yellow-800 whitespace-nowrap" title="This sale completed a booking" data-testid="sale-booking-tag">
@@ -42,11 +42,9 @@ function SaleTags({ sale, vehicle, booking }) {
     );
   }
   if (!vehicle) return fromBooking || null;
-  const transfer = getTransferStatusStyle(vehicle.ownership_transfer_status);
   return (
     <>
       {fromBooking}
-      <span className={`px-1.5 py-0.5 rounded-full text-xs font-semibold uppercase tracking-wide whitespace-nowrap ${transfer.bg} ${transfer.text}`} title="Transfer status" data-testid="sale-transfer-tag">Transfer {transfer.label}</span>
       <WarrantyBadge warranty={vehicle.warranty} />
     </>
   );
