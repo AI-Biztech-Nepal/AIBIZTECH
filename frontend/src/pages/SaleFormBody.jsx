@@ -173,7 +173,7 @@ export default function SaleFormBody({ f, booking = null, sale = null, readOnly 
           </div>
 
           <div id="sv-lead" tabIndex={-1} className="sm:col-span-2 outline-none" data-testid="sale-lead">
-            <SourceField value={f.leadSource} onChange={f.setLeadSource} customers={f.customers} label="Lead" hideReferral size="lg" />
+            <SourceField value={f.leadSource} onChange={f.setLeadSource} customers={f.customers} label="Lead" hideReferral asSelect size="lg" />
             {bad("sv-lead") && <p className="mt-1.5 text-xs font-semibold text-red-700">Pick a lead, or say who referred the buyer</p>}
           </div>
           <div className="sm:col-span-2">
