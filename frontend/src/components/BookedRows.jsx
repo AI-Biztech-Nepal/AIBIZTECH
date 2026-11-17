@@ -35,32 +35,32 @@ function BookedActions({ b, isAdmin, actions }) {
   );
 }
 
-// The cells line up with the Sales table's columns: SN, Vehicle, Status, Customer, Sale Price, Cost Price, Transfer, Profit
-// (none yet: it isn't sold), Payment, Date, actions.
+// The cells line up with the Sales table's columns: SN, Date, Vehicle, Customer, Transfer, Sale Price, Cost Price, Profit,
+// Payment. The table has no Status or actions column, so the "Booked" status and the buttons are in the Vehicle cell.
 export function BookedTableRow({ b, index, cost, isAdmin, actions }) {
   const agreed = agreedOf(b);
   return (
     <tr data-testid="booking-row">
       <td className="text-gray-500">{index}</td>
-      <td className="min-w-[12rem]">
+      <td className="text-gray-500 whitespace-nowrap"><HoverADDate date={b.booking_date} /></td>
+      <td className="min-w-[16rem]">
         <div className="font-semibold text-gray-900">{b.vehicle_info || "—"}</div>
-        {b.notes && <div className="text-xs text-gray-400 truncate max-w-[16rem]">{b.notes}</div>}
+        <div className="flex items-center gap-1 flex-wrap mt-1"><BookedStatus /></div>
+        {b.notes && <div className="text-xs text-gray-400 truncate max-w-[16rem] mt-1">{b.notes}</div>}
+        <div className="mt-2"><BookedActions b={b} isAdmin={isAdmin} actions={actions} /></div>
       </td>
-      <td><BookedStatus /></td>
       <td>
         <div className="text-gray-700">{b.customer_name}</div>
         {b.customer_contact && <div className="text-xs text-gray-400">{b.customer_contact}</div>}
       </td>
+      <td><Dash /></td>
       <td className="text-right font-medium text-gray-800 whitespace-nowrap">{agreed != null ? formatNPR(agreed) : <Dash />}</td>
       <td className="text-right font-medium text-gray-800 whitespace-nowrap" data-testid="booking-cost-price">{cost != null ? formatNPR(cost) : <Dash />}</td>
-      <td><Dash /></td>
       <td className="text-right"><Dash /></td>
       <td>
         <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700">{b.payment_method}</span>
         <div className="mt-1 text-xs font-semibold text-amber-700 whitespace-nowrap">Deposit: {formatNPR(b.booking_amount)}</div>
       </td>
-      <td className="text-gray-500 whitespace-nowrap"><HoverADDate date={b.booking_date} /></td>
-      <td><BookedActions b={b} isAdmin={isAdmin} actions={actions} /></td>
     </tr>
   );
 }

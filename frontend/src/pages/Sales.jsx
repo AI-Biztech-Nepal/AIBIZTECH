@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus, Search, Trash2, Eye, TrendingUp, DollarSign, Calendar, ShoppingBag, AlertTriangle, UploadCloud, FileSpreadsheet, CheckCircle2, Undo2, Tags } from "lucide-react";
+import { Plus, Search, Trash2, TrendingUp, DollarSign, Calendar, ShoppingBag, AlertTriangle, UploadCloud, FileSpreadsheet, CheckCircle2, Undo2, Tags } from "lucide-react";
 import { toast } from "sonner";
 import api from "../utils/api";
 import { peek, remember, cacheTicket } from "../utils/listCache";
@@ -452,16 +452,14 @@ export default function Sales() {
                 <thead>
                   <tr>
                     <th className="w-10">SN</th>
+                    <th>Date</th>
                     <th>Vehicle</th>
-                    <th>Status</th>
                     <th>Customer</th>
+                    <th>Transfer</th>
                     <th className="text-right">Sale Price</th>
                     <th className="text-right" title="The vehicle's overall cost: purchase price + expenses + accessories">Cost Price</th>
-                    <th>Transfer</th>
                     <th className="text-right" title="What the sale earned: the sale price less the vehicle's overall cost (what was kept, for a returned sale)">Profit</th>
                     <th>Payment</th>
-                    <th>Date</th>
-                    <th className="w-10" />
                   </tr>
                 </thead>
                 <tbody>
@@ -477,6 +475,7 @@ export default function Sales() {
                         className="cursor-pointer"
                       >
                         <td className="text-gray-500">{filteredBookings.length + i + 1}</td>
+                        <td className="text-gray-500 whitespace-nowrap"><HoverADDate date={s.sale_date} /></td>
                         <td className="min-w-[12rem]">
                           <div className="font-semibold text-gray-900 flex items-center gap-1.5">
                             {s.vehicle_info || "—"}
@@ -484,16 +483,15 @@ export default function Sales() {
                           </div>
                           <div className="flex items-center gap-1 flex-wrap mt-1"><SaleTags sale={s} vehicle={v} booking={bookingBySaleId[s.id]} /></div>
                         </td>
-                        <td />
                         <td>
                           <div className="text-gray-700">{s.customer_name}</div>
                           {s.customer_contact && <div className="text-xs text-gray-400">{s.customer_contact}</div>}
                         </td>
-                        <td className="text-right font-medium text-gray-800 whitespace-nowrap">{formatNPR(s.sale_price)}</td>
-                        <td className="text-right font-medium text-gray-800 whitespace-nowrap" data-testid="sale-cost-price">{cost != null ? formatNPR(cost) : <span className="text-gray-300">—</span>}</td>
                         <td className="whitespace-nowrap">
                           {s.returned ? <span className="text-gray-300">—</span> : <TransferStatus vehicle={v} editable={isAdmin} onChange={updateTransfer} />}
                         </td>
+                        <td className="text-right font-medium text-gray-800 whitespace-nowrap">{formatNPR(s.sale_price)}</td>
+                        <td className="text-right font-medium text-gray-800 whitespace-nowrap" data-testid="sale-cost-price">{cost != null ? formatNPR(cost) : <span className="text-gray-300">—</span>}</td>
                         <td className="text-right font-bold whitespace-nowrap" data-testid="sale-profit">
                           {s.profit != null ? <span className={s.profit < 0 ? "text-red-600" : "text-green-700"}>{formatNPR(s.profit)}</span> : <span className="text-gray-300 font-normal">—</span>}
                         </td>
@@ -503,19 +501,6 @@ export default function Sales() {
                           ) : (
                             <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700">{s.payment_method}</span>
                           )}
-                        </td>
-                        <td className="text-gray-500 whitespace-nowrap"><HoverADDate date={s.sale_date} /></td>
-                        <td>
-                          <div className="flex items-center gap-1">
-                            <button onClick={e => { e.stopPropagation(); openSale(s); }} className="max-md:min-w-11 max-md:min-h-11 max-md:inline-flex max-md:items-center max-md:justify-center p-1.5 hover:bg-slate-100 rounded-lg transition-colors" title="View / edit sale" data-testid="view-sale-btn">
-                              <Eye size={14} className="text-slate-500" />
-                            </button>
-                            {isAdmin && (
-                              <button onClick={e => { e.stopPropagation(); handleDelete(s.id); }} className="max-md:min-w-11 max-md:min-h-11 max-md:inline-flex max-md:items-center max-md:justify-center p-1.5 hover:bg-red-50 rounded-lg transition-colors" title="Delete sale" data-testid="delete-sale-btn">
-                                <Trash2 size={14} className="text-red-400" />
-                              </button>
-                            )}
-                          </div>
                         </td>
                       </tr>
                     );
