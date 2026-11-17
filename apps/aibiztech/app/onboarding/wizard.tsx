@@ -5,7 +5,7 @@ import { useFormStatus } from 'react-dom';
 import { createOrganization } from '../actions';
 import { FIELDS, MAX_PHOTO_BYTES, validatePhoto, type Details } from '@/lib/org-details';
 
-const STEPS = ['Company', 'PAN', 'Confirm'];
+const STEPS = ['Company', 'Confirm'];
 const LAST = STEPS.length - 1;
 const PHONE_PATTERN = '\+?[0-9][0-9 \-]{6,19}';
 const blank = Object.fromEntries(FIELDS.map((f) => [f, ''])) as Details;
@@ -64,19 +64,12 @@ export function Wizard({ initial }: { initial: { name: string; address: string; 
       </div>
 
       <form ref={form} action={createOrganization} onKeyDown={onKeyDown}>
-        {(['address', 'phone', 'email'] as const).map((f) => <input key={f} type="hidden" name={f} value={v[f]} />)}
+        {/* Everything about the owner comes from sign-up, so it is sent along without asking again */}
+        {(['address', 'phone', 'email', 'owner_name', 'owner_address', 'owner_phone', 'owner_email'] as const).map((f) => <input key={f} type="hidden" name={f} value={v[f]} />)}
 
         <fieldset hidden={step !== 0}>
-          <legend>Company and owner details</legend>
+          <legend>Company details</legend>
           {text('name', 'Company name', { autoComplete: 'organization', placeholder: 'Your company or business name' })}
-          {text('owner_name', 'Owner full name')}
-          {text('owner_address', 'Owner address')}
-          {text('owner_phone', 'Owner phone number', { type: 'tel', pattern: PHONE_PATTERN, title: 'Digits, optionally starting with +' })}
-          {text('owner_email', 'Owner email', { type: 'email' })}
-        </fieldset>
-
-        <fieldset hidden={step !== 1}>
-          <legend>Registered PAN</legend>
           {text('pan_no', 'PAN number', { inputMode: 'numeric', pattern: '[0-9]{9}', maxLength: 9, title: 'Exactly 9 digits' })}
           <label>PAN card photo (optional)
             <input name="pan_photo" type="file" accept="image/jpeg,image/png,image/webp" onChange={onPhoto} />
@@ -84,7 +77,7 @@ export function Wizard({ initial }: { initial: { name: string; address: string; 
           <small>JPG, PNG or WebP, up to {MAX_PHOTO_BYTES / 1024 / 1024} MB.</small>
         </fieldset>
 
-        <fieldset hidden={step !== 2}>
+        <fieldset hidden={step !== 1}>
           <legend>Review</legend>
           <dl>
             {row('Company', v.name)}
