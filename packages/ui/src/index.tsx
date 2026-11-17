@@ -12,7 +12,7 @@ export function PlatformHeader({ portalUrl, orgName, current, apps, children }: 
 }) {
   return (
     <header style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '12px 16px', background: 'var(--surface)', borderBottom: '1px solid var(--border)', color: 'var(--text)' }}>
-      <a href={portalUrl} style={{ fontWeight: 700, color: 'inherit', textDecoration: 'none' }}>AI Biz Tech Nepal</a>
+      <a href={portalUrl} style={{ fontWeight: 700, color: 'inherit', textDecoration: 'none' }}>AIBIZTECH</a>
       <nav aria-label="Services" style={{ display: 'flex', gap: 12 }}>
         {apps.map((a) => (
           <a key={a.key} href={a.url} aria-current={a.key === current ? 'page' : undefined}

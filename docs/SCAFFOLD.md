@@ -1,4 +1,4 @@
-# AI Biz Tech Nepal Portal — Project Scaffold
+# AIBIZTECH — Project Scaffold
 
 One login, one organization, many services.
 

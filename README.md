@@ -1,4 +1,4 @@
-# AI Biz Tech Nepal Portal
+# AIBIZTECH
 
 One login, one organization, many services: Finance, Auto Stock Manager and Attendance Nepal,
 behind a single portal.

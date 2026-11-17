@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import './globals.css';
 
-export const metadata: Metadata = { title: 'AI Biz Tech Nepal', description: 'One login for all your business services' };
+export const metadata: Metadata = { title: 'AIBIZTECH', description: 'One login for all your business services' };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (

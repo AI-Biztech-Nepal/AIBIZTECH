@@ -5,7 +5,7 @@ import { signOut } from './actions';
 export function Header({ org, page }: { org: Org; page: 'home' | 'admin' | 'team' }) {
   return (
     <header>
-      <strong>AI Biz Tech Nepal</strong>
+      <strong>AIBIZTECH</strong>
       <span>{org.name} · <span className="cap">{org.org_role}</span></span>
       {page !== 'home' && <Link href="/">Home</Link>}
       {org.org_role !== 'member' && page !== 'admin' && <Link href="/admin">Admin</Link>}
