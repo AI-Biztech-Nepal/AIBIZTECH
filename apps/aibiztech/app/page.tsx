@@ -1,4 +1,5 @@
 import { Fragment } from 'react';
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getContext } from '@/lib/supabase';
 import { markNotificationsRead, startTrial, updateProfile } from './actions';
@@ -9,7 +10,28 @@ export default async function Launcher({ searchParams }: { searchParams: Search 
   const { error, denied, message } = await searchParams;
   const { supabase, ctx } = await getContext();
   if (!ctx) redirect('/login');
-  if (ctx.orgs.length === 0) redirect('/onboarding');
+  if (ctx.orgs.length === 0) {
+    // New account: show every app right away; they unlock once an organization is set up and verified
+    const { data: all } = await supabase.schema('core').from('services').select('key, name').eq('is_active', true).order('name');
+    return (
+      <main className="wide">
+        <Header org={null} page="home" />
+        <h1>Hello{ctx.full_name ? `, ${ctx.full_name}` : ''}</h1>
+        <Notice error={error} message={message} />
+        <p role="status" className="banner">
+          Finish setting up your organization to unlock these apps. <Link href="/onboarding">Set up organization</Link>
+        </p>
+        <ul className="tiles">
+          {all?.map((s) => (
+            <li key={s.key} className="tile">
+              <h2>{s.name}</h2>
+              <p>Available once your organization is set up and verified.</p>
+            </li>
+          ))}
+        </ul>
+      </main>
+    );
+  }
 
   const org = ctx.orgs.find((o) => o.id === ctx.active_org_id) ?? ctx.orgs[0];
   const isAdmin = org.org_role !== 'member';
