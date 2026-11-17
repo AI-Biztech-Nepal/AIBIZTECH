@@ -24,7 +24,7 @@ export function serviceIcon(key: string, name: string) {
   return s.includes('financ') ? 'finance' : s.includes('attend') ? 'attendance' : s.includes('stock') ? 'stock' : 'app';
 }
 
-// Attendance Nepal uses its real logo; Finance and Stock Manager have logos drawn for the portal
+// Attendance Nepal uses its real logo; Stock Manager uses the StockTrack mark; Finance has a logo drawn for the portal
 function FinanceMark() {
   return (
     <svg viewBox="0 0 64 64" width="40" height="40" aria-hidden="true">
@@ -40,24 +40,11 @@ function FinanceMark() {
   );
 }
 
-function StockMark() {
-  return (
-    <svg viewBox="0 0 64 64" width="40" height="40" aria-hidden="true">
-      <defs>
-        <linearGradient id="sb" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#38bdf8" /><stop offset="1" stopColor="#1d4ed8" /></linearGradient>
-      </defs>
-      <path d="M32 6 54 18v26L32 58 10 44V18z" fill="url(#sb)" />
-      <path d="M10 18 32 30l22-12M32 30v28" stroke="#fff" strokeOpacity=".85" strokeWidth="2.5" fill="none" strokeLinejoin="round" />
-      <path d="M32 3 24 11h5v8h6v-8h5z" fill="#22d3ee" stroke="#fff" strokeWidth="1.5" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
 export function ServiceLogo({ svc }: { svc: { key: string; name: string } }) {
   const kind = serviceIcon(svc.key, svc.name);
   return (
     <span className="svc-logo">
-      {kind === 'attendance' ? <img src="/apps/attendance.png" alt="" width={44} height={44} /> : kind === 'finance' ? <FinanceMark /> : kind === 'stock' ? <StockMark /> : <Icon name="app" size={30} />}
+      {kind === 'attendance' ? <img src="/apps/attendance.png" alt="" width={44} height={44} /> : kind === 'stock' ? <img src="/apps/stock.png" alt="" width={52} height={52} /> : kind === 'finance' ? <FinanceMark /> : <Icon name="app" size={30} />}
     </span>
   );
 }
