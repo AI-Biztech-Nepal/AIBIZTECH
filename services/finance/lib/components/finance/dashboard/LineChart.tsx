@@ -97,10 +97,12 @@ export function LineChart({ labels, series, height = 250, formatValue, emptyText
   const dataLen = Math.max(0, ...series.map((s) => s.values.length));
   const active = selected != null && selected < n ? selected : Math.max(0, Math.min(n, dataLen) - 1);
 
-  // As many labels as fit (about one per 74px), always including the first and last.
+  // As many labels as fit (about one per 74px), always including the first and
+  // last. The last label is right-aligned, so the one before it must sit at
+  // least ~80px away or the two print on top of each other.
   const maxLabels = Math.max(2, Math.floor(innerW / 74));
   const every = Math.max(1, Math.ceil(n / maxLabels));
-  const showLabel = (i: number) => i === n - 1 || (i % every === 0 && n - 1 - i >= every * 0.6);
+  const showLabel = (i: number) => i === n - 1 || (i % every === 0 && (n - 1 - i) * step >= 80);
 
   return (
     <View onLayout={(e) => setWidth(e.nativeEvent.layout.width)} style={{ height }}>

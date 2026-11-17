@@ -1,29 +1,28 @@
 // app/(store)/company-dashboard.tsx
 //
-// The store's whole business in pictures: who it is, what it holds (cash and bank), what is owed to it
-// and by it, how sales, purchases and expenses have moved over the year, and who the best customers
-// are. Everything is read from data the app already keeps - nothing is typed on this page. Months
-// follow the AD / BS toggle. (Jageer's company dashboard, without its jobs, shop orders and team.)
+// The reseller's whole company in pictures: who the business is, what it holds (cash and bank),
+// what is owed to it and by it, how sales, purchases and expenses have moved over the year, where
+// who the best customers are. (Jageer's company dashboard, without its jobs, shop orders and team.) Everything is read from
+// data the app already keeps - nothing is typed on this page. Months follow the AD / BS toggle.
 import { useMemo, useState } from 'react';
 import { View, Text, Pressable, ScrollView, Image, Modal, useWindowDimensions, Platform } from 'react-native';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import Svg, { Circle, Defs, G, LinearGradient as SvgGradient, Path, Polyline, Polygon, Line, Stop, Text as SvgText } from 'react-native-svg';
+import Svg, { Circle, Defs, G, LinearGradient as SvgGradient, Path, Polygon, Line, Stop, Text as SvgText } from 'react-native-svg';
 import { useAuthStore } from '../../lib/hooks/useAuth';
 import { useSupabaseQuery } from '../../lib/hooks/useSupabase';
 import { useAccountBalances } from '../../lib/hooks/useAccountBalances';
 import { useCalendarMode } from '../../lib/hooks/useCalendarMode';
 import { useScreenHeader } from '../../lib/hooks/useScreenHeader';
-import { adStringToBs, bsToAdString, bsDaysInMonth, numericDateLabel, BS_MONTHS } from '../../lib/utils/nepaliDate';
+import { adStringToBs, bsToAdString, bsDaysInMonth, numericDateLabel, toBsHistoryLabel, BS_MONTHS } from '../../lib/utils/nepaliDate';
+import { computeOwed, owedByMonth } from '../../lib/utils/receivableAgeing';
 import { localTodayIso } from '../../lib/utils/localDate';
 import { supabase } from '../../lib/supabase';
 import { WEB_SIDEBAR_MIN_WIDTH } from '../../lib/components/web/WebSidebarShell';
 import { CARD_SHADOW, RecentActivityCard } from '../../lib/components/finance/dashboard/FinanceDashboard';
-import { formatMoney } from '../../lib/utils/money';
-import { bannerColors, builtInLogo, builtInLogoBanner, builtInLogoLarge } from '../../lib/utils/accountFeatures';
 
-const npr = (n: number) => `NPR ${formatMoney(n)}`;
+const npr = (n: number) => `NPR ${Math.round(n).toLocaleString()}`;
 /** 1,23,456 -> "1.23L", 12,34,567 -> "12.3L", 1,23,45,678 -> "1.23Cr": short money for charts. */
 function lakh(n: number): string {
   const a = Math.abs(n);
@@ -46,6 +45,11 @@ function keyOf(date: string, mode: 'bs' | 'ad'): string | null {
   }
   return day.slice(0, 7);
 }
+/** A month key as a number, so earlier and later months can be told apart (BS keys are not zero-padded). */
+const ordOf = (key: string) => {
+  const [y, m] = key.split('-').map(Number);
+  return y * 12 + m;
+};
 /** The last `count` months, oldest first, ending with the one that holds today. */
 function lastMonths(count: number, mode: 'bs' | 'ad'): Bucket[] {
   const today = localTodayIso();
@@ -128,80 +132,18 @@ const inRange = (date: string | null | undefined, r: Range) => {
 };
 
 // ---------- small drawing pieces ----------
-function Spark({ values, color, width = 150, height = 34 }: { values: number[]; color: string; width?: number; height?: number }) {
-  if (values.length < 2) return <View style={{ height }} />;
-  const max = Math.max(...values, 1);
-  const min = Math.min(...values, 0);
-  const span = max - min || 1;
-  const pts = values
-    .map((v, i) => `${(i / (values.length - 1)) * width},${height - 3 - ((v - min) / span) * (height - 8)}`)
-    .join(' ');
-  return (
-    <Svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
-      <Polyline points={pts} fill="none" stroke={color} strokeWidth={2.5} strokeLinejoin="round" />
-    </Svg>
-  );
-}
-
-function Kpi({
-  label,
-  value,
-  icon,
-  color,
-  tint,
-  caption,
-  captionColor,
-  series,
-  onPress,
-}: {
-  label: string;
-  value: string;
-  icon: keyof typeof Ionicons.glyphMap;
-  color: string;
-  tint: string;
-  caption?: string;
-  captionColor?: string;
-  series?: number[];
-  onPress?: () => void;
-}) {
-  return (
-    <Pressable
-      onPress={onPress}
-      disabled={!onPress}
-      className="rounded-2xl bg-white p-4"
-      style={[{ flexGrow: 1, flexBasis: 220, minWidth: 200 }, CARD_SHADOW]}
-    >
-      <View className="flex-row items-center" style={{ gap: 10 }}>
-        <View className="items-center justify-center rounded-xl" style={{ width: 36, height: 36, backgroundColor: tint }}>
-          <Ionicons name={icon} size={18} color={color} />
-        </View>
-        <Text className="flex-1 text-[12.5px] font-semibold text-gray-500" numberOfLines={1}>
-          {label}
-        </Text>
-      </View>
-      <Text className="mt-2.5 text-[22px] font-extrabold text-gray-900" numberOfLines={1}>
-        {value}
-      </Text>
-      {!!caption && (
-        <Text className="mt-0.5 text-[12px] font-semibold" style={{ color: captionColor ?? '#6B7280' }} numberOfLines={1}>
-          {caption}
-        </Text>
-      )}
-      {series && <View style={{ marginTop: 6 }}><Spark values={series} color={color} /></View>}
-    </Pressable>
-  );
-}
-
 type TableRow = { label: string; amount: number; share: number | null; color: string; count?: number; note?: string; onPress?: () => void };
-/** The table style used by Top customers: header, a row per item with a share bar, and a total line. */
-function ShareTable({ firstHead, rows, total, showCount, shareHead = 'Share' }: { firstHead: string; rows: TableRow[]; total?: { label: string; amount: number; count?: number; share?: string; onPress?: () => void }; showCount?: boolean; shareHead?: string }) {
+/** The table style used by Top customers: header, a row per item with a share bar, and a total line.
+ * `signed` shows the amounts as balances - green when in the plus, red with a minus sign when short - and
+ * `hideShare` leaves the share column out (a bar still shows each row against the biggest). */
+function ShareTable({ firstHead, rows, total, showCount, shareHead = 'Share', amountHead = 'Amount', signed, hideShare }: { firstHead: string; rows: TableRow[]; total?: { label: string; amount: number; count?: number; share?: string; onPress?: () => void }; showCount?: boolean; shareHead?: string; amountHead?: string; signed?: boolean; hideShare?: boolean }) {
   return (
     <View>
       <View className="flex-row border-b border-gray-200 pb-2" style={{ gap: 8 }}>
         <Text className="flex-1 text-[11px] font-bold uppercase text-gray-500">{firstHead}</Text>
         {showCount && <Text className="w-12 text-right text-[11px] font-bold uppercase text-gray-500">Jobs</Text>}
-        <Text className="w-28 text-right text-[11px] font-bold uppercase text-gray-500">Amount</Text>
-        <Text className="w-14 text-right text-[11px] font-bold uppercase text-gray-500">{shareHead}</Text>
+        <Text className="w-28 text-right text-[11px] font-bold uppercase text-gray-500">{amountHead}</Text>
+        {!hideShare && <Text className="w-14 text-right text-[11px] font-bold uppercase text-gray-500">{shareHead}</Text>}
       </View>
       {rows.map((r) => (
         <Pressable key={r.label} onPress={r.onPress} disabled={!r.onPress} className="border-b border-gray-100 py-2.5" style={({ hovered }: any) => (hovered && r.onPress ? { backgroundColor: '#F8FAFC' } : null)}>
@@ -218,8 +160,11 @@ function ShareTable({ firstHead, rows, total, showCount, shareHead = 'Share' }: 
               {!!r.note && <Text className="mt-1 text-[11px] text-gray-500" style={{ marginLeft: 17 }}>{r.note}</Text>}
             </View>
             {showCount && <Text className="w-12 text-right text-[13px] text-gray-600">{r.count ?? 0}</Text>}
-            <Text className="w-28 text-right text-[13px] font-semibold text-gray-900">{npr(r.amount)}</Text>
-            <Text className="w-14 text-right text-[13px] font-bold text-blue-700">{r.share == null ? '–' : `${r.share.toFixed(1)}%`}</Text>
+            <Text className="w-28 text-right text-[13px] font-semibold text-gray-900" style={signed ? { color: r.amount < 0 ? '#B91C1C' : '#15803D', fontWeight: '800' } : undefined}>
+              {signed && r.amount < 0 ? '−' : ''}
+              {npr(signed ? Math.abs(r.amount) : r.amount)}
+            </Text>
+            {!hideShare && <Text className="w-14 text-right text-[13px] font-bold text-blue-700">{r.share == null ? '–' : `${r.share.toFixed(1)}%`}</Text>}
           </View>
         </Pressable>
       ))}
@@ -228,7 +173,7 @@ function ShareTable({ firstHead, rows, total, showCount, shareHead = 'Share' }: 
           <Text className="flex-1 text-[12px] font-bold text-gray-600">{total.label}</Text>
           {showCount && <Text className="w-12 text-right text-[12px] font-bold text-gray-700">{total.count ?? 0}</Text>}
           <Text className="w-28 text-right text-[12px] font-bold text-gray-900">{npr(total.amount)}</Text>
-          <Text className="w-14 text-right text-[12px] font-bold text-gray-600">{total.share ?? '100%'}</Text>
+          {!hideShare && <Text className="w-14 text-right text-[12px] font-bold text-gray-600">{total.share ?? '100%'}</Text>}
         </Pressable>
       )}
     </View>
@@ -237,7 +182,8 @@ function ShareTable({ firstHead, rows, total, showCount, shareHead = 'Share' }: 
 
 function Panel({ title, subtitle, children, right }: { title: string; subtitle?: string; children: React.ReactNode; right?: React.ReactNode }) {
   return (
-    <View className="rounded-2xl bg-white p-5" style={[{ minWidth: 0 }, CARD_SHADOW]}>
+    // flexGrow: two cards side by side are as tall as the taller one, not left at their own heights.
+    <View className="rounded-2xl bg-white p-5" style={[{ minWidth: 0, flexGrow: 1 }, CARD_SHADOW]}>
       <View className="mb-3 flex-row items-center justify-between" style={{ gap: 10 }}>
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text className="text-[15px] font-bold text-gray-900">{title}</Text>
@@ -263,12 +209,24 @@ function Legend({ items }: { items: { label: string; color: string }[] }) {
   );
 }
 
-/** Two lines over twelve months, sales filled. */
-/** A tap on a chart line or dot. react-native-svg turns `onPress` into responder props the browser does not
- * know (a dev-mode error box on every render), so the web gets a plain click and a phone gets `onPress`. */
-const svgPress = (handler?: () => void) => (Platform.OS === 'web' ? ({ onClick: handler } as object) : { onPress: handler });
+/** Props that make a chart shape open its page when pressed. On the web react-native-svg turns an
+ * `onPress` into React Native touch handlers that the browser does not know, and logs "Unknown event
+ * handler property" for every shape that has one - so there the shape gets a plain click listener. */
+function pressable(onPress?: () => void): any {
+  if (!onPress) return {};
+  if (Platform.OS !== 'web') return { onPress };
+  return {
+    ref: (shape: any) => {
+      const el: SVGElement | null | undefined = shape?.elementRef?.current;
+      if (!el) return;
+      el.onclick = () => onPress();
+      el.style.cursor = 'pointer';
+    },
+  };
+}
 
-function TrendChart({ labels, sales, purchases, onSales, onPurchases }: { labels: string[]; sales: number[]; purchases: number[]; onSales?: () => void; onPurchases?: () => void }) {
+/** Two lines over twelve months, the first (sales) filled. The second is amber unless `purchaseColor` / `purchaseText` say otherwise. */
+function TrendChart({ labels, sales, purchases, onSales, onPurchases, purchaseColor = '#F59E0B', purchaseText = '#B45309' }: { labels: string[]; sales: number[]; purchases: number[]; onSales?: () => void; onPurchases?: () => void; purchaseColor?: string; purchaseText?: string }) {
   const W = 760;
   const H = 320;
   const left = 46;
@@ -324,10 +282,10 @@ function TrendChart({ labels, sales, purchases, onSales, onPurchases }: { labels
         );
       })}
       {area ? <Path d={area} fill="url(#salesFill)" /> : null}
-      <Path d={purchaseLine} fill="none" stroke="#F59E0B" strokeWidth={2.5} strokeLinecap="round" {...svgPress(onPurchases)} />
-      <Path d={salesLine} fill="none" stroke="#2563EB" strokeWidth={3.5} strokeLinecap="round" {...svgPress(onSales)} />
+      <Path d={purchaseLine} fill="none" stroke={purchaseColor} strokeWidth={2.5} strokeLinecap="round" {...pressable(onPurchases)} />
+      <Path d={salesLine} fill="none" stroke="#2563EB" strokeWidth={3.5} strokeLinecap="round" {...pressable(onSales)} />
       {purchases.map((v, i) => (
-        <Circle key={`p${i}`} cx={x(i)} cy={y(v)} r={5} fill="#FFFFFF" stroke="#F59E0B" strokeWidth={2} {...svgPress(onPurchases)} />
+        <Circle key={`p${i}`} cx={x(i)} cy={y(v)} r={5} fill="#FFFFFF" stroke={purchaseColor} strokeWidth={2} {...pressable(onPurchases)} />
       ))}
       {sales.map((v, i) => {
         const best = i === bestIdx && v > 0;
@@ -339,7 +297,7 @@ function TrendChart({ labels, sales, purchases, onSales, onPurchases }: { labels
         const purchaseY = purchaseHigher ? y(pv) - 11 : y(pv) + 19;
         return (
           <G key={`s${i}`}>
-            <Circle cx={x(i)} cy={y(v)} r={best || lastPoint ? 7 : 5.5} fill="#FFFFFF" stroke="#2563EB" strokeWidth={3} {...svgPress(onSales)} />
+            <Circle cx={x(i)} cy={y(v)} r={best || lastPoint ? 7 : 5.5} fill="#FFFFFF" stroke="#2563EB" strokeWidth={3} {...pressable(onSales)} />
             {v > 0 && (
               <SvgText
                 x={x(i)}
@@ -353,7 +311,7 @@ function TrendChart({ labels, sales, purchases, onSales, onPurchases }: { labels
               </SvgText>
             )}
             {pv > 0 && (
-              <SvgText x={x(i)} y={purchaseY} fontSize={10.5} fontWeight="600" fill="#B45309" textAnchor="middle">
+              <SvgText x={x(i)} y={purchaseY} fontSize={10.5} fontWeight="600" fill={purchaseText} textAnchor="middle">
                 {lakh(pv)}
               </SvgText>
             )}
@@ -423,24 +381,7 @@ function HBars({ rows, color }: { rows: { label: string; value: number; display:
   );
 }
 
-function Columns({ rows, color, onPress }: { rows: { label: string; value: number }[]; color: string; onPress?: () => void }) {
-  const max = Math.max(...rows.map((r) => r.value), 1);
-  return (
-    <View className="flex-row items-end" style={{ gap: 12, height: 170 }}>
-      {rows.map((r) => (
-        <Pressable key={r.label} onPress={onPress} style={{ flex: 1, alignItems: 'center', justifyContent: 'flex-end', height: 170, gap: 5 }}>
-          <Text className="text-[12px] font-bold text-gray-900">{r.value}</Text>
-          <View style={{ width: '100%', maxWidth: 46, height: Math.max(6, (r.value / max) * 110), borderRadius: 7, backgroundColor: color }} />
-          <Text className="text-[11px] text-gray-600" numberOfLines={1}>
-            {r.label}
-          </Text>
-        </Pressable>
-      ))}
-    </View>
-  );
-}
-
-export default function StoreDashboard() {
+export default function CompanyDashboard() {
   const profile = useAuthStore((state) => state.profile);
   const userId = useAuthStore((state) => state.ownerId ?? undefined);
   const { width } = useWindowDimensions();
@@ -449,10 +390,8 @@ export default function StoreDashboard() {
   const [mode] = useCalendarMode();
   const [period, setPeriod] = useState<PeriodKey>('this_fy');
   const [periodOpen, setPeriodOpen] = useState(false);
-  const [logoOpen, setLogoOpen] = useState(false);
   const periodLabel = PERIODS.find((p) => p.key === period)?.label ?? 'This fiscal year';
   const range = useMemo(() => periodRange(period, mode), [period, mode]);
-  const prevRange = useMemo(() => periodRange(period, mode, 1), [period, mode]);
 
   const balances = useAccountBalances(userId);
 
@@ -461,75 +400,32 @@ export default function StoreDashboard() {
   const { data: vendorEntries } = useSupabaseQuery('vendor_ledger_entries', { filters: userId ? { owner_id: userId } : {}, all: true, enabled: !!userId });
   const { data: customers } = useSupabaseQuery('customers', { filters: userId ? { owner_id: userId } : {}, all: true, enabled: !!userId });
   const { data: categories } = useSupabaseQuery('expense_categories', { filters: userId ? { owner_id: userId } : {}, enabled: !!userId });
-  const { data: products } = useSupabaseQuery('products', { filters: userId ? { owner_id: userId } : {}, all: true, enabled: !!userId });
 
-  // ---- the last twelve months of sales / purchases / expenses, by the bill's own date ----
+  // ---- the last twelve months of sales and purchases, by the bill's own date ----
   const months = useMemo(() => lastMonths(12, mode), [mode]);
   const series = useMemo(() => {
     const index = new Map(months.map((m, i) => [m.key, i]));
     const sale = months.map(() => 0);
     const purchase = months.map(() => 0);
-    const expense = months.map(() => 0);
     for (const t of transactions ?? []) {
       const k = keyOf(t.bill_date ?? t.created_at, mode);
       const i = k != null ? index.get(k) : undefined;
       if (i == null) continue;
       if (t.type === 'sale') sale[i] += t.amount;
       else if (t.type === 'purchase') purchase[i] += t.amount;
-      else if (t.type === 'expense') expense[i] += t.amount;
     }
-    return { sale, purchase, expense };
+    return { sale, purchase };
   }, [transactions, months, mode]);
   const last = months.length - 1;
 
-  // ---- the chosen period against the one before it ----
-  const totals = useMemo(() => {
-    const now = { sale: 0, purchase: 0, expense: 0 };
-    const before = { sale: 0, purchase: 0, expense: 0 };
-    for (const t of transactions ?? []) {
-      if (t.type !== 'sale' && t.type !== 'purchase' && t.type !== 'expense') continue;
-      const d = t.bill_date ?? t.created_at;
-      if (inRange(d, range)) now[t.type] += t.amount;
-      else if (inRange(d, prevRange)) before[t.type] += t.amount;
-    }
-    return { now, before };
-  }, [transactions, range, prevRange]);
+  // ---- sales billed in the chosen period ----
+  const billedInPeriod = useMemo(
+    () => (transactions ?? []).reduce((sum, t) => (t.type === 'sale' && inRange(t.bill_date ?? t.created_at, range) ? sum + t.amount : sum), 0),
+    [transactions, range]
+  );
 
-  const change = (now: number, before: number): { text?: string; color?: string } => {
-    if (before < 1) return now > 0 ? { text: 'Nothing in the previous period', color: '#16A34A' } : {};
-    const pct = Math.round(((now - before) / before) * 100);
-    const arrow = pct >= 0 ? '▲' : '▼';
-    const shown = Math.abs(pct) > 999 ? '999%+' : `${Math.abs(pct)}%`;
-    return { text: `${arrow} ${shown} vs previous period`, color: pct >= 0 ? '#16A34A' : '#DC2626' };
-  };
-
-  // ---- who owes whom ----
-  const owed = useMemo(() => {
-    const net = new Map<string, number>();
-    (customerEntries ?? []).forEach((e) => net.set(e.customer_id, (net.get(e.customer_id) ?? 0) + (e.entry_type === 'debit' ? e.amount : -e.amount)));
-    (vendorEntries ?? []).forEach((e) => net.set(e.vendor_id, (net.get(e.vendor_id) ?? 0) - (e.entry_type === 'debit' ? e.amount : -e.amount)));
-    // When each customer last became indebted, to age what they owe.
-    const lastDebit = new Map<string, number>();
-    (customerEntries ?? []).forEach((e) => {
-      if (e.entry_type !== 'debit') return;
-      const t = new Date((e.entry_date ?? e.created_at).slice(0, 10)).getTime();
-      if (t > (lastDebit.get(e.customer_id) ?? 0)) lastDebit.set(e.customer_id, t);
-    });
-    const now = Date.now();
-    let receivable = 0;
-    let payable = 0;
-    let debtors = 0;
-    const ageing = [0, 0, 0];
-    net.forEach((v, id) => {
-      if (v > 0.5) {
-        receivable += v;
-        debtors += 1;
-        const days = lastDebit.has(id) ? (now - (lastDebit.get(id) as number)) / DAY_MS : 0;
-        ageing[days <= 30 ? 0 : days <= 60 ? 1 : 2] += v;
-      } else if (v < -0.5) payable += -v;
-    });
-    return { receivable, payable, debtors, ageing };
-  }, [customerEntries, vendorEntries]);
+  // ---- who owes whom (the Ageing Report reads the same calculation) ----
+  const owed = useMemo(() => computeOwed(customerEntries ?? [], vendorEntries ?? []), [customerEntries, vendorEntries]);
 
   // ---- collected against billed in the period ----
   const collection = useMemo(() => {
@@ -537,9 +433,55 @@ export default function StoreDashboard() {
     (customerEntries ?? []).forEach((e) => {
       if (e.entry_type === 'credit' && inRange(e.entry_date ?? e.created_at, range)) received += e.amount;
     });
-    const billed = totals.now.sale;
+    const billed = billedInPeriod;
     return { received, billed, percent: billed > 0 ? (received / billed) * 100 : null };
-  }, [customerEntries, range, totals]);
+  }, [customerEntries, range, billedInPeriod]);
+
+  // ---- paid out in the period: what the Total Paid page adds up (expenses, payments out to a customer, payments to a vendor) ----
+  const paidOut = useMemo(() => {
+    let total = 0;
+    for (const t of transactions ?? []) {
+      if (t.type === 'expense' && inRange(t.bill_date ?? t.created_at, range)) total += t.amount;
+    }
+    for (const e of customerEntries ?? []) {
+      if (e.entry_type === 'debit' && e.source === 'manual' && inRange(e.entry_date ?? e.created_at, range)) total += e.amount;
+    }
+    for (const e of vendorEntries ?? []) {
+      if (e.entry_type === 'credit' && inRange(e.entry_date ?? e.created_at, range)) total += e.amount;
+    }
+    return total;
+  }, [transactions, customerEntries, vendorEntries, range]);
+
+  // ---- money received and money paid out, month by month (the same sources as the Total Received / Total Paid pages) ----
+  const flow = useMemo(() => {
+    const index = new Map(months.map((m, i) => [m.key, i]));
+    const received = months.map(() => 0);
+    const paid = months.map(() => 0);
+    const add = (list: number[], date: string, amount: number) => {
+      const k = keyOf(date, mode);
+      const i = k != null ? index.get(k) : undefined;
+      if (i != null) list[i] += amount;
+    };
+    for (const e of customerEntries ?? []) {
+      if (e.entry_type === 'credit') add(received, e.entry_date ?? e.created_at, e.amount);
+      else if (e.source === 'manual') add(paid, e.entry_date ?? e.created_at, e.amount);
+    }
+    for (const t of transactions ?? []) if (t.type === 'expense') add(paid, t.bill_date ?? t.created_at, t.amount);
+    for (const e of vendorEntries ?? []) if (e.entry_type === 'credit') add(paid, e.entry_date ?? e.created_at, e.amount);
+    return { received, paid };
+  }, [customerEntries, vendorEntries, transactions, months, mode]);
+
+  // ---- what was owed to you and by you at the end of each of the last twelve months ----
+  const owedTrail = useMemo(() => {
+    const index = new Map(months.map((m, i) => [m.key, i]));
+    const firstOrd = ordOf(months[0].key);
+    const monthOf = (date: string) => {
+      const k = keyOf(date, mode);
+      if (k == null) return -1;
+      return index.get(k) ?? (ordOf(k) < firstOrd ? -1 : months.length);
+    };
+    return owedByMonth(customerEntries ?? [], vendorEntries ?? [], monthOf, months.length);
+  }, [customerEntries, vendorEntries, months, mode]);
 
   // ---- expenses by category in the period ----
   const expenseParts = useMemo(() => {
@@ -576,18 +518,10 @@ export default function StoreDashboard() {
     return { rows, total, ids };
   }, [transactions, customers, range]);
 
-
   const logoUrl = profile?.business_logo_path
     ? supabase.storage.from('business-assets').getPublicUrl(profile.business_logo_path).data.publicUrl
     : null;
   const company = profile?.business_name?.trim() || profile?.full_name || 'Your company';
-  // No logo uploaded: the one the app keeps for this company, if any.
-  const fallbackLogo = logoUrl ? null : builtInLogo(company);
-  const largeLogo = logoUrl ? null : builtInLogoLarge(company);
-  // A company with a banner logo shows it straight on the banner, beside its name.
-  const bannerLogo = logoUrl ? null : builtInLogoBanner(company);
-  // The banner at the top: blue, green for Deeva.
-  const banner = bannerColors(company);
   const details = [
     profile?.business_address && { icon: 'location-outline' as const, text: profile.business_address },
     profile?.business_phone && { icon: 'call-outline' as const, text: profile.business_phone },
@@ -596,73 +530,31 @@ export default function StoreDashboard() {
   ].filter(Boolean) as { icon: keyof typeof Ionicons.glyphMap; text: string }[];
   const go = (path: string) => router.push(path as never);
 
-  const cashParts = [
-    { label: 'Cash', value: Math.max(0, balances.cash), color: PALETTE[2] },
-    ...balances.perAccount.map((a, i) => ({ label: a.name, value: Math.max(0, a.balance), color: PALETTE[(i + 3) % PALETTE.length] })),
-  ].filter((p) => p.value > 0);
-  const cashTotal = cashParts.reduce((s, p) => s + p.value, 0);
-
-  const sc = change(totals.now.sale, totals.before.sale);
-  const pc = change(totals.now.purchase, totals.before.purchase);
-  const ec = change(totals.now.expense, totals.before.expense);
-  const monthResult = totals.now.sale - totals.now.purchase - totals.now.expense;
-  // Bills and money entries dated inside the chosen period.
-  const entriesInPeriod = useMemo(() => {
-    let n = 0;
-    for (const t of transactions ?? []) if (inRange(t.bill_date ?? t.created_at, range)) n += 1;
-    for (const e of customerEntries ?? []) if (inRange(e.entry_date ?? e.created_at, range)) n += 1;
-    for (const e of vendorEntries ?? []) if (inRange(e.entry_date ?? e.created_at, range)) n += 1;
-    return n;
-  }, [transactions, customerEntries, vendorEntries, range]);
-  const net = balances.total + owed.receivable - owed.payable;
+  // Every account that holds an amount - cash in hand and each bank - the minus ones too, biggest first.
+  const accounts = [
+    { label: 'Cash in hand', value: balances.cash },
+    ...balances.perAccount.map((a) => ({ label: a.name, value: a.balance })),
+  ]
+    .filter((a) => Math.round(a.value) !== 0)
+    .sort((a, b) => b.value - a.value);
+  const accountMax = Math.max(...accounts.map((a) => Math.abs(a.value)), 1);
 
 
   const hero = (
-    <LinearGradient colors={banner.gradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={{ borderRadius: 20, padding: wide ? 28 : 20 }}>
+    <LinearGradient colors={['#0F172A', '#1E3A8A', '#2563EB']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={{ borderRadius: 20, padding: wide ? 28 : 20 }}>
       <View className="flex-row flex-wrap items-center" style={{ gap: 18 }}>
-        {bannerLogo ? (
-          <Pressable onPress={() => setLogoOpen(true)} accessibilityLabel={`${company} logo - view larger`} style={{ maxWidth: '100%' }}>
-            <Image
-              source={bannerLogo}
-              // a soft shadow under the lines lifts them off the gradient (web)
-              style={[{ width: 220, height: 59, maxWidth: '100%' }, Platform.OS === 'web' ? ({ filter: 'drop-shadow(0 4px 10px rgba(0,0,0,0.35))' } as object) : null]}
-              resizeMode="contain"
-            />
-          </Pressable>
-        ) : (
-          <Pressable
-            onPress={() => setLogoOpen(true)}
-            disabled={!logoUrl && !fallbackLogo}
-            accessibilityLabel="View the logo larger"
-            className="items-center justify-center overflow-hidden rounded-2xl bg-white"
-            style={{ width: 76, height: 76 }}
-          >
-            {logoUrl ? (
-              <Image source={{ uri: logoUrl }} style={{ width: 76, height: 76 }} resizeMode="cover" />
-            ) : fallbackLogo ? (
-              <Image source={fallbackLogo} style={{ width: 72, height: 72 }} resizeMode="contain" />
-            ) : (
-              <Ionicons name="business" size={34} color={banner.solid} />
-            )}
-          </Pressable>
-        )}
-        {/* The square is small, so tapping it shows the logo large and clear. */}
-        <Modal visible={logoOpen} transparent animationType="fade" onRequestClose={() => setLogoOpen(false)}>
-          <Pressable onPress={() => setLogoOpen(false)} className="flex-1 items-center justify-center bg-black/50 px-4">
-            <View className="w-full rounded-2xl bg-white p-6" style={{ maxWidth: 620 }}>
-              <Image source={logoUrl ? { uri: logoUrl } : largeLogo!} style={{ width: '100%', height: 200 }} resizeMode="contain" />
-              <Text className="mt-3 text-center text-[12px] text-gray-400">Tap anywhere to close</Text>
-            </View>
-          </Pressable>
-        </Modal>
+        <View className="items-center justify-center overflow-hidden rounded-2xl bg-white" style={{ width: 76, height: 76 }}>
+          {logoUrl ? <Image source={{ uri: logoUrl }} style={{ width: 76, height: 76 }} resizeMode="cover" /> : <Ionicons name="business" size={34} color="#1E3A8A" />}
+        </View>
         <View style={{ flex: 1, minWidth: 220, gap: 6 }}>
+          <Text className="text-[12px] font-semibold tracking-wider text-blue-200">COMPANY OVERVIEW</Text>
           <Text className="text-[26px] font-extrabold text-white" numberOfLines={2}>{company}</Text>
-          {profile?.full_name && profile.business_name ? <Text className="text-[13px]" style={{ color: banner.sub }}>Owner · {profile.full_name}</Text> : null}
+          {profile?.full_name && profile.business_name ? <Text className="text-[13px] text-blue-100">Owner · {profile.full_name}</Text> : null}
           <View className="mt-1 flex-row flex-wrap" style={{ columnGap: 16, rowGap: 6 }}>
             {details.map((d) => (
               <View key={d.text} className="flex-row items-center" style={{ gap: 6 }}>
-                <Ionicons name={d.icon} size={14} color={banner.label} />
-                <Text className="text-[12.5px]" style={{ color: banner.soft }} numberOfLines={1}>{d.text}</Text>
+                <Ionicons name={d.icon} size={14} color="#BFDBFE" />
+                <Text className="text-[12.5px] text-blue-50" numberOfLines={1}>{d.text}</Text>
               </View>
             ))}
           </View>
@@ -675,15 +567,13 @@ export default function StoreDashboard() {
       <View className="mt-5 flex-row flex-wrap" style={{ gap: 10 }}>
         {[
           { label: 'Customers', value: String((customers ?? []).length), icon: 'people-outline' as const, path: '/(store)/customers' },
-          { label: 'Stock items', value: String((products ?? []).length), icon: 'cube-outline' as const, path: '/(store)/inventory' },
           { label: 'Bank accounts', value: String(balances.perAccount.length), icon: 'business-outline' as const, path: '/(store)/bank-accounts' },
-          { label: 'Entries this period', value: String(entriesInPeriod), icon: 'book-outline' as const, path: '/(store)/daybook' },
         ].map((s) => (
           <Pressable key={s.label} onPress={() => go(s.path)} className="flex-row items-center rounded-xl px-3.5 py-2.5" style={{ gap: 10, backgroundColor: 'rgba(255,255,255,0.12)', flexGrow: 1, flexBasis: 150 }}>
-            <Ionicons name={s.icon} size={18} color={banner.label} />
+            <Ionicons name={s.icon} size={18} color="#BFDBFE" />
             <View>
               <Text className="text-[18px] font-extrabold text-white">{s.value}</Text>
-              <Text className="text-[11.5px]" style={{ color: banner.sub }}>{s.label}</Text>
+              <Text className="text-[11.5px] text-blue-100">{s.label}</Text>
             </View>
           </Pressable>
         ))}
@@ -732,16 +622,11 @@ export default function StoreDashboard() {
     </Text>
   );
 
-  const kpis = (
-    <View className="flex-row flex-wrap" style={{ gap: 14 }}>
-      <Kpi label={`Sales · ${periodLabel}`} value={npr(totals.now.sale)} icon="trending-up-outline" color="#047857" tint="#ECFDF5" caption={sc.text} captionColor={sc.color} series={series.sale} onPress={() => go('/(store)/sales-report')} />
-      <Kpi label={`Purchases · ${periodLabel}`} value={npr(totals.now.purchase)} icon="cart-outline" color="#B45309" tint="#FFFBEB" caption={pc.text} captionColor="#6B7280" series={series.purchase} onPress={() => go('/(store)/purchase-report')} />
-      <Kpi label={`Expenses · ${periodLabel}`} value={npr(totals.now.expense)} icon="receipt-outline" color="#B91C1C" tint="#FEF2F2" caption={ec.text} captionColor="#6B7280" series={series.expense} onPress={() => go('/(store)/expense-report')} />
-      <Kpi label={`Result · ${periodLabel}`} value={npr(monthResult)} icon="calculator-outline" color={monthResult >= 0 ? '#0F766E' : '#B91C1C'} tint="#F0FDFA" caption="Sales − purchases − expenses" onPress={() => go('/(store)/report')} />
-      <Kpi label="Cash & bank" value={npr(balances.total)} icon="wallet-outline" color="#047857" tint="#ECFDF5" caption={`Cash ${npr(balances.cash)}`} onPress={() => go('/(store)/bank-balances')} />
-      <Kpi label="To receive" value={npr(owed.receivable)} icon="arrow-down-circle-outline" color="#1D4ED8" tint="#EFF6FF" caption={`From ${owed.debtors} ${owed.debtors === 1 ? 'party' : 'parties'}`} onPress={() => go('/(store)/to-receive')} />
-      <Kpi label="To pay" value={npr(owed.payable)} icon="arrow-up-circle-outline" color="#B91C1C" tint="#FEF2F2" caption="Owed to vendors" onPress={() => go('/(store)/to-give')} />
-      <Kpi label="Net position" value={npr(net)} icon="stats-chart-outline" color={net >= 0 ? '#7C3AED' : '#B91C1C'} tint="#F5F3FF" caption="Cash + receivable − payable" captionColor={net < 0 ? '#B91C1C' : '#6B7280'} onPress={() => go('/(store)/bank-balances')} />
+  /** A heading that opens a group of cards. */
+  const section = (title: string) => (
+    <View className="flex-row items-center" style={{ gap: 12, marginTop: 6 }}>
+      <Text className="text-[13px] font-extrabold uppercase tracking-wider text-gray-700">{title}</Text>
+      <View style={{ flex: 1, height: 1, backgroundColor: '#E5E7EB' }} />
     </View>
   );
 
@@ -755,14 +640,8 @@ export default function StoreDashboard() {
     </View>
   );
 
-  const trend = (
-    <Panel title="Sales and purchases" subtitle="Last 12 months" right={<Legend items={[{ label: 'Sales', color: '#2563EB' }, { label: 'Purchases', color: '#F59E0B' }]} />}>
-      <TrendChart labels={months.map((m) => m.label)} sales={series.sale} purchases={series.purchase} onSales={() => go('/(store)/sales-report')} onPurchases={() => go('/(store)/purchase-report')} />
-    </Panel>
-  );
-
   const expenses = (
-    <Panel title="Where the money goes" subtitle={`Expenses by category · ${periodLabel}`}>
+    <Panel title="Expense Diagram" subtitle={`Expenses by category · ${periodLabel}`}>
       {expenseParts.total <= 0 ? (
         <Text className="py-8 text-center text-sm text-gray-400">No expenses recorded in these months</Text>
       ) : (
@@ -784,41 +663,148 @@ export default function StoreDashboard() {
     </Panel>
   );
 
-  const cashAll = Math.max(0, balances.total);
-  const moneyRows: TableRow[] = [
-    ...cashParts.map((p) => ({ onPress: () => go('/(store)/bank-balances'), label: p.label === 'Cash' ? 'Cash in hand' : `Bank · ${p.label}`, amount: p.value, color: p.color, share: cashTotal > 0 ? (p.value / cashTotal) * 100 : null })),
-  ];
-  const money = (
-    <Panel title="Money position" subtitle={`What you hold, are owed and owe · received for ${periodLabel}`}>
-      <Text className="mb-1 text-[12px] font-bold uppercase text-gray-500">Cash &amp; bank balance</Text>
-      {moneyRows.length === 0 ? (
+  // Money position: what is in the bank (cash in hand and every account, in a table like Jobs by stage), then what is
+  // owed to you and by you, then what moved - each with its own graph.
+  const banksCard = (
+    <Panel
+      title="In cash and banks"
+      right={<Pressable onPress={() => go('/(store)/bank-balances')} hitSlop={6}><Text className="text-[12.5px] font-semibold" style={{ color: '#2563EB' }}>Open balances</Text></Pressable>}
+    >
+      <Text className="mb-4 text-[28px] font-extrabold" style={{ color: balances.total >= 0 ? '#15803D' : '#B91C1C' }}>
+        {balances.total < 0 ? '−' : ''}
+        {npr(Math.abs(balances.total))}
+      </Text>
+      {accounts.length === 0 ? (
         <Text className="py-3 text-sm text-gray-400">No balance on any account</Text>
       ) : (
-        <ShareTable firstHead="Account" rows={moneyRows} total={{ label: 'Total cash & bank', amount: cashAll, onPress: () => go('/(store)/bank-balances') }} shareHead="Share" />
+        <ShareTable
+          firstHead="Account"
+          amountHead="Balance"
+          signed
+          hideShare
+          rows={accounts.map((a) => ({
+            label: a.label,
+            amount: a.value,
+            color: a.value < 0 ? '#DC2626' : '#16A34A',
+            share: (Math.abs(a.value) / accountMax) * 100,
+            onPress: () => go('/(store)/bank-balances'),
+          }))}
+        />
       )}
-      <Text className="mb-1 mt-5 text-[12px] font-bold uppercase text-gray-500">Receivable, payable and received</Text>
-      <ShareTable
-        firstHead="Item"
-        shareHead="% of cash"
-        rows={[
-          { onPress: () => go('/(store)/to-receive'), label: `To receive · ${owed.debtors} ${owed.debtors === 1 ? 'party' : 'parties'}`, amount: owed.receivable, color: '#2563EB', share: cashAll > 0 ? (owed.receivable / cashAll) * 100 : null },
-          { onPress: () => go('/(store)/to-give'), label: 'To pay · vendors', amount: owed.payable, color: '#DC2626', share: cashAll > 0 ? (owed.payable / cashAll) * 100 : null },
-          {
-            onPress: () => go('/(store)/received'),
-            label: `Received · ${periodLabel}`,
-            amount: collection.received,
-            color: '#16A34A',
-            share: collection.percent,
-            note: collection.percent == null ? 'No sales billed in this period' : `${npr(collection.received)} collected of ${npr(collection.billed)} billed (share = % of billed)`,
-          },
-        ]}
-        total={{ label: 'Net position (cash + receivable − payable)', amount: net, share: '', onPress: () => go('/(store)/bank-balances') }}
+    </Panel>
+  );
+
+  const moneyTile = (t: { label: string; value: number; caption: string; icon: keyof typeof Ionicons.glyphMap; color: string; tint: string; onPress: () => void }) => (
+    <Pressable
+      key={t.label}
+      onPress={t.onPress}
+      className="rounded-xl border border-gray-100 p-3.5"
+      style={{ flexGrow: 1, flexBasis: 170, minWidth: 150, backgroundColor: t.tint, gap: 6 }}
+    >
+      <View className="flex-row items-center" style={{ gap: 8 }}>
+        <View className="h-7 w-7 items-center justify-center rounded-lg" style={{ backgroundColor: '#FFFFFF' }}>
+          <Ionicons name={t.icon} size={15} color={t.color} />
+        </View>
+        <Text className="flex-1 text-[12px] font-bold text-gray-700" numberOfLines={1}>{t.label}</Text>
+      </View>
+      <Text className="text-[20px] font-extrabold" style={{ color: t.color }} numberOfLines={1}>{npr(t.value)}</Text>
+      <Text className="text-[11.5px] text-gray-600" numberOfLines={2}>{t.caption}</Text>
+    </Pressable>
+  );
+  const netLine = (label: string, value: number) => (
+    <View className="flex-row items-center justify-between rounded-xl bg-gray-50 px-3.5 py-2.5">
+      <Text className="flex-1 text-[12.5px] font-semibold text-gray-700">{label}</Text>
+      <Text className="text-[14px] font-extrabold" style={{ color: value >= 0 ? '#0F766E' : '#B91C1C' }}>{value < 0 ? '−' : ''}{npr(Math.abs(value))}</Text>
+    </View>
+  );
+  // Sales and purchases over the last twelve months: the two totals and what is left, then the graph - laid out like
+  // the Receivable & payable card.
+  const salesTotal = series.sale.reduce((x, y) => x + y, 0);
+  const purchaseTotal = series.purchase.reduce((x, y) => x + y, 0);
+  const bestOf = (list: number[], none: string) => {
+    const top = Math.max(...list);
+    return top > 0 ? `Best month ${months[list.indexOf(top)].label} · ${lakh(top)}` : none;
+  };
+  const trend = (
+    <Panel title="Sales and purchases" subtitle="What you sold and what you bought">
+      <Text className="mb-2 text-[11px] font-bold uppercase tracking-wider text-gray-500">Last 12 months</Text>
+      <View className="flex-row flex-wrap" style={{ gap: 10 }}>
+        {moneyTile({ label: 'Sales', value: salesTotal, caption: bestOf(series.sale, 'No sales in 12 months'), icon: 'trending-up-outline', color: '#1D4ED8', tint: '#EFF6FF', onPress: () => go('/(store)/sales-report') })}
+        {moneyTile({ label: 'Purchases', value: purchaseTotal, caption: bestOf(series.purchase, 'No purchases in 12 months'), icon: 'cart-outline', color: '#B91C1C', tint: '#FEF2F2', onPress: () => go('/(store)/purchase-report') })}
+      </View>
+      <View className="mt-2">{netLine('Sales − purchases', salesTotal - purchaseTotal)}</View>
+
+      <View className="mb-2 mt-5 flex-row flex-wrap items-center justify-between" style={{ gap: 8 }}>
+        <Text className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Sales and purchases · last 12 months</Text>
+        <Legend items={[{ label: 'Sales', color: '#2563EB' }, { label: 'Purchases', color: '#DC2626' }]} />
+      </View>
+      <TrendChart
+        labels={months.map((m) => m.label)}
+        sales={series.sale}
+        purchases={series.purchase}
+        purchaseColor="#DC2626"
+        purchaseText="#B91C1C"
+        onSales={() => go('/(store)/sales-report')}
+        onPurchases={() => go('/(store)/purchase-report')}
       />
     </Panel>
   );
 
+  const owedCard = (
+    <Panel title="Receivable & payable" subtitle="What is owed to you and by you">
+      <Text className="mb-2 text-[11px] font-bold uppercase tracking-wider text-gray-500">Owed right now</Text>
+      <View className="flex-row flex-wrap" style={{ gap: 10 }}>
+        {moneyTile({ label: 'To receive', value: owed.receivable, caption: `From ${owed.debtors} ${owed.debtors === 1 ? 'party' : 'parties'}`, icon: 'arrow-down-circle-outline', color: '#1D4ED8', tint: '#EFF6FF', onPress: () => go('/(store)/to-receive') })}
+        {moneyTile({ label: 'To pay', value: owed.payable, caption: 'Owed to vendors', icon: 'arrow-up-circle-outline', color: '#B91C1C', tint: '#FEF2F2', onPress: () => go('/(store)/to-give') })}
+      </View>
+      <View className="mt-2">{netLine('Net owed (to receive − to pay)', owed.receivable - owed.payable)}</View>
+
+      <View className="mb-2 mt-5 flex-row flex-wrap items-center justify-between" style={{ gap: 8 }}>
+        <Text className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Receivable and payable · last 12 months</Text>
+        <Legend items={[{ label: 'To receive', color: '#2563EB' }, { label: 'To pay', color: '#DC2626' }]} />
+      </View>
+      <TrendChart
+        labels={months.map((m) => m.label)}
+        sales={owedTrail.receivable}
+        purchases={owedTrail.payable}
+        purchaseColor="#DC2626"
+        purchaseText="#B91C1C"
+        onSales={() => go('/(store)/to-receive')}
+        onPurchases={() => go('/(store)/to-give')}
+      />
+    </Panel>
+  );
+
+  const movedCard = (
+    <Panel title="Received & paid" subtitle={`What came in and what went out · ${periodLabel}`}>
+      <View className="flex-row flex-wrap" style={{ gap: 10 }}>
+        {moneyTile({
+          label: 'Received',
+          value: collection.received,
+          caption: collection.percent == null ? 'No sales billed in this period' : `${Math.round(collection.percent)}% of ${npr(collection.billed)} billed`,
+          icon: 'download-outline',
+          color: '#047857',
+          tint: '#ECFDF5',
+          onPress: () => go('/(store)/received'),
+        })}
+        {moneyTile({ label: 'Paid', value: paidOut, caption: 'Expenses and payments out', icon: 'share-outline', color: '#B45309', tint: '#FFFBEB', onPress: () => go('/(store)/paid') })}
+      </View>
+      <View className="mt-2">{netLine('Net movement (received − paid)', collection.received - paidOut)}</View>
+
+      <View className="mb-2 mt-5 flex-row flex-wrap items-center justify-between" style={{ gap: 8 }}>
+        <Text className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Received and paid · last 12 months</Text>
+        <Legend items={[{ label: 'Received', color: '#2563EB' }, { label: 'Paid', color: '#F59E0B' }]} />
+      </View>
+      <TrendChart labels={months.map((m) => m.label)} sales={flow.received} purchases={flow.paid} onSales={() => go('/(store)/received')} onPurchases={() => go('/(store)/paid')} />
+    </Panel>
+  );
+
   const ageing = (
-    <Panel title="Receivable ageing" subtitle="How long what you are owed has been waiting">
+    <Panel
+      title="Receivable ageing"
+      subtitle="How long what you are owed has been waiting"
+      right={<Pressable onPress={() => go('/(store)/to-receive')} hitSlop={6}><Text className="text-[12.5px] font-semibold" style={{ color: '#2563EB' }}>Ageing report</Text></Pressable>}
+    >
       <View className="flex-row items-end" style={{ gap: 14, height: 150 }}>
         {[
           { label: '0–30 days', value: owed.ageing[0], color: '#0F766E' },
@@ -837,6 +823,7 @@ export default function StoreDashboard() {
       </View>
     </Panel>
   );
+
 
   const customersCard = (
     <Panel title="Top customers" subtitle={`Sales · ${periodLabel}`}>
@@ -883,37 +870,19 @@ export default function StoreDashboard() {
     </Panel>
   );
 
-  const quick = (
-    <Panel title="Quick actions">
-      <View className="flex-row flex-wrap" style={{ gap: 10 }}>
-        {[
-          { label: 'New sale', icon: 'trending-up' as const, path: '/(store)/transactions?type=sale&add=1' },
-          { label: 'New purchase', icon: 'cart' as const, path: '/(store)/transactions?type=purchase&add=1' },
-          { label: 'Received', icon: 'arrow-down-circle' as const, path: '/(store)/quick-payment?type=in' },
-          { label: 'Payment out', icon: 'arrow-up-circle' as const, path: '/(store)/quick-payment?type=out' },
-          { label: 'Ledger', icon: 'people' as const, path: '/(store)/customers' },
-          { label: 'Day book', icon: 'book' as const, path: '/(store)/daybook' },
-          { label: 'Stock', icon: 'cube' as const, path: '/(store)/inventory' },
-        ].map((a) => (
-          <Pressable key={a.label} onPress={() => go(a.path)} className="flex-row items-center rounded-xl border border-gray-200 bg-gray-50 px-3.5 py-2.5" style={{ gap: 8 }}>
-            <Ionicons name={a.icon} size={16} color="#1E3A8A" />
-            <Text className="text-[13px] font-semibold text-gray-800">{a.label}</Text>
-          </Pressable>
-        ))}
-      </View>
-    </Panel>
-  );
 
   return (
     <ScrollView className="flex-1" style={{ backgroundColor: '#F6F7FB' }} contentContainerStyle={{ padding: wide ? 28 : 14, gap: 18, paddingBottom: 60 }}>
       {hero}
       {periodBar}
-      {kpis}
       {periodMenu}
-      {row([trend, <RecentActivityCard key="recent" basePath="/(store)" />], [1.5, 1])}
-      {row([money, ageing], [1.3, 1])}
-      {row([expenses, customersCard], [1, 1.4])}
-      {quick}
+      {/* beside the chart the list shows as many entries as fill the card; stacked on a phone it has no height to fill */}
+      {row([trend, <RecentActivityCard key="recent" basePath="/(store)" fill={twoColumns} compact={false} />])}
+      {section('Money')}
+      {row([banksCard, ageing])}
+      {row([owedCard, movedCard])}
+      {section('Expenses and customers')}
+      {row([expenses, customersCard])}
     </ScrollView>
   );
 }
