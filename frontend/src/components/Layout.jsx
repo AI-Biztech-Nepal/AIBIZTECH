@@ -361,7 +361,7 @@ export default function Layout() {
       {/* Main */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Header */}
-        <header className="sticky top-0 z-30 bg-white border-b border-slate-200 shadow-sm h-14 box-content pt-safe flex items-center px-4 lg:px-6 gap-4">
+        <header className="sticky top-0 z-30 bg-white border-b border-slate-200 shadow-sm h-14 sm:h-16 box-content pt-safe flex items-center px-4 lg:px-6 gap-4">
           <button
             className="lg:hidden w-11 h-11 -ml-2.5 rounded-lg flex items-center justify-center text-slate-500 hover:bg-slate-50 hover:text-slate-900 transition-colors"
             onClick={() => setSidebarOpen(true)}
@@ -383,7 +383,9 @@ export default function Layout() {
                 <TitleIcon size={19} className="shrink-0 text-slate-400" /> {parts ? "Spare Parts" : "Inventory"}
               </h1>
             );
-          })() : pathname.startsWith("/marketing") ? (() => {
+          })() : pathname === "/sales" ? (
+            <h1 className="flex-1 min-w-0 text-2xl font-bold text-slate-900 truncate" data-testid="header-title">Sales</h1>
+          ) : pathname.startsWith("/marketing") ? (() => {
             // Named after the tab that is open (Leads, CRM, Share...), like any other page's title.
             const tabs = marketingTabsFor(user?.role);
             const requested = new URLSearchParams(search).get("tab");
@@ -394,8 +396,8 @@ export default function Layout() {
               </h1>
             );
           })() : <div className="flex-1" />}
-          {/* Pages put their date range / view switch here (wide screens only); see Inventory. */}
-          <div ref={setTopbarSlot} className="hidden sm:flex items-center gap-2" data-testid="topbar-slot" />
+          {/* Pages put their date range / view switch / buttons here (wide screens only); see Inventory and Sales. */}
+          <div ref={setTopbarSlot} className="hidden sm:flex items-center gap-2 min-w-0" data-testid="topbar-slot" />
           {canSeeInventory && (
             <div className="relative" ref={notifRef}>
               <button

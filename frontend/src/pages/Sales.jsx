@@ -1,5 +1,7 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
+import { createPortal } from "react-dom";
+import { useNavigate, useOutletContext } from "react-router-dom";
+import useMediaQuery from "../hooks/useMediaQuery";
 import { Plus, Search, Trash2, TrendingUp, DollarSign, Calendar, ShoppingBag, AlertTriangle, UploadCloud, FileSpreadsheet, CheckCircle2, Undo2 } from "lucide-react";
 import { toast } from "sonner";
 import api from "../utils/api";
@@ -87,6 +89,8 @@ export default function Sales() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
+  const wideScreen = useMediaQuery("(min-width: 1024px)");
+  const { topbarSlot } = useOutletContext() || {}; // the app's top bar: on wide screens the page's counts and buttons sit there
   // Coming back to this page shows the last lists at once (see utils/listCache.js); fetchAll below refreshes them as always.
   const [sales, setSales] = useState(() => peek("sales:list") ?? []);
   // Sold vehicles, keyed by id below — adds the old Sold Stock details (transfer, warranty,
@@ -260,32 +264,39 @@ export default function Sales() {
   });
   const anyFilter = dateRange.key !== "all" || search || statusFilter !== "all";
 
+  // The line under the title: how many sales, returned and booked.
+  const countsText = `${periodRange ? `${filtered.length} sales · ${periodRange.label}` : `${sales.length} sales recorded`}${returnedCount > 0 ? ` · ${returnedCount} returned` : ""}${openBookings.length > 0 ? ` · ${openBookings.length} booked` : ""}`;
+  const headerButtons = (
+    <>
+      <DateRangeFilter value={dateRange.key} custom={dateRange.custom} onChange={(key, custom) => setDateRange({ key, custom })} testid="sales-date-filter" />
+      {isAdmin && (
+        <button onClick={() => setShowImport(true)} data-testid="import-sales-btn" className="flex items-center gap-2 border border-slate-200 text-slate-700 text-sm font-medium px-4 py-3 rounded-lg hover:bg-slate-50 transition-all active:scale-95 whitespace-nowrap">
+          <UploadCloud size={16} /> Import Sheet
+        </button>
+      )}
+    </>
+  );
+
   if (loading) return <div className="flex items-center justify-center h-64"><div className="animate-spin w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full" /></div>;
 
   return (
     <div className="space-y-5 animate-fade-in">
-      {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Sales</h1>
-          <p className="text-sm text-slate-500">
-            {periodRange ? `${filtered.length} sales · ${periodRange.label}` : `${sales.length} sales recorded`}
-            {returnedCount > 0 && ` · ${returnedCount} returned`}
-            {openBookings.length > 0 && ` · ${openBookings.length} booked`}
-          </p>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <DateRangeFilter value={dateRange.key} custom={dateRange.custom} onChange={(key, custom) => setDateRange({ key, custom })} testid="sales-date-filter" />
-          {isAdmin && (
-            <button onClick={() => setShowImport(true)} data-testid="import-sales-btn" className="flex items-center gap-2 border border-slate-200 text-slate-700 text-sm font-medium px-4 py-3 rounded-lg hover:bg-slate-50 transition-all active:scale-95">
-              <UploadCloud size={16} /> Import Sheet
-            </button>
-          )}
-          <button onClick={() => openModal()} data-testid="new-sale-btn" className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-3 rounded-lg transition-all active:scale-95 shadow-sm">
-            <Plus size={16} /> Sale Vehicle
-          </button>
-        </div>
-      </div>
+      {/* The title "Sales" is in the app's top bar. On wide screens the counts, date filter and buttons are up there too (the
+          counts only where there is room for them); on narrower ones they are here. */}
+      {wideScreen && topbarSlot
+        ? createPortal(
+          <>
+            <span className="hidden xl:block min-w-0 truncate text-xs text-slate-500 mr-1" data-testid="sales-counts">{countsText}</span>
+            {headerButtons}
+          </>,
+          topbarSlot,
+        )
+        : (
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-slate-500" data-testid="sales-counts">{countsText}</p>
+            <div className="flex items-center gap-2 flex-wrap">{headerButtons}</div>
+          </div>
+        )}
 
       {/* Summary Cards — the 3rd card follows the period toggle above (defaults to "This
           Month" when nothing's selected, same figure it always showed). */}
@@ -373,6 +384,9 @@ export default function Sales() {
           <option value="returned">Returned only{returnedCount ? ` (${returnedCount})` : ""}</option>
           <option value="booked">Booked only{openBookings.length ? ` (${openBookings.length})` : ""}</option>
         </select>
+        <button onClick={() => openModal()} data-testid="new-sale-btn" className="ml-auto flex items-center gap-2 h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-all active:scale-95 shadow-sm whitespace-nowrap">
+          <Plus size={16} /> Sale Vehicle
+        </button>
       </div>
 
       {/* Sales Table: the open bookings come first, each with the status "Booked"; a sale has no status here */}
