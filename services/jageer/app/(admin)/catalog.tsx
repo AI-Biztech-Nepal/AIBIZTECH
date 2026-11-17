@@ -1,0 +1,275 @@
+// app/(admin)/catalog.tsx
+import { useMemo, useState } from 'react';
+import { View, Text, TextInput, Pressable, ScrollView, Image } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { useSupabaseQuery, useSupabaseInsert, useSupabaseUpdate, useSupabaseDelete } from '../../lib/hooks/useSupabase';
+import { useIsWideWeb } from '../../lib/hooks/useWideGrid';
+import { ReadableWidth } from '../../lib/components/web/ReadableWidth';
+import { WideCardGrid } from '../../lib/components/web/WideCardGrid';
+import { SearchBar } from '../../lib/components/SearchBar';
+import { SearchFilterSheet } from '../../lib/components/SearchFilterSheet';
+import { showAlert, getErrorMessage } from '../../lib/utils/alert';
+import { filterBySearch } from '../../lib/utils/search';
+import { pickAndUploadCatalogImage } from '../../lib/utils/catalogImage';
+import { toSafeImageUri } from '../../lib/utils/image';
+import type { CatalogProduct } from '../../types/database.types';
+
+function CatalogRow({ item }: { item: CatalogProduct }) {
+  const updateItem = useSupabaseUpdate('catalog_products');
+  const deleteItem = useSupabaseDelete('catalog_products');
+  const [uploading, setUploading] = useState(false);
+  const isPendingSubmission = !item.is_active && !!item.submitted_by;
+
+  async function handleReplacePhoto() {
+    setUploading(true);
+    try {
+      const image_url = await pickAndUploadCatalogImage();
+      if (image_url) {
+        await updateItem.mutateAsync({ id: item.id, values: { image_url } });
+      }
+    } catch (err) {
+      showAlert('Could not update photo', getErrorMessage(err));
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  function confirmRemove() {
+    showAlert(
+      'Remove this catalog item?',
+      `"${item.name}" will be removed. This fails if a wholesaler or reseller is already stocking it — hide it instead in that case.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: () => deleteItem.mutate(item.id, { onError: (err) => showAlert('Could not remove', getErrorMessage(err)) }),
+        },
+      ]
+    );
+  }
+
+  return (
+    // On a phone the buttons drop under the item instead of squeezing its name
+    // into a one-word-per-line column: the item keeps at least 220px, and the
+    // buttons wrap onto their own line when there is not room beside it.
+    <View
+      className={`mb-2.5 flex-row flex-wrap items-center justify-between gap-2.5 rounded-xl border bg-white p-4 ${
+        item.is_active ? 'border-gray-200' : 'border-gray-200 opacity-50'
+      }`}
+    >
+      <View className="flex-row items-center gap-3" style={{ flexGrow: 1, flexShrink: 1, flexBasis: 220 }}>
+        <Pressable
+          onPress={handleReplacePhoto}
+          disabled={uploading}
+          className="h-10 w-10 items-center justify-center overflow-hidden rounded-lg bg-gray-100"
+        >
+          {item.image_url ? (
+            <Image source={{ uri: toSafeImageUri(item.image_url)! }} className="h-full w-full" resizeMode="cover" />
+          ) : (
+            <Ionicons name={uploading ? 'hourglass-outline' : 'camera'} size={16} color="#9CA3AF" />
+          )}
+        </Pressable>
+        <View className="flex-1">
+          <View className="flex-row flex-wrap items-center gap-1.5">
+            <Text className="font-semibold text-gray-900">{item.name}</Text>
+            {isPendingSubmission && (
+              <View className="rounded-full bg-amber-100 px-2 py-0.5">
+                <Text className="text-[10px] font-bold capitalize tracking-wide text-amber-700">Pending review</Text>
+              </View>
+            )}
+          </View>
+          {item.category && <Text className="mt-0.5 text-xs text-orange-600">{item.category}</Text>}
+          {item.description && <Text className="mt-0.5 text-xs text-gray-400">{item.description}</Text>}
+          {isPendingSubmission && item.pending_price != null && (
+            <Text className="mt-0.5 text-xs text-gray-400">
+              Submitted at NPR {Number(item.pending_price).toLocaleString()} · {item.pending_stock ?? 0} units
+            </Text>
+          )}
+        </View>
+      </View>
+      <View className="flex-row items-center gap-2" style={{ marginLeft: 'auto' }}>
+        <Pressable
+          onPress={() => updateItem.mutate({ id: item.id, values: { is_active: !item.is_active } })}
+          disabled={updateItem.isPending}
+          className="rounded-lg border border-gray-300 px-3 py-1.5"
+        >
+          <Text className="text-xs font-semibold text-gray-700">
+            {item.is_active ? 'Hide' : isPendingSubmission ? 'Approve' : 'Show'}
+          </Text>
+        </Pressable>
+        <Pressable onPress={confirmRemove} className="rounded-lg bg-red-50 px-3 py-1.5">
+          <Text className="text-xs font-semibold text-red-700">Remove</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+export default function AdminCatalog() {
+  const { data: items, isLoading } = useSupabaseQuery('catalog_products', {
+    orderBy: { column: 'name' },
+  });
+  const insertItem = useSupabaseInsert('catalog_products');
+
+  const [showForm, setShowForm] = useState(false);
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [category, setCategory] = useState('');
+  const [imageUrl, setImageUrl] = useState('');
+  const [uploadingNew, setUploadingNew] = useState(false);
+  const [search, setSearch] = useState('');
+  const [filterCategory, setFilterCategory] = useState<string | null>(null);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const wide = useIsWideWeb();
+
+  const categories = useMemo(() => {
+    const set = new Set<string>();
+    (items ?? []).forEach((item) => item.category && set.add(item.category));
+    return Array.from(set);
+  }, [items]);
+  const categoryScoped = useMemo(
+    () => (filterCategory ? (items ?? []).filter((item) => item.category === filterCategory) : items ?? []),
+    [items, filterCategory]
+  );
+  const filtered = useMemo(() => filterBySearch(categoryScoped, search), [categoryScoped, search]);
+
+  function resetForm() {
+    setName('');
+    setDescription('');
+    setCategory('');
+    setImageUrl('');
+    setShowForm(false);
+  }
+
+  async function handlePickNewImage() {
+    setUploadingNew(true);
+    try {
+      const url = await pickAndUploadCatalogImage();
+      if (url) setImageUrl(url);
+    } catch (err) {
+      showAlert('Could not upload photo', getErrorMessage(err));
+    } finally {
+      setUploadingNew(false);
+    }
+  }
+
+  async function handleAdd() {
+    if (!name.trim()) {
+      showAlert('Add a name', 'Product name is required.');
+      return;
+    }
+    try {
+      await insertItem.mutateAsync({
+        name: name.trim(),
+        description: description.trim() || null,
+        category: category.trim() || null,
+        image_url: imageUrl.trim() || null,
+      });
+      resetForm();
+    } catch (err) {
+      showAlert('Could not add catalog item', getErrorMessage(err));
+    }
+  }
+
+  return (
+    <ScrollView
+      className={wide ? 'flex-1 bg-gray-50 px-8 pt-5' : 'flex-1 bg-gray-50 px-6 pt-4'}
+      contentContainerStyle={{ paddingBottom: 40 }}
+    >
+      <View className="mb-4 flex-row items-center justify-end">
+        <Pressable onPress={() => setShowForm((v) => !v)} className="rounded-lg bg-orange-500 px-4 py-2">
+          <Text className="font-semibold text-white">{showForm ? 'Cancel' : '+ Add'}</Text>
+        </Pressable>
+      </View>
+      <Text className="mb-4 text-sm text-gray-500">
+        Templates only — no price here. Wholesalers and resellers set their own price and stock when they add an item
+        from this catalog to their shop.
+      </Text>
+
+      {showForm && (
+        <ReadableWidth>
+        <View className="mb-4 rounded-xl border border-gray-200 bg-white p-4">
+          <Text className="mb-1 text-sm font-medium text-gray-700">Product name</Text>
+          <TextInput
+            value={name}
+            onChangeText={setName}
+            placeholder="e.g. Samsung Galaxy A54 5G"
+            className="mb-3 rounded-lg border border-gray-300 px-3 py-2 text-sm"
+          />
+          <Text className="mb-1 text-sm font-medium text-gray-700">Description (optional)</Text>
+          <TextInput
+            value={description}
+            onChangeText={setDescription}
+            placeholder="e.g. 8GB/128GB, 5000mAh battery"
+            multiline
+            className="mb-3 rounded-lg border border-gray-300 px-3 py-2 text-sm"
+          />
+          <Text className="mb-1 text-sm font-medium text-gray-700">Category (optional)</Text>
+          <TextInput
+            value={category}
+            onChangeText={setCategory}
+            placeholder="e.g. Mobile Phones"
+            className="mb-3 rounded-lg border border-gray-300 px-3 py-2 text-sm"
+          />
+          <Text className="mb-1 text-sm font-medium text-gray-700">Photo (optional)</Text>
+          <Pressable
+            onPress={handlePickNewImage}
+            disabled={uploadingNew}
+            className="mb-3 h-24 w-24 items-center justify-center overflow-hidden rounded-lg border border-gray-300 bg-gray-50"
+          >
+            {imageUrl ? (
+              <Image source={{ uri: imageUrl }} className="h-full w-full" resizeMode="cover" />
+            ) : (
+              <Ionicons name={uploadingNew ? 'hourglass-outline' : 'camera'} size={22} color="#9CA3AF" />
+            )}
+          </Pressable>
+          <Pressable
+            onPress={handleAdd}
+            disabled={insertItem.isPending}
+            className="items-center rounded-lg bg-orange-500 py-2.5 disabled:opacity-50"
+          >
+            <Text className="text-sm font-semibold text-white">
+              {insertItem.isPending ? 'Adding…' : 'Add to catalog'}
+            </Text>
+          </Pressable>
+        </View>
+        </ReadableWidth>
+      )}
+
+      <View className="mb-4">
+        <ReadableWidth maxWidth={560}>
+          <SearchBar
+            value={search}
+            onChangeText={(text) => {
+              setSearch(text);
+              if (sheetOpen) setSheetOpen(false);
+            }}
+            onOpenFilters={() => setSheetOpen(true)}
+            filterActive={!!filterCategory}
+            placeholder="Search by name or model…"
+          />
+        </ReadableWidth>
+      </View>
+
+      <SearchFilterSheet
+        visible={sheetOpen}
+        category={filterCategory}
+        categories={categories}
+        onSelect={setFilterCategory}
+        onClose={() => setSheetOpen(false)}
+      />
+
+      {isLoading && <Text className="text-gray-500">Loading…</Text>}
+      {!isLoading && (items?.length ?? 0) > 0 && filtered.length === 0 && (
+        <Text className="text-gray-500">No items match your search.</Text>
+      )}
+
+      <WideCardGrid cardWidth={440}>
+        {filtered.map((item) => (
+          <CatalogRow key={item.id} item={item} />
+        ))}
+      </WideCardGrid>
+    </ScrollView>
+  );
+}

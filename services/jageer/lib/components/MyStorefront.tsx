@@ -1,0 +1,452 @@
+// lib/components/MyStorefront.tsx
+import { useEffect, useMemo, useState } from 'react';
+import { View, Text, Pressable, Image, TextInput, Switch } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { router } from 'expo-router';
+import { useAuthStore } from '../hooks/useAuth';
+import { useSupabaseQuery, useSupabaseUpdate } from '../hooks/useSupabase';
+import { useWideGrid } from '../hooks/useWideGrid';
+import { SearchBar } from './SearchBar';
+import { SearchFilterSheet } from './SearchFilterSheet';
+import { ShopOverviewSection } from './ShopOverviewSection';
+import { filterBySearch } from '../utils/search';
+import { decimalInput } from '../utils/number';
+import { showAlert, getErrorMessage } from '../utils/alert';
+import { toSafeImageUri } from '../utils/image';
+import { isOnMarketplace, matchesItemSearch } from '../utils/marketplace';
+import { highlightText } from './finance/Highlight';
+import { LOW_STOCK_THRESHOLD } from '../constants/stock';
+import type { Product, UserRole } from '../../types/database.types';
+
+function stockBadge(item: Product, effectiveAvailable: boolean) {
+  if (!effectiveAvailable) return { label: 'Unavailable', bg: 'bg-gray-500' };
+  if (item.stock_level <= 0) return { label: 'Out of stock', bg: 'bg-red-600' };
+  if (item.stock_level < LOW_STOCK_THRESHOLD) return { label: 'Low stock', bg: 'bg-amber-500/90' };
+  return { label: 'In stock', bg: 'bg-emerald-600/90' };
+}
+
+/** A product's selling price, tap to change it. `compact` is the smaller one for a table row. */
+export function EditablePrice({ item, compact }: { item: Pick<Product, 'id' | 'price'>; compact?: boolean }) {
+  const updateProduct = useSupabaseUpdate('products');
+  const [editing, setEditing] = useState(Number(item.price) <= 0);
+  const [price, setPrice] = useState(Number(item.price) > 0 ? String(item.price) : '');
+  const [saving, setSaving] = useState(false);
+
+  // Re-sync once the save round-trips and the fresh row comes back through
+  // the query - otherwise a second edit would start from the stale value.
+  useEffect(() => {
+    if (!editing) setPrice(Number(item.price) > 0 ? String(item.price) : '');
+  }, [item.price, editing]);
+
+  async function handleSave() {
+    const priceNum = parseFloat(price);
+    if (Number.isNaN(priceNum) || priceNum <= 0) {
+      showAlert('Set a price', 'Enter a valid selling price.');
+      return;
+    }
+    setSaving(true);
+    try {
+      // Pricing an item for the first time is what makes it sellable at all
+      // (see the disabled Available switch below), so treat it as the
+      // seller's intent to go live rather than leaving them to flip a
+      // second switch right after.
+      const wasUnpriced = Number(item.price) <= 0;
+      await updateProduct.mutateAsync({
+        id: item.id,
+        values: wasUnpriced ? { price: priceNum, is_listed: true } : { price: priceNum },
+      });
+      setEditing(false);
+    } catch (err) {
+      showAlert('Could not update price', getErrorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (editing) {
+    return (
+      <View className="flex-row items-center gap-1.5">
+        <TextInput
+          value={price}
+          onChangeText={(v) => setPrice(decimalInput(v))}
+          placeholder="Set price"
+          keyboardType="decimal-pad"
+          autoFocus={Number(item.price) > 0}
+          className={`${compact ? 'w-[68px] text-[12.5px]' : 'w-24 text-sm'} rounded-lg border border-gray-300 px-2 py-1 text-gray-900`}
+        />
+        <Pressable
+          onPress={handleSave}
+          disabled={saving}
+          className="rounded-lg bg-orange-500 px-2.5 py-1.5 disabled:opacity-50"
+        >
+          <Text className="text-xs font-semibold text-white">{saving ? '…' : 'Save'}</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  return (
+    <Pressable onPress={() => setEditing(true)} className="flex-row items-center gap-1.5">
+      <Text className={compact ? 'text-[12.5px] font-medium text-gray-900' : 'text-base font-bold text-gray-900'}>
+        {compact ? Number(item.price).toLocaleString() : `NPR ${Number(item.price).toLocaleString()}`}
+      </Text>
+      <Ionicons name="create-outline" size={compact ? 13 : 15} color="#6B7280" />
+    </Pressable>
+  );
+}
+
+function ProductThumbnail({ item, zoomed }: { item: Product; zoomed?: boolean }) {
+  const [failed, setFailed] = useState(false);
+  const uri = toSafeImageUri(item.image_url);
+
+  if (!uri || failed) {
+    return <Text className="text-3xl">🖥️</Text>;
+  }
+  return (
+    <Image
+      source={{ uri }}
+      className="h-full w-full"
+      resizeMode="cover"
+      onError={() => setFailed(true)}
+      // Eases in a little while the card is hovered (the tile clips it, so it stays inside).
+      style={
+        {
+          transform: [{ scale: zoomed ? 1.06 : 1 }],
+          transitionProperty: 'transform',
+          transitionDuration: '320ms',
+          transitionTimingFunction: 'cubic-bezier(0.2, 0.7, 0.2, 1)',
+        } as object
+      }
+    />
+  );
+}
+
+/** `fill` makes the card take its whole cell instead of the phone layout's
+ * fixed 48% (two to a row) - used by the wide web grid below. */
+function StorefrontCard({
+  item,
+  basePath,
+  fill,
+  showSwitch = true,
+  showStock = true,
+  highlight = '',
+}: {
+  item: Product;
+  basePath: string;
+  fill?: boolean;
+  /** The Available switch. A reseller turns an item on or off in Inventory, not here. */
+  showSwitch?: boolean;
+  /** How many are in stock and what they cost. These are the reseller's own figures, for Inventory; the
+   * Marketplace shows what a customer sees. */
+  showStock?: boolean;
+  /** What was typed in a search: the part of the name and category that matches it is marked. */
+  highlight?: string;
+}) {
+  const updateProduct = useSupabaseUpdate('products');
+  const isAvailable = item.is_listed ?? true;
+  const hasPrice = Number(item.price) > 0;
+  // Can't actually be available to buy without a selling price, no matter
+  // what the switch is set to underneath (e.g. a fresh wholesale purchase
+  // defaults to listed but starts unpriced) - so the switch reflects and
+  // only accepts changes to this effective state, not the raw column.
+  const effectiveAvailable = isAvailable && hasPrice;
+  const outOfStock = item.stock_level <= 0;
+  const badge = stockBadge(item, effectiveAvailable);
+  const detailHref = item.catalog_id ? `${basePath}/catalog/${item.catalog_id}` : null;
+  const purchasePrice = item.purchase_price ?? null;
+
+  async function handleToggleAvailable(next: boolean) {
+    try {
+      await updateProduct.mutateAsync({ id: item.id, values: { is_listed: next } });
+    } catch (err) {
+      showAlert('Could not update availability', getErrorMessage(err));
+    }
+  }
+
+  // Unavailable (paused, or simply unpriced) takes priority over the
+  // out-of-stock look - either way the card stays visible and editable to
+  // the seller, only real customers ever have it filtered out (see
+  // (client)/market.tsx and (reseller)/wholesale.tsx).
+  const faded = !effectiveAvailable || outOfStock;
+  const cardTone = !effectiveAvailable
+    ? 'border-gray-300 bg-gray-50'
+    : outOfStock
+      ? 'border-red-200 bg-red-50'
+      : 'border-gray-200 bg-white';
+
+  // Pointer hover (web only; touch never raises it): the whole card lifts a little with a blue edge and
+  // a soft shadow, the picture eases in, and a faded (unavailable / out of stock) card comes up to full
+  // strength so it can be read. The DOM's mouse events fire for everything inside the card, price box
+  // and switch included; they are web-only, so typed as an object.
+  const [hovered, setHovered] = useState(false);
+  const hoverEvents = { onMouseEnter: () => setHovered(true), onMouseLeave: () => setHovered(false) } as object;
+
+  return (
+    <View
+      {...hoverEvents}
+      className={`mb-4 ${fill ? 'w-full' : 'w-[48%]'} rounded-xl border p-3 ${cardTone} ${faded ? 'opacity-60' : ''}`}
+      style={
+        {
+          borderColor: hovered ? '#60A5FA' : undefined,
+          opacity: hovered ? 1 : undefined,
+          transform: [{ translateY: hovered ? -4 : 0 }],
+          // Always a shadow (a faint one at rest), so it eases between two instead of jumping from none.
+          boxShadow: hovered ? '0 16px 32px rgba(37, 99, 235, 0.16)' : '0 1px 2px rgba(17, 24, 39, 0.05)',
+          transitionProperty: 'transform, box-shadow, border-color, opacity',
+          transitionDuration: '220ms',
+          transitionTimingFunction: 'cubic-bezier(0.2, 0.7, 0.2, 1)',
+        } as object
+      }
+    >
+      <Pressable
+        onPress={() => detailHref && router.push(detailHref)}
+        className="mb-2 aspect-square items-center justify-center overflow-hidden rounded-lg bg-gray-100"
+      >
+        <ProductThumbnail item={item} zoomed={hovered} />
+        <View className={`absolute left-1 top-1 rounded-full px-2 py-0.5 ${badge.bg}`}>
+          <Text className="text-[9px] font-bold capitalize tracking-wide text-white">{badge.label}</Text>
+        </View>
+      </Pressable>
+
+      <Pressable onPress={() => detailHref && router.push(detailHref)}>
+        {item.category && (
+          <Text className="text-[10px] capitalize tracking-wide text-orange-600" numberOfLines={1}>
+            {highlightText(item.category, highlight)}
+          </Text>
+        )}
+        <Text className="mb-1 text-sm font-semibold text-gray-900" numberOfLines={2}>
+          {highlightText(item.name, highlight)}
+        </Text>
+      </Pressable>
+
+      <EditablePrice item={item} />
+
+      {showStock && purchasePrice != null && (
+        <Text className="mt-1 text-[10px] text-gray-500" numberOfLines={1}>
+          Bought at NPR {Number(purchasePrice).toLocaleString()}
+        </Text>
+      )}
+
+      {showStock && (
+        <Text className={`mt-0.5 text-[10px] ${outOfStock ? 'text-red-500' : 'text-gray-400'}`}>
+          {outOfStock ? 'Restock to sell' : `${item.stock_level} in stock`}
+        </Text>
+      )}
+
+      {showSwitch && (
+        <View className="mt-1.5 flex-row items-center justify-between">
+          <Text className="text-[10px] font-medium text-gray-500">Available</Text>
+          <Switch
+            value={effectiveAvailable}
+            onValueChange={handleToggleAvailable}
+            disabled={!hasPrice}
+            style={{ transform: [{ scaleX: 0.85 }, { scaleY: 0.85 }] }}
+            trackColor={{ false: '#D1D5DB', true: '#93c5fd' }}
+            thumbColor={effectiveAvailable ? '#3b82f6' : '#F3F4F6'}
+          />
+        </View>
+      )}
+    </View>
+  );
+}
+
+export function MyStorefront({
+  sellerRole,
+  emptyText,
+  basePath,
+  search: searchFromPage,
+  hideOverview,
+  title,
+  marketplaceOnly,
+}: {
+  sellerRole: UserRole;
+  emptyText: string;
+  basePath: string;
+  /** The page has one search box for everything on it: this is what was typed there, so the storefront
+   * shows no search box of its own. */
+  search?: string;
+  /** Leave out the stock figures (item types, units, stock value) above the products. */
+  hideOverview?: boolean;
+  /** A heading for the products ("Products"), with how many there are and how many need stock, and the
+   * category filter beside it. */
+  title?: string;
+  /** Only what is switched on for the marketplace (products.is_listed), as the Inventory page sets it -
+   * the same switch customers' app goes by. The cards then carry no switch of their own. */
+  marketplaceOnly?: boolean;
+}) {
+  const userId = useAuthStore((state) => state.session?.user.id);
+  const [ownSearch, setSearch] = useState('');
+  const search = searchFromPage ?? ownSearch;
+  const [category, setCategory] = useState<string | null>(null);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+
+  // Wide web shows as many cards per row as fit; a phone (or a phone browser)
+  // keeps the plain two-per-row grid.
+  const { wide: wideGrid, containerProps, cellStyle } = useWideGrid();
+
+  const { data: products, isLoading } = useSupabaseQuery('products', {
+    filters: { seller_id: userId ?? '', seller_role: sellerRole },
+    enabled: !!userId,
+  });
+
+  // This screen is the seller's own view of everything they've stocked, so
+  // it shows every product regardless of is_listed or stock level - turning
+  // Available off never removes anything here, only from the real
+  // customer-facing marketplace query in (client)/market.tsx, which already
+  // filters on is_listed and stock_level independently of this component.
+  // The reseller's Marketplace page asks for `marketplaceOnly` instead: just what customers can see -
+  // switched on in Inventory, in stock and priced (isOnMarketplace, the customers' app's own rule).
+  const visible = useMemo(
+    () => (marketplaceOnly ? (products ?? []).filter(isOnMarketplace) : (products ?? [])),
+    [products, marketplaceOnly]
+  );
+
+  const categories = useMemo(() => {
+    const set = new Set<string>();
+    visible.forEach((p) => p.category && set.add(p.category));
+    return Array.from(set);
+  }, [visible]);
+
+  const filtered = useMemo(() => {
+    // On the Marketplace the search is Inventory's: the name or the category, anywhere in it.
+    let list = marketplaceOnly ? visible.filter((p) => matchesItemSearch(p.name, p.category, search)) : filterBySearch(visible, search);
+    if (category) {
+      list = list.filter((p) => p.category === category);
+    }
+    // The Marketplace reads A to Z; a seller's own stock list keeps its newest first.
+    return [...list].sort((a, b) =>
+      marketplaceOnly
+        ? a.name.trim().localeCompare(b.name.trim(), undefined, { sensitivity: 'base', numeric: true })
+        : new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    );
+  }, [visible, search, category, marketplaceOnly]);
+
+  // Matching item names as you type, so you can jump straight to one instead
+  // of scanning the whole (already-filtered) grid below.
+  const nameSuggestions = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return [];
+    return visible.filter((p) => p.name.toLowerCase().includes(q)).slice(0, 6);
+  }, [visible, search]);
+
+  const outOfStock = visible.filter((p) => p.stock_level <= 0).length;
+  const lowOnStock = visible.filter((p) => p.stock_level > 0 && p.stock_level < LOW_STOCK_THRESHOLD).length;
+  const heading = title ? (
+    <View className="mb-3 flex-row flex-wrap items-center justify-between" style={{ gap: 8 }}>
+      <View style={{ flexShrink: 1 }}>
+        <Text className="text-[18px] font-extrabold leading-[22px] text-gray-900">{title}</Text>
+        {visible.length > 0 && (
+          <Text className="mt-0.5 text-[13px] text-gray-500">
+            {[
+              `${visible.length} ${visible.length === 1 ? 'product' : 'products'}`,
+              lowOnStock > 0 && `${lowOnStock} low on stock`,
+              outOfStock > 0 && `${outOfStock} out of stock`,
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+          </Text>
+        )}
+      </View>
+      {categories.length > 0 && (
+        <Pressable
+          onPress={() => setSheetOpen(true)}
+          accessibilityRole="button"
+          accessibilityLabel="Filter products by category"
+          className="h-10 flex-row items-center rounded-xl border border-gray-300 bg-white px-3.5"
+          style={{ gap: 6 }}
+        >
+          <Ionicons name="options-outline" size={16} color={category ? '#2563EB' : '#374151'} />
+          <Text className="text-[13px] font-semibold" style={{ color: category ? '#2563EB' : '#374151' }}>
+            {category ?? 'Filter'}
+          </Text>
+        </Pressable>
+      )}
+    </View>
+  ) : null;
+
+  if (!isLoading && visible.length === 0) {
+    return (
+      <>
+        {heading}
+        <View className="items-center rounded-2xl border border-dashed border-gray-200 bg-white py-12">
+          <Ionicons name="storefront-outline" size={36} color="#D1D5DB" />
+          <Text className="mt-3 text-sm font-semibold text-gray-700">Nothing live yet</Text>
+          <Text className="mt-1 px-8 text-center text-xs text-gray-400">{emptyText}</Text>
+        </View>
+      </>
+    );
+  }
+
+  function handleSearchChange(text: string) {
+    setSearch(text);
+    setShowSuggestions(true);
+    if (sheetOpen) setSheetOpen(false);
+  }
+
+  function selectSuggestion(name: string) {
+    setSearch(name);
+    setShowSuggestions(false);
+  }
+
+  return (
+    <>
+      {sellerRole === 'reseller' && !hideOverview && <ShopOverviewSection />}
+
+      {heading}
+
+      {searchFromPage === undefined && (
+      <View className="mb-4">
+        <SearchBar
+          value={search}
+          onChangeText={handleSearchChange}
+          onFocus={() => setShowSuggestions(true)}
+          onOpenFilters={() => setSheetOpen(true)}
+          filterActive={!!category}
+          placeholder="Search by name or model…"
+        />
+        {showSuggestions && nameSuggestions.length > 0 && (
+          <View className="mt-1.5 overflow-hidden rounded-xl border border-gray-200 bg-white">
+            {nameSuggestions.map((p, idx) => (
+              <Pressable
+                key={p.id}
+                onPress={() => selectSuggestion(p.name)}
+                className={`flex-row items-center gap-2 px-3 py-2.5 ${idx !== nameSuggestions.length - 1 ? 'border-b border-gray-100' : ''}`}
+              >
+                <Ionicons name="search" size={14} color="#9CA3AF" />
+                <Text className="flex-1 text-sm text-gray-900" numberOfLines={1}>
+                  {p.name}
+                </Text>
+                {!!p.category && <Text className="text-xs text-gray-400">{p.category}</Text>}
+              </Pressable>
+            ))}
+          </View>
+        )}
+      </View>
+      )}
+
+      <SearchFilterSheet
+        visible={sheetOpen}
+        category={category}
+        categories={categories}
+        onSelect={setCategory}
+        onClose={() => setSheetOpen(false)}
+      />
+
+      {isLoading && <Text className="text-gray-500">Loading…</Text>}
+      {!isLoading && filtered.length === 0 && <Text className="text-gray-500">No products match your search.</Text>}
+
+      <View className={wideGrid ? 'flex-row flex-wrap' : 'flex-row flex-wrap justify-between'} {...containerProps}>
+        {filtered.map((item) =>
+          wideGrid ? (
+            <View key={item.id} style={cellStyle}>
+              <StorefrontCard item={item} basePath={basePath} fill showSwitch={!marketplaceOnly} showStock={!marketplaceOnly} highlight={marketplaceOnly ? search : ''} />
+            </View>
+          ) : (
+            <StorefrontCard key={item.id} item={item} basePath={basePath} showSwitch={!marketplaceOnly} showStock={!marketplaceOnly} highlight={marketplaceOnly ? search : ''} />
+          )
+        )}
+      </View>
+    </>
+  );
+}

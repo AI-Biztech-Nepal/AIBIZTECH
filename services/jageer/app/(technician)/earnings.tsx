@@ -1,0 +1,290 @@
+// app/(technician)/earnings.tsx
+import { useMemo } from 'react';
+import { View, Text, ScrollView, Pressable, Platform } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { router } from 'expo-router';
+import { useAuthStore } from '../../lib/hooks/useAuth';
+import { useSupabaseQuery } from '../../lib/hooks/useSupabase';
+import { useWideGrid } from '../../lib/hooks/useWideGrid';
+import { BarChart } from '../../lib/components/BarChart';
+import { formatDuration, formatTimestamp } from '../../lib/utils/duration';
+import type { JobCard } from '../../types/database.types';
+
+// On web, navigating away leaves DOM focus sitting on the button that was
+// just pressed - and since that button's screen gets marked aria-hidden
+// once it's no longer the active route, the browser complains about hidden
+// focus. Blurring before navigating avoids that.
+function blurActiveElement() {
+  if (Platform.OS !== 'web') return;
+  (document.activeElement as HTMLElement | null)?.blur();
+}
+
+function startOfDay(date: Date) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function formatHour(hour: number) {
+  const period = hour < 12 ? 'am' : 'pm';
+  const displayHour = hour % 12 === 0 ? 12 : hour % 12;
+  return `${displayHour}${period}`;
+}
+
+// Distributes a job's worked duration across the hour-of-day buckets it
+// spans, so a job running 2:30-4:15 contributes partial hours to the 2, 3,
+// and 4 o'clock buckets instead of being counted once at its start time.
+function addToHourBuckets(buckets: number[], startedAt: string, completedAt: string) {
+  const end = new Date(completedAt);
+  let cursor = new Date(startedAt);
+  if (end <= cursor) return;
+
+  let guard = 0;
+  while (cursor < end && guard < 500) {
+    guard++;
+    const hour = cursor.getHours();
+    const boundary = new Date(cursor);
+    boundary.setMinutes(0, 0, 0);
+    boundary.setHours(boundary.getHours() + 1);
+    const segmentEnd = end < boundary ? end : boundary;
+    buckets[hour] += (segmentEnd.getTime() - cursor.getTime()) / 3600000;
+    cursor = segmentEnd;
+  }
+}
+
+export type JobCardWithQuote = JobCard & { service_requests: { quoted_price: number | null; issue_type: string } | null };
+
+// A job_card total of 0 means the technician never filled in real costs
+// (defaults to 0 on resolve) - fall back to the request's quoted price
+// rather than showing what looks like an unpaid/zero-value job.
+export function jobCardAmount(c: JobCardWithQuote) {
+  const jobTotal = Number(c.labor_cost) + Number(c.parts_cost);
+  return jobTotal > 0 ? jobTotal : Number(c.service_requests?.quoted_price ?? 0);
+}
+
+export default function TechnicianEarnings() {
+  const userId = useAuthStore((state) => state.session?.user.id);
+  // Only wants to know if this is a wide web screen, for the two-column layout.
+  const { wide } = useWideGrid();
+
+  const { data: jobCards, isLoading } = useSupabaseQuery('job_cards', {
+    filters: userId ? { technician_id: userId } : {},
+    orderBy: { column: 'created_at', ascending: false },
+    columns: '*, service_requests(quoted_price, issue_type)',
+    enabled: !!userId,
+  }) as { data: JobCardWithQuote[] | undefined; isLoading: boolean };
+
+  const stats = useMemo(() => {
+    const now = new Date();
+    const todayStart = startOfDay(now);
+    const weekStart = new Date(todayStart);
+    weekStart.setDate(weekStart.getDate() - 7);
+
+    const completed = (jobCards ?? []).filter((c): c is JobCardWithQuote & { completed_at: string } => !!c.completed_at);
+
+    let today = 0;
+    let weekTotal = 0;
+    let weekJobsDone = 0;
+    let totalHours = 0;
+    let totalEarnings = 0;
+    const hourBuckets = new Array(24).fill(0);
+
+    const payoutHistory = completed.map((c) => {
+      const amount = jobCardAmount(c);
+      const completedDate = new Date(c.completed_at);
+      const durationMs = c.started_at ? completedDate.getTime() - new Date(c.started_at).getTime() : null;
+
+      if (completedDate >= weekStart) {
+        weekTotal += amount;
+        weekJobsDone += 1;
+      }
+      if (completedDate >= todayStart) {
+        today += amount;
+      }
+      totalHours += (durationMs ?? 0) / 3600000;
+      totalEarnings += amount;
+      if (c.started_at) addToHourBuckets(hourBuckets, c.started_at, c.completed_at);
+
+      return {
+        id: c.id,
+        amount,
+        date: completedDate,
+        acceptedAt: c.started_at,
+        completedAt: c.completed_at,
+        durationLabel: durationMs != null ? formatDuration(durationMs) : null,
+      };
+    });
+
+    payoutHistory.sort((a, b) => b.date.getTime() - a.date.getTime());
+
+    const jobsCompleted = completed.length;
+    const avgEarningPerTask = jobsCompleted > 0 ? totalEarnings / jobsCompleted : 0;
+
+    const dailyBuckets: { label: string; value: number }[] = [];
+    for (let i = 6; i >= 0; i--) {
+      const dayStart = new Date(todayStart);
+      dayStart.setDate(dayStart.getDate() - i);
+      const dayEnd = new Date(dayStart);
+      dayEnd.setDate(dayEnd.getDate() + 1);
+      const total = completed.reduce((sum, c) => {
+        const d = new Date(c.completed_at);
+        return d >= dayStart && d < dayEnd ? sum + jobCardAmount(c) : sum;
+      }, 0);
+      dailyBuckets.push({
+        label: i === 0 ? 'Today' : dayStart.toLocaleDateString(undefined, { weekday: 'short' }),
+        value: total,
+      });
+    }
+
+    const hourlyData = hourBuckets.map((value, hour) => ({ label: formatHour(hour), value }));
+
+    return {
+      today,
+      weekTotal,
+      weekJobsDone,
+      jobsCompleted,
+      totalHours,
+      avgEarningPerTask,
+      payoutHistory,
+      dailyBuckets,
+      hourlyData,
+    };
+  }, [jobCards]);
+
+  // Built once so the phone layout (one column) and the wide web layout (the
+  // summary and charts beside the payouts) show exactly the same things.
+  const summarySection = (
+    <>
+      <View className="mb-5 rounded-2xl bg-[#0D9488] p-5">
+        <Text className="text-[12.5px] font-semibold text-white/85">This week</Text>
+        <Text className="mt-1 text-[28px] font-extrabold text-white">NPR {stats.weekTotal.toLocaleString()}</Text>
+        <View className="mt-3.5 flex-row gap-4">
+          <View>
+            <Text className="text-[15px] font-extrabold text-white">NPR {stats.today.toLocaleString()}</Text>
+            <Text className="text-[11px] text-white/80">Today</Text>
+          </View>
+          <View>
+            <Text className="text-[15px] font-extrabold text-white">{stats.weekJobsDone}</Text>
+            <Text className="text-[11px] text-white/80">Jobs done</Text>
+          </View>
+        </View>
+      </View>
+
+      <View className="mb-6 flex-row gap-2.5">
+        <View className="flex-1 rounded-xl border border-gray-200 bg-white p-3.5">
+          <Text
+            className="text-lg font-extrabold text-gray-900"
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.6}
+          >
+            {stats.jobsCompleted}
+          </Text>
+          <Text className="mt-0.5 text-[11px] text-gray-500">Tasks completed</Text>
+        </View>
+        <View className="flex-1 rounded-xl border border-gray-200 bg-white p-3.5">
+          <Text
+            className="text-lg font-extrabold text-gray-900"
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.6}
+          >
+            {stats.totalHours.toFixed(1)}h
+          </Text>
+          <Text className="mt-0.5 text-[11px] text-gray-500">Work hours</Text>
+        </View>
+        <View className="flex-1 rounded-xl border border-gray-200 bg-white p-3.5">
+          <Text
+            className="text-lg font-extrabold text-gray-900"
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.6}
+          >
+            {Math.round(stats.avgEarningPerTask).toLocaleString()}
+          </Text>
+          <Text className="mt-0.5 text-[11px] text-gray-500">NPR avg / task</Text>
+        </View>
+      </View>
+
+      <Text className="mb-3 text-[15px] font-bold text-gray-900">Daily earnings (last 7 days)</Text>
+      <View className="mb-6 rounded-2xl border border-gray-200 bg-white p-4">
+        <BarChart data={stats.dailyBuckets} formatValue={(v) => `NPR ${Math.round(v).toLocaleString()}`} />
+      </View>
+
+      <Text className="mb-1 text-[15px] font-bold text-gray-900">Work pattern by hour of day</Text>
+      <Text className="mb-3 text-xs text-gray-400">Hours worked in each hour of the day, across all completed jobs</Text>
+      <View className="mb-6 rounded-2xl border border-gray-200 bg-white p-4">
+        <BarChart
+          data={stats.hourlyData}
+          formatValue={(v) => `${v.toFixed(1)}h worked`}
+          formatLabel={(label, i) => (i % 6 === 0 ? label : null)}
+        />
+      </View>
+    </>
+  );
+
+  const payoutsSection = (
+    <>
+      <View className="mb-3 flex-row items-center justify-between">
+        <Text className="text-[15px] font-bold text-gray-900">Recent payouts</Text>
+        <Pressable
+          onPress={() => {
+            blurActiveElement();
+            router.push('/(technician)/statement');
+          }}
+          className="flex-row items-center gap-1"
+        >
+          <Text className="text-[12.5px] font-semibold text-[#0D9488]">Full statement</Text>
+          <Ionicons name="chevron-forward" size={13} color="#0D9488" />
+        </Pressable>
+      </View>
+
+      {isLoading && <Text className="text-gray-500">Loading…</Text>}
+      {!isLoading && stats.payoutHistory.length === 0 && (
+        <Text className="text-gray-500">Completed jobs will show up here.</Text>
+      )}
+
+      {stats.payoutHistory.map((item) => (
+        <View
+          key={item.id}
+          className="mb-2.5 flex-row items-center justify-between rounded-xl border border-gray-200 bg-white px-4 py-3.5"
+        >
+          <View className="flex-1 pr-3">
+            {item.acceptedAt && (
+              <Text className="text-[10.5px] text-gray-500">
+                <Text className="font-semibold text-gray-600">Accepted at: </Text>
+                {formatTimestamp(item.acceptedAt)}
+              </Text>
+            )}
+            <Text className="mt-0.5 text-[10.5px] text-gray-500">
+              <Text className="font-semibold text-gray-600">Completed at: </Text>
+              {formatTimestamp(item.completedAt)}
+            </Text>
+            {item.durationLabel != null && (
+              <Text className="mt-0.5 text-[10.5px] font-semibold text-gray-700">
+                Time elapsed: {item.durationLabel}
+              </Text>
+            )}
+          </View>
+          <Text className="text-[13.5px] font-extrabold text-[#0D9488]">NPR {item.amount.toLocaleString()}</Text>
+        </View>
+      ))}
+    </>
+  );
+
+  return (
+    <ScrollView className={wide ? 'flex-1 bg-gray-50 px-8 pt-5' : 'flex-1 bg-gray-50 px-6 pt-4'} contentContainerStyle={{ paddingBottom: 40 }}>
+      {wide ? (
+        <View className="flex-row items-start" style={{ gap: 24 }}>
+          <View style={{ flex: 3, minWidth: 0 }}>{summarySection}</View>
+          <View style={{ flex: 2, minWidth: 0 }}>{payoutsSection}</View>
+        </View>
+      ) : (
+        <>
+          {summarySection}
+          {payoutsSection}
+        </>
+      )}
+    </ScrollView>
+  );
+}

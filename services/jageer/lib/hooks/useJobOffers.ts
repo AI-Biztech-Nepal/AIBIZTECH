@@ -1,0 +1,119 @@
+// lib/hooks/useJobOffers.ts
+import { useEffect } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { supabase } from '../supabase';
+import { useSupabaseQuery, subscribeToTable } from './useSupabase';
+
+/** Jobs currently offered to this technician (status 'assigned'), oldest
+ * first. Refreshes the moment a reseller offers or withdraws a job via
+ * realtime, with a slow poll as a safety net in case the live connection
+ * drops. */
+export function useJobOffers(technicianId: string | undefined) {
+  const queryClient = useQueryClient();
+  const { data } = useSupabaseQuery('service_requests', {
+    filters: technicianId ? { technician_id: technicianId, status: 'assigned' } : {},
+    orderBy: { column: 'created_at', ascending: true },
+    enabled: !!technicianId,
+    queryOptions: { refetchInterval: 20_000 },
+  });
+
+  useEffect(() => {
+    if (!technicianId) return;
+    return subscribeToTable(
+      'service_requests',
+      () => queryClient.invalidateQueries({ queryKey: ['service_requests'] }),
+      `technician_id=eq.${technicianId}`
+    );
+  }, [technicianId, queryClient]);
+
+  return data ?? [];
+}
+
+/** Work the technician's employer has opened to the whole team - nobody
+ * has taken it yet, and the first to accept gets it. RLS only lets an
+ * accepted employee see their own employer's open jobs (migration 0076),
+ * so this needs no filter of its own beyond "open and unclaimed". */
+export function useOpenTeamJobs(technicianId: string | undefined) {
+  const queryClient = useQueryClient();
+  const { data } = useSupabaseQuery('service_requests', {
+    filters: { open_to_team: true },
+    orderBy: { column: 'created_at', ascending: true },
+    enabled: !!technicianId,
+    queryOptions: { refetchInterval: 20_000 },
+  });
+
+  useEffect(() => {
+    if (!technicianId) return;
+    return subscribeToTable('service_requests', () =>
+      queryClient.invalidateQueries({ queryKey: ['service_requests'] })
+    );
+  }, [technicianId, queryClient]);
+
+  return (data ?? []).filter((job) => !job.technician_id);
+}
+
+/** All the employer's work with nobody on it that is ready to be done, for the Worksheet: what the owner could assign,
+ * plus anything in Outsource Technician. Oldest first. RLS only lets an accepted employee read this (migration 0109). */
+export function useUnassignedTeamJobs(resellerId: string | undefined) {
+  const queryClient = useQueryClient();
+  const { data } = useSupabaseQuery('service_requests', {
+    filters: resellerId ? { reseller_id: resellerId } : {},
+    orderBy: { column: 'created_at', ascending: true },
+    enabled: !!resellerId,
+    queryOptions: { refetchInterval: 20_000 },
+  });
+
+  useEffect(() => {
+    if (!resellerId) return;
+    return subscribeToTable('service_requests', () =>
+      queryClient.invalidateQueries({ queryKey: ['service_requests'] })
+    );
+  }, [resellerId, queryClient]);
+
+  return (data ?? []).filter(
+    (job) =>
+      !job.technician_id &&
+      (job.status === 'approved' ||
+        (job.status === 'pending' && job.origin === 'reseller') ||
+        (job.open_to_team && job.status !== 'resolved' && job.status !== 'cancelled'))
+  );
+}
+
+/** Take an open job. First come, first served - the server locks the row,
+ * so a second person tapping at the same moment is told it is gone
+ * (migration 0076). */
+export async function claimOpenJob(requestId: string) {
+  const { error } = await (supabase as any).rpc('claim_open_job', { p_request_id: requestId });
+  if (error) throw error;
+}
+
+/** Accept starts the job and opens its job card; reject hands it back to the
+ * reseller. Runs as one server-side transaction (migration 0071). */
+export async function respondToJobOffer(requestId: string, accept: boolean) {
+  const { error } = await (supabase as any).rpc('technician_respond_to_job', {
+    p_request_id: requestId,
+    p_accept: accept,
+  });
+  if (error) throw error;
+}
+
+/** Reseller takes back an offer the technician hasn't answered yet - the job
+ * returns to the stage it was in before it was offered (migration 0077). */
+export async function withdrawJobOffer(requestId: string) {
+  const { error } = await (supabase as any).rpc('withdraw_job_offer', { p_request_id: requestId });
+  if (error) throw error;
+}
+
+/** Reseller claims an unclaimed app request - fails cleanly if another
+ * reseller got there first (migration 0077). */
+export async function claimServiceRequest(requestId: string) {
+  const { error } = await (supabase as any).rpc('claim_service_request', { p_request_id: requestId });
+  if (error) throw error;
+}
+
+/** Undo a mistaken "complete" while the job is still unpaid - also takes back
+ * the reward points completion gave out (migration 0071). */
+export async function reopenCompletedJob(requestId: string) {
+  const { error } = await (supabase as any).rpc('reopen_completed_job', { p_request_id: requestId });
+  if (error) throw error;
+}

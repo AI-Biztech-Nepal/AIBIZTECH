@@ -1,0 +1,251 @@
+// app/(client)/market.tsx
+import { useMemo, useState } from 'react';
+import { View, Text, Pressable, ScrollView, Image } from 'react-native';
+import { router } from 'expo-router';
+import { useSupabaseQuery } from '../../lib/hooks/useSupabase';
+import { useCartStore } from '../../lib/hooks/useCart';
+import { useWideGrid } from '../../lib/hooks/useWideGrid';
+import { SearchBar } from '../../lib/components/SearchBar';
+import { SearchFilterSheet } from '../../lib/components/SearchFilterSheet';
+import { CartBar } from '../../lib/components/CartBar';
+import { showAlert } from '../../lib/utils/alert';
+import { filterBySearch } from '../../lib/utils/search';
+import { toSafeImageUri } from '../../lib/utils/image';
+import type { Product } from '../../types/database.types';
+
+/** `fill` makes the card take its whole cell instead of the phone layout's
+ * fixed 48% (two to a row) - used by the wide web grid below.
+ *
+ * Every card is the same size and shape whatever it holds: the picture is a square, the category and
+ * the two-line name each have their line reserved (so a missing category or a short name leaves a gap
+ * rather than pulling the rest up), and the card stretches to the tallest in its row with the Add to
+ * Cart button always on its bottom edge. */
+function ProductCard({ item, onAdd, fill }: { item: Product; onAdd: (product: Product) => void; fill?: boolean }) {
+  // Pointer hover (web only; touch never raises it): the whole card lifts a little with a blue edge and
+  // a soft shadow, the picture eases in, and Add to Cart darkens. The DOM's mouse events fire for
+  // everything inside the card (a Pressable's own hover would not, with Pressables nested in it);
+  // they are web-only, so typed as an object.
+  const [hovered, setHovered] = useState(false);
+  const [addHovered, setAddHovered] = useState(false);
+  const hoverEvents = {
+    onMouseEnter: () => setHovered(true),
+    onMouseLeave: () => {
+      setHovered(false);
+      setAddHovered(false);
+    },
+  } as object;
+  const ease = 'cubic-bezier(0.2, 0.7, 0.2, 1)';
+
+  return (
+    <View
+      {...hoverEvents}
+      className={`mb-4 ${fill ? 'w-full' : 'w-[48%]'} rounded-xl border border-gray-200 bg-white p-3`}
+      style={
+        {
+          // `flex: 1` fills the cell (wide grid); on a phone the card is already stretched to its row.
+          ...(fill ? { flex: 1 } : null),
+          borderColor: hovered ? '#60A5FA' : '#E5E7EB',
+          transform: [{ translateY: hovered ? -4 : 0 }],
+          // Always a shadow (a faint one at rest), so it eases between two instead of jumping from none.
+          boxShadow: hovered ? '0 16px 32px rgba(37, 99, 235, 0.16)' : '0 1px 2px rgba(17, 24, 39, 0.05)',
+          transitionProperty: 'transform, box-shadow, border-color',
+          transitionDuration: '220ms',
+          transitionTimingFunction: ease,
+        } as object
+      }
+    >
+      {/* flexGrow: this block takes the card's spare height, which keeps Add to Cart on the bottom edge. */}
+      <Pressable style={{ flexGrow: 1 }} onPress={() => router.push(`/(client)/product/${item.id}`)}>
+        <View
+          className="mb-2 items-center justify-center overflow-hidden rounded-lg bg-gray-100"
+          style={{ width: '100%', aspectRatio: 1 }}
+        >
+          {item.image_url ? (
+            <Image
+              source={{ uri: toSafeImageUri(item.image_url)! }}
+              className="h-full w-full"
+              resizeMode="cover"
+              style={
+                {
+                  transform: [{ scale: hovered ? 1.06 : 1 }],
+                  transitionProperty: 'transform',
+                  transitionDuration: '320ms',
+                  transitionTimingFunction: ease,
+                } as object
+              }
+            />
+          ) : (
+            <Text className="text-3xl">🖥️</Text>
+          )}
+        </View>
+
+        <Text
+          className="mb-0.5 text-[11px] capitalize tracking-wide text-orange-600"
+          numberOfLines={1}
+          style={{ minHeight: 16 }}
+        >
+          {item.category ?? ''}
+        </Text>
+        <Text
+          className="mb-1 text-sm font-semibold text-gray-900"
+          numberOfLines={2}
+          style={{ minHeight: 40, lineHeight: 20 }}
+        >
+          {item.name}
+        </Text>
+        <Text className="text-base font-bold text-gray-900" numberOfLines={1}>
+          NPR {Number(item.price).toLocaleString()}
+        </Text>
+        <Text className="mb-2 mt-0.5 text-xs text-gray-400" numberOfLines={1}>
+          {item.stock_level} in stock
+        </Text>
+      </Pressable>
+
+      <Pressable
+        onPress={() => onAdd(item)}
+        onHoverIn={() => setAddHovered(true)}
+        onHoverOut={() => setAddHovered(false)}
+        className="items-center rounded-lg bg-orange-500 py-2"
+        style={
+          {
+            backgroundColor: addHovered ? '#1D4ED8' : hovered ? '#2563EB' : undefined,
+            transitionProperty: 'background-color',
+            transitionDuration: '160ms',
+          } as object
+        }
+      >
+        <Text className="text-xs font-semibold text-white">Add to Cart</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+export default function ClientMarket() {
+  const [search, setSearch] = useState('');
+  const [category, setCategory] = useState<string | null>(null);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const { wide, containerProps, cellStyle } = useWideGrid();
+
+  const cartItems = useCartStore((state) => state.items);
+  const cartSellerId = useCartStore((state) => state.sellerId);
+  const addToCart = useCartStore((state) => state.addItem);
+  const clearCart = useCartStore((state) => state.clearCart);
+
+  const { data: products, isLoading } = useSupabaseQuery('products', {
+    filters: { seller_role: 'reseller' },
+  });
+
+  const inStockProducts = useMemo(
+    () => (products ?? []).filter((p) => p.stock_level > 0 && p.is_listed !== false && Number(p.price) > 0),
+    [products]
+  );
+
+  const categories = useMemo(() => {
+    const set = new Set<string>();
+    inStockProducts.forEach((p) => p.category && set.add(p.category));
+    return Array.from(set);
+  }, [inStockProducts]);
+
+  const filtered = useMemo(() => {
+    let list = filterBySearch(inStockProducts, search);
+    if (category) {
+      list = list.filter((p) => p.category === category);
+    }
+    return [...list].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  }, [inStockProducts, search, category]);
+
+  function handleAdd(product: Product) {
+    const added = addToCart(product);
+    if (!added) {
+      showAlert(
+        'Cart has items from another seller',
+        'Your cart can only hold products from one seller at a time. Clear it and add this item instead?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Clear cart',
+            style: 'destructive',
+            onPress: () => {
+              clearCart();
+              addToCart(product);
+            },
+          },
+        ]
+      );
+    }
+  }
+
+  function handleSearchChange(text: string) {
+    setSearch(text);
+    if (sheetOpen) setSheetOpen(false);
+  }
+
+  const cartTotal = cartItems.reduce((sum, i) => sum + Number(i.product.price) * i.quantity, 0);
+  const cartCount = cartItems.reduce((sum, i) => sum + i.quantity, 0);
+
+  return (
+    <View className="flex-1">
+      <ScrollView
+        className="flex-1 bg-gray-50 px-6 pt-4"
+        contentContainerStyle={{ paddingBottom: cartCount > 0 ? 100 : 40 }}
+        showsVerticalScrollIndicator={false}
+      >
+        {cartCount > 0 && (
+          <View className="mb-4 flex-row items-center justify-end">
+            <Pressable
+              onPress={() => router.push('/(client)/checkout')}
+              className="rounded-full bg-orange-500 px-4 py-2"
+            >
+              <Text className="text-sm font-semibold text-white">Cart ({cartCount})</Text>
+            </Pressable>
+          </View>
+        )}
+
+        <View className="mb-4">
+          <SearchBar
+            value={search}
+            onChangeText={handleSearchChange}
+            onOpenFilters={() => setSheetOpen(true)}
+            filterActive={!!category}
+            placeholder="Search by name or model…"
+          />
+        </View>
+
+        <SearchFilterSheet
+          visible={sheetOpen}
+          category={category}
+          categories={categories}
+          onSelect={setCategory}
+          onClose={() => setSheetOpen(false)}
+        />
+
+        {isLoading && <Text className="text-gray-500">Loading…</Text>}
+        {!isLoading && filtered.length === 0 && <Text className="text-gray-500">No products match your search.</Text>}
+        {cartSellerId && (
+          <Text className="mb-2 text-xs text-gray-400">
+            Cart is limited to one seller at a time — clear it to buy from someone else.
+          </Text>
+        )}
+
+        <View className={wide ? 'flex-row flex-wrap' : 'flex-row flex-wrap justify-between'} {...containerProps}>
+          {filtered.map((item) =>
+            wide ? (
+              <View key={item.id} style={cellStyle}>
+                <ProductCard item={item} onAdd={handleAdd} fill />
+              </View>
+            ) : (
+              <ProductCard key={item.id} item={item} onAdd={handleAdd} />
+            )
+          )}
+        </View>
+      </ScrollView>
+
+      <CartBar
+        visible={cartCount > 0}
+        itemCount={cartCount}
+        total={cartTotal}
+        onCheckout={() => router.push('/(client)/checkout')}
+      />
+    </View>
+  );
+}

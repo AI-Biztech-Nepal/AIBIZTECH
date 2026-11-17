@@ -1,0 +1,111 @@
+// lib/components/OrderCard.tsx
+import { ticketLabel } from '../utils/ticket';
+import { View, Text, Pressable } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { router } from 'expo-router';
+import { useSupabaseQuery, useSupabaseRow } from '../hooks/useSupabase';
+import { STATUS_BADGE_STYLE } from '../utils/orderStatus';
+import { PersonAvatar } from './PersonAvatar';
+import type { Order, Product } from '../../types/database.types';
+
+// The card itself only navigates to the order's task page - just like a
+// service request's "View & Accept" - so confirming/completing an order
+// always happens on that page, never from a list-row button.
+function cardActionLabel(order: Order, isOwner: boolean): string {
+  if (isOwner && order.status === 'pending') return 'View & Accept';
+  if (isOwner && order.status === 'confirmed') return 'View & Complete';
+  return 'View Order';
+}
+
+export function OrderCard({
+  order,
+  productMap,
+  viewerId,
+  basePath,
+  roleLabel,
+}: {
+  order: Order;
+  productMap: Map<string, Product>;
+  viewerId: string;
+  basePath: string;
+  roleLabel?: string;
+}) {
+  const isOwner = order.seller_id === viewerId;
+  const counterpartyId = order.buyer_id === viewerId ? order.seller_id : order.buyer_id;
+  const counterpartyRole = order.buyer_id === viewerId ? 'Sold by' : 'Ordered by';
+  const { data: counterparty } = useSupabaseRow('profiles', counterpartyId);
+  const { data: orderItems } = useSupabaseQuery('order_items', {
+    filters: { order_id: order.id },
+  });
+
+  const badgeClass = STATUS_BADGE_STYLE[order.status];
+
+  // The buyer's contact number stays hidden until the seller has actually
+  // accepted (confirmed) the order - same privacy rule as a service request
+  // waiting in Incoming. Address is shown either way since the seller needs
+  // it to decide whether they can even fulfil the order.
+  const isAccepted = order.status !== 'pending';
+  const shipping = order.shipping_address as { address?: string; city?: string } | null;
+  const shippingAddress = shipping ? [shipping.address, shipping.city].filter(Boolean).join(', ') : null;
+
+  return (
+    <View className="mb-3 rounded-xl border border-gray-200 bg-white">
+      <Pressable onPress={() => router.push(`${basePath}/order/${order.id}`)} className="p-4">
+        <View className="mb-3 flex-row items-start justify-between gap-2">
+          <View className="flex-1 flex-row items-center gap-2.5">
+            <View className="items-center gap-1.5">
+              <View className="items-center justify-center rounded-2xl bg-emerald-500" style={{ width: 44, height: 44 }}>
+                <Ionicons name="gift" size={20} color="white" />
+              </View>
+              <PersonAvatar name={counterparty?.full_name} photoUrl={counterparty?.avatar_url} size={32} />
+            </View>
+            <View className="flex-1">
+              {roleLabel && (
+                <Text className="text-[10px] font-bold capitalize tracking-wide text-gray-400">{roleLabel}</Text>
+              )}
+              <Text className="text-xs text-gray-400">
+                {ticketLabel(order.ticket_no) ? `Token ${ticketLabel(order.ticket_no)}` : `Order #${order.id.slice(0, 8)}`}
+              </Text>
+              <Text className="text-xs font-semibold text-gray-700" numberOfLines={1}>
+                {counterpartyRole} {counterparty?.full_name ?? '…'}
+              </Text>
+              {shippingAddress && (
+                <Text className="text-xs text-gray-500" numberOfLines={1}>
+                  {shippingAddress}
+                </Text>
+              )}
+              {isAccepted && counterparty?.phone && <Text className="text-xs text-gray-500">{counterparty.phone}</Text>}
+            </View>
+          </View>
+          <View className={`rounded-full px-2.5 py-1 ${badgeClass}`}>
+            <Text className={`text-xs font-semibold capitalize ${badgeClass}`}>{order.status}</Text>
+          </View>
+        </View>
+
+        {orderItems?.map((item) => (
+          <View key={item.id} className="mb-1 flex-row justify-between">
+            <Text className="mr-2 flex-1 text-sm text-gray-700" numberOfLines={1}>
+              {productMap.get(item.product_id)?.name ?? 'Product'} × {item.quantity}
+            </Text>
+            <Text className="text-sm text-gray-700">
+              NPR {(Number(item.unit_price) * item.quantity).toLocaleString()}
+            </Text>
+          </View>
+        ))}
+
+        <View className="mt-2 flex-row justify-between border-t border-gray-100 pt-2">
+          <Text className="font-semibold text-gray-900">Total</Text>
+          <Text className="font-semibold text-gray-900">NPR {Number(order.total_amount).toLocaleString()}</Text>
+        </View>
+      </Pressable>
+
+      <Pressable
+        onPress={() => router.push(`${basePath}/order/${order.id}`)}
+        className="mx-4 mb-4 flex-row items-center justify-center gap-1.5 rounded-xl bg-orange-500 py-2.5"
+      >
+        <Ionicons name="checkmark-circle" size={16} color="white" />
+        <Text className="text-sm font-semibold text-white">{cardActionLabel(order, isOwner)}</Text>
+      </Pressable>
+    </View>
+  );
+}

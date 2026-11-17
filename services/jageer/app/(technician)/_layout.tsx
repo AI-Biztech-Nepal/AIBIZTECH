@@ -1,0 +1,151 @@
+// app/(technician)/_layout.tsx
+import { Platform, View, useWindowDimensions } from 'react-native';
+import { Tabs } from 'expo-router';
+import { RoleGuard } from '../../lib/components/RoleGuard';
+import { TabIcon } from '../../lib/components/TabIcon';
+import { PortalHeaderBar } from '../../lib/components/PortalHeaderBar';
+import { ROLE_ACCENT } from '../../lib/constants/roleColors';
+import { WebSidebarShell, WEB_SIDEBAR_MIN_WIDTH, type WebNavItem } from '../../lib/components/web/WebSidebarShell';
+import { IncomingJobOffer } from '../../lib/components/IncomingJobOffer';
+import { TechnicianHoldNotice } from '../../lib/components/HoldNotice';
+import { TechnicianLeaveNotice } from '../../lib/components/LeaveRequestNotice';
+import { NotificationPopup } from '../../lib/components/NotificationPopup';
+import { useAuthStore } from '../../lib/hooks/useAuth';
+import { useMyEmployment, useMyStaffRole } from '../../lib/hooks/useTechnicianEmployment';
+import { useShareLiveLocation } from '../../lib/hooks/useShareLiveLocation';
+
+// An employee also gets the Worksheet (their employer's work, to choose from), and a supervisor the Work Hub (to hand it out).
+function navItems(isStaff: boolean, isSupervisor: boolean): WebNavItem[] {
+  return [
+    { href: '/(technician)/dashboard', label: 'Dashboard', icon: 'home' },
+    { href: '/(technician)/jobs', label: 'My Jobs', icon: 'briefcase' },
+    ...(isStaff ? [{ href: '/(technician)/worksheet', label: 'Worksheet', icon: 'clipboard' } as WebNavItem] : []),
+    ...(isSupervisor ? [{ href: '/(technician)/workhub', label: 'Work Hub', icon: 'grid' } as WebNavItem] : []),
+    { href: '/(technician)/earnings', label: 'Earnings', icon: 'wallet' },
+  ];
+}
+
+// Every technician page uses the wider content column (see WebSidebarShell's
+// `wideRoutes`), so there is no empty strip beside them on a big screen.
+const WIDE_ROUTES = [
+  '/dashboard',
+  '/jobs',
+  '/earnings',
+  '/worksheet',
+  '/workhub',
+  '/profile',
+  '/rewards',
+  '/statement',
+  '/job',
+  '/employment',
+  '/inbox',
+  '/notifications',
+];
+
+export default function TechnicianLayout() {
+  const { width } = useWindowDimensions();
+  const userId = useAuthStore((state) => state.session?.user.id);
+  const isSupervisor = useMyStaffRole(userId) === 'supervisor';
+  const isStaff = useMyEmployment(userId).current?.status === 'accepted';
+  useShareLiveLocation(userId);
+  const isWideWeb = Platform.OS === 'web' && width >= WEB_SIDEBAR_MIN_WIDTH;
+  const tabs = (
+    <Tabs
+      backBehavior="history"
+      screenOptions={{
+        // The notification bell is on every technician page, not just the
+        // dashboard; the Inbox it opens has its own header (no bell).
+        header: ({ options }) => <PortalHeaderBar title={options.title} showInbox />,
+        tabBarActiveTintColor: ROLE_ACCENT.technician,
+        ...(isWideWeb ? { tabBarStyle: { display: 'none' } } : null),
+      }}
+    >
+      <Tabs.Screen
+        name="dashboard"
+        options={{
+          title: 'Dashboard',
+          // Only the dashboard's own header gets the availability toggle -
+          // every other screen uses the header from screenOptions above.
+          header: () => <PortalHeaderBar title="Dashboard" showAvailabilityToggle showInbox />,
+          tabBarIcon: ({ color, focused }) => <TabIcon name="home" color={color} focused={focused} />,
+        }}
+      />
+      <Tabs.Screen
+        name="jobs"
+        options={{ title: 'My Jobs', tabBarIcon: ({ color, focused }) => <TabIcon name="briefcase" color={color} focused={focused} /> }}
+      />
+      <Tabs.Screen
+        name="worksheet"
+        options={{
+          title: 'Worksheet',
+          // Only for someone on a team; the screen says as much if it's reached directly.
+          href: isStaff ? undefined : null,
+          tabBarIcon: ({ color, focused }) => <TabIcon name="clipboard" color={color} focused={focused} />,
+        }}
+      />
+      <Tabs.Screen
+        name="workhub"
+        options={{
+          title: 'Work Hub',
+          tabBarLabel: 'Work',
+          // Hidden unless their employer made them a supervisor - the
+          // screen itself says as much if it's reached directly.
+          href: isSupervisor ? undefined : null,
+          tabBarIcon: ({ color, focused }) => <TabIcon name="grid" color={color} focused={focused} />,
+        }}
+      />
+      <Tabs.Screen
+        name="earnings"
+        options={{ title: 'Earnings', tabBarIcon: ({ color, focused }) => <TabIcon name="wallet" color={color} focused={focused} /> }}
+      />
+      <Tabs.Screen name="profile" options={{ href: null, title: 'Profile' }} />
+      <Tabs.Screen name="rewards" options={{ href: null, title: 'Rewards' }} />
+      <Tabs.Screen name="statement" options={{ href: null, title: 'Statement' }} />
+      <Tabs.Screen name="job/[id]" options={{ href: null, title: 'Job Card' }} />
+      <Tabs.Screen name="employment" options={{ href: null, title: 'Employment' }} />
+      {/* Everything addressed to the technician. Opened from "See all" in the
+          Inbox's Updates, so it goes back there. */}
+      <Tabs.Screen
+        name="notifications"
+        options={{
+          href: null,
+          title: 'Notifications',
+          header: () => <PortalHeaderBar title="Notifications" backTo="/(technician)/inbox" />,
+        }}
+      />
+      {/* The old Home tab: offers to answer, open team work, employment.
+          Reached from the Inbox button in the dashboard's header. */}
+      <Tabs.Screen
+        name="inbox"
+        options={{
+          href: null,
+          title: 'Inbox',
+          header: () => <PortalHeaderBar title="Inbox" backTo="/(technician)/dashboard" />,
+        }}
+      />
+      {/* "available" self-assign screen removed: resellers now assign
+          technicians directly (see app/(reseller)/request/[id].tsx). Delete
+          app/(technician)/available.tsx if you copied it in earlier. */}
+    </Tabs>
+  );
+
+  return (
+    <RoleGuard allow={['technician']}>
+      {/* The job-request overlay sits outside the tabs so it rings over
+          whichever tab (or the sidebar) is open when an offer comes in. */}
+      <View style={{ flex: 1 }}>
+        {isWideWeb ? (
+          <WebSidebarShell items={navItems(isStaff, isSupervisor)} roleLabel="Technician" wideRoutes={WIDE_ROUTES}>
+            {tabs}
+          </WebSidebarShell>
+        ) : (
+          tabs
+        )}
+        <TechnicianHoldNotice technicianId={userId} />
+        <TechnicianLeaveNotice technicianId={userId} />
+        <NotificationPopup userId={userId} portal="technician" />
+        <IncomingJobOffer technicianId={userId} />
+      </View>
+    </RoleGuard>
+  );
+}
