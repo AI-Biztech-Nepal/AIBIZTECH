@@ -35,8 +35,8 @@ const Static = ({ label, value }) => (
 // f: what useSaleForm returns. booking: the booking being turned into this sale. sale: the recorded sale this is the form
 // of (then everything can be edited: the buyer's details change the customer's record, the witness and the exchange change
 // the sale and, for the exchange, the old vehicle's Inventory entry). readOnly: nothing can be changed. attempted: Save was
-// pressed, so the fields still missing are marked. compact: leave out the Payment, Exchange and Extra expenses sections
-// (the new Sale Vehicle form; a recorded sale still shows them).
+// pressed, so the fields still missing are marked. compact: leave out the Payment, Exchange and Extra expenses sections and
+// the Vehicle pass date (the new Sale Vehicle form; a recorded sale still shows them).
 export default function SaleFormBody({ f, booking = null, sale = null, readOnly = false, attempted = false, compact = false }) {
   const { form, set } = f;
   const existing = !!sale;
@@ -88,11 +88,11 @@ export default function SaleFormBody({ f, booking = null, sale = null, readOnly 
             {!readOnly && <p className="mt-1 text-xs text-slate-500">{existing || form.booking ? "Pick a customer, or press the person button to enter a new buyer" : "Pick a customer, or press the person button to enter a new buyer and the sale-deed witness"}</p>}
             {bad("sv-customer") && <p className="mt-1 text-xs font-semibold text-red-700">A booking needs a customer: pick one, or enter a new one</p>}
           </div>
-          <div className={form.booking ? "sm:col-span-2" : ""}>
+          <div className={compact ? "sm:col-span-2" : ""}>
             <span className={LBL}>Date (BS)</span>
             <BSDatePicker value={form.sale_date} onChange={val => set({ sale_date: val })} data-testid="sale-date-input" triggerClassName={`${DATE_BOX} ${OK}`} placeholder={readOnly ? "—" : "Today"} />
           </div>
-          {!form.booking && (
+          {!compact && (
             <div>
               <span className={LBL}>Vehicle pass date (BS)</span>
               <BSDatePicker value={form.ownership_transfer_date} onChange={val => set({ ownership_transfer_date: val })} data-testid="vehicle-pass-date-input" triggerClassName={`${DATE_BOX} ${OK}`} placeholder={readOnly ? "—" : undefined} />
