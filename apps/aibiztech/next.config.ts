@@ -10,16 +10,11 @@ const config: NextConfig = {
     { source: '/finance/_expo/:path*', headers: [{ key: 'Cache-Control', value: 'public, max-age=31536000, immutable' }] },
   ],
   // Finance is a single-page app: any address under /finance that is not a real file opens its index.html
-  // /attendance and /stock are portal addresses for the apps that run on the VPS. Until an app is set up to run under the
-  // portal address (ATTENDANCE_URL set = the portal serves it right here), the address sends people to the live app.
-  redirects: async () => [
-    ...(process.env.ATTENDANCE_URL ? [] : [{ source: '/attendance/:path*', destination: `${process.env.ATTENDANCE_LIVE_URL ?? 'https://attendance-nepal.com'}/:path*`, permanent: false }]),
-    { source: '/stock/:path*', destination: `${process.env.STOCK_LIVE_URL ?? 'https://stock.hamroauto.com.np'}/:path*`, permanent: false },
-  ],
   rewrites: async () => ({
-    beforeFiles: [],
-    // Attendance is its own app (a separate Vercel project) that the portal serves under /attendance, so the sign-in cookie is shared
-    afterFiles: process.env.ATTENDANCE_URL ? [{ source: '/attendance/:path*', destination: `${process.env.ATTENDANCE_URL.replace(/\/$/, '')}/attendance/:path*` }] : [],
+    // Attendance is its own app that the portal serves under /attendance, so the sign-in cookie is shared. Before the files, so it wins
+    // over the "being connected" page, which shows only while ATTENDANCE_URL is not set.
+    beforeFiles: process.env.ATTENDANCE_URL ? [{ source: '/attendance/:path*', destination: `${process.env.ATTENDANCE_URL.replace(/\/$/, '')}/attendance/:path*` }] : [],
+    afterFiles: [],
     fallback: [{ source: '/finance/:path*', destination: '/finance/index.html' }],
   }),
 };
