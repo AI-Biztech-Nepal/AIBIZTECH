@@ -197,7 +197,6 @@ export default function useSaleForm({ booking = null, sale = null } = {}) {
   // too (sale deed). Lead and Referred by are optional, except that a new buyer must be tagged with one or the other.
   const enteringNewBuyer = showAddCust && !form.customer_id;
   const missing = [
-    !form.vehicle_id && ["sv-vehicle", "vehicle"],
     enteringNewBuyer && !buyer.name.trim() && ["sv-buyer-name", "buyer's name"],
     enteringNewBuyer && !buyer.address.trim() && ["sv-buyer-address", "buyer's address"],
     enteringNewBuyer && !buyer.contact_number.trim() && ["sv-buyer-phone", "buyer's phone"],
@@ -206,6 +205,7 @@ export default function useSaleForm({ booking = null, sale = null } = {}) {
     !existing && showAddCust && !form.witness_name.trim() && ["sv-witness-name", "witness's name"],
     !existing && showAddCust && !form.witness_address.trim() && ["sv-witness-address", "witness's address"],
     !existing && showAddCust && !form.witness_phone.trim() && ["sv-witness-phone", "witness's phone"],
+    !form.vehicle_id && ["sv-vehicle", "vehicle"],
     !form.sale_price && ["sv-sale_price", "sale price"],
     enteringNewBuyer && !isSourceComplete(buyerSource) && ["sv-lead", "lead, or who referred the buyer"],
   ].filter(Boolean);

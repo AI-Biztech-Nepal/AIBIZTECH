@@ -62,7 +62,7 @@ export default function SaleFormBody({ f, booking = null, sale = null, readOnly 
         </div>
       )}
 
-      {/* 1 Sale: who is buying comes first (at the top, as Name does in Purchase Vehicle), then what and for how much */}
+      {/* 1 Sale: customer, dates, vehicle, price, salesman, lead, referrer. The buyer / witness panel opens right under the customer. */}
       <section id="sv-section-sale" className={SECTION}>
         <h3 className={H2} style={{ fontFamily: "Manrope, sans-serif" }}>Sale</h3>
         <div className={GRID}>
@@ -87,23 +87,13 @@ export default function SaleFormBody({ f, booking = null, sale = null, readOnly 
             </div>
             {!readOnly && <p className="mt-1 text-xs text-slate-500">{existing ? "Pick a customer, or press the person button to enter a new buyer" : "Pick a customer, or press the person button to enter a new buyer and the sale-deed witness"}</p>}
           </div>
-          <div className="sm:col-span-2">
-            <label htmlFor="sv-vehicle" className={LBL}>Vehicle <span className="text-red-600">*</span></label>
-            {booking ? (
-              <div className="h-11 px-3 flex items-center text-sm bg-slate-50 border border-slate-300 rounded-[10px] text-slate-700">{booking.vehicle_info}</div>
-            ) : (
-              <VehicleComboBox
-                vehicles={vehicleList}
-                value={form.vehicle_id}
-                onChange={id => set({ vehicle_id: id })}
-                placeholder={ph("Search or select available vehicle...")}
-                testId="sale-vehicle"
-                showPrice
-                inputId="sv-vehicle"
-                inputClassName={`${COMBO} ${bad("sv-vehicle") ? BAD : OK}`}
-              />
-            )}
-            {bad("sv-vehicle") && <p className="mt-1.5 text-xs font-semibold text-red-700">Pick the vehicle being sold</p>}
+          <div>
+            <span className={LBL}>Sale date (BS)</span>
+            <BSDatePicker value={form.sale_date} onChange={val => set({ sale_date: val })} data-testid="sale-date-input" triggerClassName={`${DATE_BOX} ${OK}`} placeholder={readOnly ? "—" : "Today"} />
+          </div>
+          <div>
+            <span className={LBL}>Vehicle pass date (BS)</span>
+            <BSDatePicker value={form.ownership_transfer_date} onChange={val => set({ ownership_transfer_date: val })} data-testid="vehicle-pass-date-input" triggerClassName={`${DATE_BOX} ${OK}`} placeholder={readOnly ? "—" : undefined} />
           </div>
 
           {showPanel && (
@@ -154,20 +144,30 @@ export default function SaleFormBody({ f, booking = null, sale = null, readOnly 
             </div>
           )}
 
+          <div className="sm:col-span-2">
+            <label htmlFor="sv-vehicle" className={LBL}>Vehicle <span className="text-red-600">*</span></label>
+            {booking ? (
+              <div className="h-11 px-3 flex items-center text-sm bg-slate-50 border border-slate-300 rounded-[10px] text-slate-700">{booking.vehicle_info}</div>
+            ) : (
+              <VehicleComboBox
+                vehicles={vehicleList}
+                value={form.vehicle_id}
+                onChange={id => set({ vehicle_id: id })}
+                placeholder={ph("Search or select available vehicle...")}
+                testId="sale-vehicle"
+                showPrice
+                inputId="sv-vehicle"
+                inputClassName={`${COMBO} ${bad("sv-vehicle") ? BAD : OK}`}
+              />
+            )}
+            {bad("sv-vehicle") && <p className="mt-1.5 text-xs font-semibold text-red-700">Pick the vehicle being sold</p>}
+          </div>
           <div>
             <label htmlFor="sv-sale_price" className={LBL}>Sale price <span className="text-red-600">*</span></label>
             <Money id="sv-sale_price" testid="sale-price-input" value={form.sale_price} onChange={v => set({ sale_price: v })} error={bad("sv-sale_price")} />
             {bad("sv-sale_price") && <p className="mt-1 text-xs font-semibold text-red-700">Enter the price it is sold for</p>}
           </div>
           <div>
-            <span className={LBL}>Sale date (BS)</span>
-            <BSDatePicker value={form.sale_date} onChange={val => set({ sale_date: val })} data-testid="sale-date-input" triggerClassName={`${DATE_BOX} ${OK}`} placeholder={readOnly ? "—" : "Today"} />
-          </div>
-          <div>
-            <span className={LBL}>Vehicle pass date (BS)</span>
-            <BSDatePicker value={form.ownership_transfer_date} onChange={val => set({ ownership_transfer_date: val })} data-testid="vehicle-pass-date-input" triggerClassName={`${DATE_BOX} ${OK}`} placeholder={readOnly ? "—" : undefined} />
-          </div>
-          <div className="sm:col-span-2 lg:col-span-1">
             <span className={LBL}>Sold by</span>
             <SoldBySelect value={form.sold_by_id} onChange={v => set({ sold_by_id: v })} fallbackName={sale?.sold_by_name} className={`${BOX} ${OK}`} testid="sale-sold-by-select" />
           </div>
