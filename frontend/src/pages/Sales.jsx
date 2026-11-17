@@ -4,7 +4,7 @@ import { Plus, Search, Trash2, Eye, TrendingUp, DollarSign, Calendar, ShoppingBa
 import { toast } from "sonner";
 import api from "../utils/api";
 import { peek, remember, cacheTicket } from "../utils/listCache";
-import { formatNPR, splitSanakhatExpenses, deleteSaleConfirm, TRANSFER_STATUS_OPTIONS, getTransferStatusStyle } from "../utils/helpers";
+import { formatNPR, deleteSaleConfirm, TRANSFER_STATUS_OPTIONS, getTransferStatusStyle } from "../utils/helpers";
 import { getCurrentBSMonthRange } from "../utils/nepali-date";
 import { useAuth } from "../context/AuthContext";
 import HoverADDate from "../components/HoverADDate";
@@ -52,13 +52,6 @@ function SaleTags({ sale, vehicle, booking }) {
   );
 }
 
-// Sanakhat cost = sanakhat + re-sanakhat entered on the sale. Both are extra expenses, so
-// they're also inside the Extra Expenses column's total.
-function sanakhatOf(sale) {
-  const { sanakhat, resanakhat } = splitSanakhatExpenses(sale.extra_expenses);
-  return { total: sanakhat + resanakhat, resanakhat };
-}
-
 // Pending / In Progress / Done name transfer. Admins flip it right in the row; everyone else just sees the pill.
 function TransferStatus({ vehicle, editable, onChange }) {
   if (!vehicle) return <span className="text-slate-400">—</span>;
@@ -100,6 +93,7 @@ export default function Sales() {
   // Bookings are fetched here: the open ones are rows of the table below (status "Booked"), and the ones that became a
   // sale are tagged on their sale row.
   const [bookings, setBookings] = useState([]);
+  const [reservedVehicles, setReservedVehicles] = useState([]); // the booked vehicles: their cost price shows on the booked rows
   const [receipt, setReceipt] = useState(null);                   // the booking whose receipt is open for printing
   const [editingBooking, setEditingBooking] = useState(null);     // the booking being edited
   const [withdrawingBooking, setWithdrawingBooking] = useState(null); // the booking whose customer is backing out
@@ -137,6 +131,7 @@ export default function Sales() {
       remember("sales:list", s.data, ticket); remember("sales:summary", sm.data, ticket); remember("vehicles:sold", v.data, ticket);
       setSales(s.data); setSummary(sm.data); setSoldVehicles(v.data);
       api.get("/bookings").then(r => setBookings(r.data)).catch(() => {});
+      api.get("/vehicles?status=reserved").then(r => setReservedVehicles(r.data)).catch(() => {});
     } catch { toast.error("Failed to load sales"); }
     finally { setLoading(false); }
   }, []);
@@ -151,6 +146,10 @@ export default function Sales() {
   const openBookings = useMemo(() => bookings.filter(b => b.status === "active"), [bookings]);
   const bookingBySaleId = useMemo(() => Object.fromEntries(bookings.filter(b => b.sale_id).map(b => [b.sale_id, b])), [bookings]);
   const vehicleById = useMemo(() => Object.fromEntries(soldVehicles.map(v => [v.id, v])), [soldVehicles]);
+  const reservedById = useMemo(() => Object.fromEntries(reservedVehicles.map(v => [v.id, v])), [reservedVehicles]);
+  // Cost price of a row's vehicle: its overall investment (purchase price + expenses + accessories). Blank when the vehicle
+  // isn't loaded (a returned sale's) or the role may not see costs.
+  const costOf = (vehicleId) => (vehicleById[vehicleId] ?? reservedById[vehicleId])?.total_investment ?? null;
 
   // Optimistic: flip the pill straight away, roll back if the save fails.
   const updateTransfer = async (vehicle, status) => {
@@ -407,10 +406,11 @@ export default function Sales() {
           <>
             {/* Card list — phones only, avoids squeezing a wide table into a narrow viewport */}
             <div className="sm:hidden divide-y divide-slate-100">
-              {filteredBookings.map(b => <BookedCard key={b.id} b={b} isAdmin={isAdmin} actions={bookingActions} />)}
+              {filteredBookings.map(b => <BookedCard key={b.id} b={b} cost={costOf(b.vehicle_id)} isAdmin={isAdmin} actions={bookingActions} />)}
               {filtered.map(s => {
                 const v = vehicleById[s.vehicle_id];
                 const margin = marginOf(s, v);
+                const cost = costOf(s.vehicle_id);
                 return (
                   <div
                     key={s.id}
@@ -438,20 +438,12 @@ export default function Sales() {
                         ? <span className="text-xs text-amber-700">Refunded {formatNPR(s.refund_amount || 0)}</span>
                         : <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700">{s.payment_method}</span>}
                     </div>
-                    {((s.expenses_total || 0) + (s.job_card_cost || 0)) > 0 && (
-                      <div className="mt-1 text-xs text-orange-600 font-medium">+{formatNPR((s.expenses_total || 0) + (s.job_card_cost || 0))} extra expenses{s.extra_expenses?.length > 0 ? ` (${s.extra_expenses.length})` : ""}</div>
-                    )}
+                    {cost != null && <div className="mt-1 text-xs text-slate-500" data-testid="sale-cost-mobile">Cost price <span className="font-semibold text-slate-700">{formatNPR(cost)}</span></div>}
                     {!s.returned && v && (
                       <div className="mt-1.5 flex items-center gap-2 text-xs text-slate-500" data-testid="sale-transfer-mobile">
                         Transfer <TransferStatus vehicle={v} editable={isAdmin} onChange={updateTransfer} />
-                        {sanakhatOf(s).total > 0 && <span className="text-orange-600 font-medium">Sanakhat {formatNPR(sanakhatOf(s).total)}</span>}
                       </div>
                     )}
-                    {!s.returned && (s.due_amount > 0 ? (
-                      <div className="mt-1 text-xs font-semibold text-red-600" data-testid="due-badge">Due: {formatNPR(s.due_amount)}{s.due_date && <> (by <HoverADDate date={s.due_date} />)</>}</div>
-                    ) : (
-                      <div className="mt-1 text-xs text-green-600">Fully Paid</div>
-                    ))}
                     <div className="mt-1.5 flex items-center justify-between text-xs text-slate-400">
                       <HoverADDate date={s.sale_date} />
                       {margin != null && <span className={margin < 0 || v?.low_margin ? "text-red-600 font-semibold" : "text-green-700 font-semibold"}>{s.returned ? "Kept" : "Margin"} {formatNPR(margin)}</span>}
@@ -472,22 +464,19 @@ export default function Sales() {
                     <th>Status</th>
                     <th>Customer</th>
                     <th className="text-right">Sale Price</th>
-                    <th className="text-right">Extra Expenses</th>
-                    <th className="text-right">Sanakhat Cost</th>
+                    <th className="text-right" title="The vehicle's overall cost: purchase price + expenses + accessories">Cost Price</th>
                     <th>Transfer</th>
                     <th className="text-right">Total</th>
-                    <th className="text-right">Due</th>
                     <th>Payment</th>
                     <th>Date</th>
                     <th className="w-10" />
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredBookings.map((b, i) => <BookedTableRow key={b.id} b={b} index={i + 1} isAdmin={isAdmin} actions={bookingActions} />)}
+                  {filteredBookings.map((b, i) => <BookedTableRow key={b.id} b={b} index={i + 1} cost={costOf(b.vehicle_id)} isAdmin={isAdmin} actions={bookingActions} />)}
                   {filtered.map((s, i) => {
                     const v = vehicleById[s.vehicle_id];
-                    const margin = marginOf(s, v);
-                    const sanakhat = sanakhatOf(s);
+                    const cost = costOf(s.vehicle_id);
                     return (
                       <tr
                         key={s.id}
@@ -509,43 +498,16 @@ export default function Sales() {
                           {s.customer_contact && <div className="text-xs text-gray-400">{s.customer_contact}</div>}
                         </td>
                         <td className="text-right font-medium text-gray-800 whitespace-nowrap">{formatNPR(s.sale_price)}</td>
-                        <td className="text-right whitespace-nowrap">
-                          {((s.expenses_total || 0) + (s.job_card_cost || 0)) > 0 ? (
-                            <span className="text-orange-600 font-medium">
-                              {formatNPR((s.expenses_total || 0) + (s.job_card_cost || 0))}
-                              {s.extra_expenses?.length > 0 ? ` (${s.extra_expenses.length} items)` : ""}
-                            </span>
-                          ) : <span className="text-gray-300">—</span>}
-                        </td>
-                        <td className="text-right whitespace-nowrap" title="Sanakhat + re-sanakhat entered on this sale — part of its extra expenses">
-                          {sanakhat.total > 0 ? (
-                            <>
-                              <div className="text-orange-600 font-medium">{formatNPR(sanakhat.total)}</div>
-                              {sanakhat.resanakhat > 0 && <div className="text-xs text-gray-400">incl. re-sanakhat {formatNPR(sanakhat.resanakhat)}</div>}
-                            </>
-                          ) : <span className="text-gray-300">—</span>}
-                        </td>
+                        <td className="text-right font-medium text-gray-800 whitespace-nowrap" data-testid="sale-cost-price">{cost != null ? formatNPR(cost) : <span className="text-gray-300">—</span>}</td>
                         <td className="whitespace-nowrap">
                           {s.returned ? <span className="text-gray-300">—</span> : <TransferStatus vehicle={v} editable={isAdmin} onChange={updateTransfer} />}
                         </td>
                         <td className="text-right font-bold text-green-700 whitespace-nowrap">{formatNPR(s.total_amount)}</td>
-                        <td className="text-right font-semibold whitespace-nowrap">
-                          {!s.returned && s.due_amount > 0
-                            ? <span className="text-red-600">{formatNPR(s.due_amount)}</span>
-                            : <span className="text-gray-300 font-normal">—</span>}
-                        </td>
                         <td>
                           {s.returned ? (
                             <div className="text-xs text-amber-700 whitespace-nowrap">Refunded {formatNPR(s.refund_amount || 0)}</div>
                           ) : (
-                            <>
-                              <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700">{s.payment_method}</span>
-                              {s.due_amount > 0 ? (
-                                <div className="mt-1 text-xs font-semibold text-red-600 whitespace-nowrap" data-testid="due-badge">Due: {formatNPR(s.due_amount)}{s.due_date && <> (by <HoverADDate date={s.due_date} />)</>}</div>
-                              ) : (
-                                <div className="mt-1 text-xs text-green-600">Fully Paid</div>
-                              )}
-                            </>
+                            <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700">{s.payment_method}</span>
                           )}
                         </td>
                         <td className="text-gray-500 whitespace-nowrap"><HoverADDate date={s.sale_date} /></td>

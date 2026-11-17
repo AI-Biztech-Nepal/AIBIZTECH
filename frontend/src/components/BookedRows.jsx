@@ -2,8 +2,9 @@
  * BookedRows.jsx — a booked vehicle as a row of the Sales page's table (BookedTableRow, sm and up) or as a card on phones
  * (BookedCard). It sits in the same list as the sales, with a "Booked" status; a sale has no status there.
  *
- * b: the booking as GET /bookings returns it. index: its SN. isAdmin: withdrawing and deleting are for admins.
- * actions: { onSell, onReceipt, onEdit, onWithdraw, onDelete }, each called with the booking.
+ * b: the booking as GET /bookings returns it. index: its SN. cost: the vehicle's overall cost price, or null. isAdmin:
+ * withdrawing and deleting are for admins. actions: { onSell, onReceipt, onEdit, onWithdraw, onDelete }, each called with
+ * the booking.
  */
 import { Pencil, Printer, Trash2, Undo2, ArrowRight } from "lucide-react";
 import { formatNPR } from "../utils/helpers";
@@ -11,11 +12,6 @@ import HoverADDate from "./HoverADDate";
 
 // What the vehicle is to be sold for: the price agreed with the customer, else the vehicle's own selling price.
 export const agreedOf = (b) => b.agreed_price ?? b.vehicle_selling_price ?? null;
-// What is still to be paid on that: the price less the deposit.
-export const balanceOf = (b) => {
-  const agreed = agreedOf(b);
-  return agreed != null ? Math.max(agreed - (b.booking_amount || 0), 0) : null;
-};
 
 export const BookedStatus = () => (
   <span className="px-2 py-0.5 rounded-full text-xs font-semibold uppercase tracking-wide whitespace-nowrap bg-yellow-100 text-yellow-800" data-testid="booking-status-tag">Booked</span>
@@ -39,11 +35,10 @@ function BookedActions({ b, isAdmin, actions }) {
   );
 }
 
-// The cells line up with the Sales table's columns: SN, Vehicle, Status, Customer, Sale Price, Extra Expenses, Sanakhat Cost,
-// Transfer, Total, Due, Payment, Date, actions.
-export function BookedTableRow({ b, index, isAdmin, actions }) {
+// The cells line up with the Sales table's columns: SN, Vehicle, Status, Customer, Sale Price, Cost Price, Transfer, Total,
+// Payment, Date, actions.
+export function BookedTableRow({ b, index, cost, isAdmin, actions }) {
   const agreed = agreedOf(b);
-  const balance = balanceOf(b);
   return (
     <tr data-testid="booking-row">
       <td className="text-gray-500">{index}</td>
@@ -57,11 +52,9 @@ export function BookedTableRow({ b, index, isAdmin, actions }) {
         {b.customer_contact && <div className="text-xs text-gray-400">{b.customer_contact}</div>}
       </td>
       <td className="text-right font-medium text-gray-800 whitespace-nowrap">{agreed != null ? formatNPR(agreed) : <Dash />}</td>
-      <td className="text-right"><Dash /></td>
-      <td className="text-right"><Dash /></td>
+      <td className="text-right font-medium text-gray-800 whitespace-nowrap" data-testid="booking-cost-price">{cost != null ? formatNPR(cost) : <Dash />}</td>
       <td><Dash /></td>
       <td className="text-right"><Dash /></td>
-      <td className="text-right font-semibold whitespace-nowrap">{balance > 0 ? <span className="text-red-600">{formatNPR(balance)}</span> : <Dash />}</td>
       <td>
         <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700">{b.payment_method}</span>
         <div className="mt-1 text-xs font-semibold text-amber-700 whitespace-nowrap">Deposit: {formatNPR(b.booking_amount)}</div>
@@ -72,8 +65,7 @@ export function BookedTableRow({ b, index, isAdmin, actions }) {
   );
 }
 
-export function BookedCard({ b, isAdmin, actions }) {
-  const balance = balanceOf(b);
+export function BookedCard({ b, cost, isAdmin, actions }) {
   return (
     <div data-testid="booking-row-mobile" className="p-4 space-y-2">
       <div className="flex items-start justify-between gap-2">
@@ -83,10 +75,10 @@ export function BookedCard({ b, isAdmin, actions }) {
         </div>
         <BookedStatus />
       </div>
-      <div className="flex items-center justify-between text-sm">
+      <div className="text-sm">
         <span className="font-bold text-green-700">{formatNPR(b.booking_amount)} <span className="text-xs font-normal text-slate-400">{b.payment_method} deposit</span></span>
-        {balance != null && <span className="text-slate-600">Balance {formatNPR(balance)}</span>}
       </div>
+      {cost != null && <div className="text-xs text-slate-500">Cost price <span className="font-semibold text-slate-700">{formatNPR(cost)}</span></div>}
       <div className="text-xs text-slate-400"><HoverADDate date={b.booking_date} /></div>
       <BookedActions b={b} isAdmin={isAdmin} actions={actions} />
     </div>
