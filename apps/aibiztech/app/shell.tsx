@@ -13,7 +13,7 @@ export async function Shell({ org, orgs = [], page, children }: { org: Org | nul
   const isAdmin = !!org && org.org_role !== 'member';
   const initials = (org?.name ?? 'AIBIZTECH').split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
   const item = (href: string, icon: string, label: string, active = false, extra?: ReactNode) => (
-    <Link href={href} className={`nav-item${active ? ' active' : ''}`} aria-current={active ? 'page' : undefined}>
+    <Link href={href} className={`nav-item${active ? ' active' : ''}`} aria-current={active ? 'page' : undefined} {...(href.startsWith('/go/') ? { target: '_blank', rel: 'noopener' } : {})}>
       <Icon name={icon} size={18} /><span>{label}</span>{extra}
     </Link>
   );

@@ -16,7 +16,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ serv
   const { data: svc } = await supabase.schema('core').from('services').select('base_url').eq('key', service).eq('is_active', true).maybeSingle();
   if (!svc) return home('That app is not available.');
 
-  const secret = process.env.SSO_SECRET;
+  // Single sign-on only for apps that have the /sso page (listed in SSO_SERVICES, e.g. "attendance,stock"); the rest open as they are
+  const ssoApps = (process.env.SSO_SERVICES ?? '').split(',').map((s) => s.trim());
+  const secret = ssoApps.includes(service) ? process.env.SSO_SECRET : undefined;
   const { data: claims } = await supabase.auth.getClaims();
   const email = claims?.claims.email;
   // Without a shared secret, fall back to opening the app and letting it ask for a login
