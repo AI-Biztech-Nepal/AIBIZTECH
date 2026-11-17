@@ -51,6 +51,8 @@ export async function Shell({ org, orgs = [], page, children }: { org: Org | nul
               // Finance runs inside AIBIZTECH (served at /finance); the other apps are still opened through single sign-on
               return on && s.key === 'finance'
                 ? item('/finance', serviceIcon(s.key, s.name), s.name)
+                : on && s.key === 'attendance' && process.env.ATTENDANCE_URL
+                ? item('/attendance', serviceIcon(s.key, s.name), s.name)
                 : on
                 ? item(`/go/${s.key}`, serviceIcon(s.key, s.name), s.name)
                 : item(org ? '/' : '/onboarding', serviceIcon(s.key, s.name), s.name, false, <Icon name="lockmini" size={14} />);

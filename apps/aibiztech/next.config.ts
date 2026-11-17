@@ -10,7 +10,12 @@ const config: NextConfig = {
     { source: '/finance/_expo/:path*', headers: [{ key: 'Cache-Control', value: 'public, max-age=31536000, immutable' }] },
   ],
   // Finance is a single-page app: any address under /finance that is not a real file opens its index.html
-  rewrites: async () => ({ beforeFiles: [], afterFiles: [], fallback: [{ source: '/finance/:path*', destination: '/finance/index.html' }] }),
+  rewrites: async () => ({
+    beforeFiles: [],
+    // Attendance is its own app (a separate Vercel project) that the portal serves under /attendance, so the sign-in cookie is shared
+    afterFiles: process.env.ATTENDANCE_URL ? [{ source: '/attendance/:path*', destination: `${process.env.ATTENDANCE_URL.replace(/\/$/, '')}/attendance/:path*` }] : [],
+    fallback: [{ source: '/finance/:path*', destination: '/finance/index.html' }],
+  }),
 };
 
 export default config;
