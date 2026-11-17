@@ -555,6 +555,16 @@ export interface AppNotification {
   read_at: string | null;
 }
 
+// One row per time a client opens a reseller's public profile/shop (app/(client)/reseller/[id]),
+// for that reseller's own Marketing > Visits view. No message content, no page path - just who
+// looked (if signed in) and when. See migration 0110.
+export interface ProfileVisit {
+  id: string;
+  profile_id: string;
+  viewer_id: string | null;
+  created_at: string;
+}
+
 // Minimal shape expected by Supabase's generated Database type.
 // Expand this if/when you swap in the CLI-generated version.
 export interface Database {
@@ -671,6 +681,12 @@ export interface Database {
         Row: StatementImport;
         Insert: Partial<StatementImport>;
         Update: Partial<StatementImport>;
+        Relationships: [];
+      };
+      profile_visits: {
+        Row: ProfileVisit;
+        Insert: Partial<ProfileVisit>;
+        Update: Partial<ProfileVisit>;
         Relationships: [];
       };
     };

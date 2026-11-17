@@ -65,6 +65,7 @@ const NAV_ITEMS: WebNavItem[] = [
   { href: '/(reseller)/dashboard', label: 'Marketplace', icon: 'bag' },
   { href: '/(reseller)/requests', label: 'Requests', icon: 'clipboard' },
   { href: '/(reseller)/inventory', label: 'Inventory', icon: 'cube' },
+  { href: '/(reseller)/marketing', label: 'Marketing', icon: 'megaphone' },
   {
     href: '/(reseller)/finance',
     label: 'Finance',
@@ -90,6 +91,7 @@ const MAIN_WIDE_ROUTES = [
   '/dashboard',
   '/shop',
   '/requests',
+  '/marketing',
   '/wholesale',
   '/quotation',
   '/profile',
@@ -162,6 +164,13 @@ export default function ResellerLayout() {
             title: 'Inventory',
             tabBarLabel: 'Inventory',
             tabBarIcon: ({ color, focused }) => <TabIcon name="cube" color={color} focused={focused} />,
+          }}
+        />
+        <Tabs.Screen
+          name="marketing"
+          options={{
+            title: 'Marketing',
+            tabBarIcon: ({ color, focused }) => <TabIcon name="megaphone" color={color} focused={focused} />,
           }}
         />
         <Tabs.Screen

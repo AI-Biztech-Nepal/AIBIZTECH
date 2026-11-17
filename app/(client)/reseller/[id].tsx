@@ -3,6 +3,7 @@ import { View, Text, ScrollView, Pressable } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useAuthStore } from '../../../lib/hooks/useAuth';
 import { useSupabaseQuery, useSupabaseRow } from '../../../lib/hooks/useSupabase';
+import { useLogProfileVisit } from '../../../lib/hooks/useLogProfileVisit';
 import { useIsWideWeb } from '../../../lib/hooks/useWideGrid';
 import { STATUS_STYLES } from '../../../lib/constants/requestStatus';
 import { CategoryBadge } from '../../../lib/components/CategoryBadge';
@@ -41,6 +42,7 @@ export default function ResellerDetail() {
     orderBy: { column: 'created_at', ascending: false },
     enabled: !!userId && !!id,
   });
+  useLogProfileVisit(id, userId);
 
   if (loadingReseller || !reseller) {
     return (
