@@ -1,9 +1,10 @@
 /**
  * SaleVehicleModal.jsx — the Sale Vehicle form (opened from the Sales page, or from a booking).
  *
- * Built like Purchase Vehicle: one scrolling page of sections (Sale, Notes; payment, exchange and extra expenses are left
- * to the recorded sale), chips for phones to jump between them, and a footer that keeps the grand total, what has been
- * paid and what is still due in view.
+ * Built like Purchase Vehicle: one scrolling page of sections (Sale, Booking, Notes; payment, exchange and extra expenses are
+ * left to the recorded sale), chips for phones to jump between them, and a footer that keeps the grand total, what has been
+ * paid and what is still due in view. The Booking tick turns the form into a booking (POST /bookings: a deposit, the vehicle
+ * reserved, then the booking receipt) instead of a sale.
  * The fields are SaleFormBody's, their state is useSaleForm's; this window adds the header, footer and the posting.
  * onSaved lets the Sales page reload.
  */
@@ -15,6 +16,7 @@ import { formatNPR } from "../utils/helpers";
 import { digits } from "../components/formKit";
 import useSaleForm from "../hooks/useSaleForm";
 import SaleFormBody from "./SaleFormBody";
+import BookingReceipt from "../components/BookingReceipt";
 
 function getErrMsg(err, fallback) {
   if (!err.response) return "Network error - could not reach the server";
@@ -33,6 +35,8 @@ export default function SaleVehicleModal({ booking = null, onClose, onSaved }) {
   const [saving, setSaving] = useState(false);
   const [attempted, setAttempted] = useState(false);
   const [active, setActive] = useState("sale");
+  const [receipt, setReceipt] = useState(null); // the booking just made (the "Booking" tick): its printable receipt replaces the form
+  const isBooking = form.booking;
 
   useEffect(() => { loadLists(); }, [loadLists]);
 
@@ -46,16 +50,24 @@ export default function SaleVehicleModal({ booking = null, onClose, onSaved }) {
     setSaving(true);
     try {
       const customerId = await f.ensureCustomer();
+      if (isBooking) {
+        const r = await api.post("/bookings", f.bookingPayload(customerId));
+        toast.success("Vehicle booked");
+        onSaved();
+        setReceipt(r.data); // closing the receipt closes this window
+        return;
+      }
       await api.post("/sales", f.payload(customerId));
       toast.success(booking ? "Booking converted to a sale!" : "Sale recorded successfully!");
       onSaved();
       onClose();
-    } catch (err) { toast.error(getErrMsg(err, "Failed to save sale")); }
+    } catch (err) { toast.error(getErrMsg(err, isBooking ? "Failed to save booking" : "Failed to save sale")); }
     finally { setSaving(false); }
   };
 
   const sections = [
     { id: "sale", label: "Sale", done: !!(form.vehicle_id && form.sale_price && form.customer_id) },
+    ...(booking ? [] : [{ id: "booking", label: "Booking", done: isBooking && Number(form.booking_amount) > 0 }]),
     { id: "notes", label: "Notes", done: !!form.notes },
   ];
   const go = (id) => document.getElementById(`sv-section-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -69,6 +81,8 @@ export default function SaleVehicleModal({ booking = null, onClose, onSaved }) {
     if (cur !== active) setActive(cur);
   };
 
+  if (receipt) return <BookingReceipt booking={receipt} onClose={() => { setReceipt(null); onClose(); }} />;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 sm:p-4">
       <div className="bg-white sm:rounded-2xl shadow-2xl w-full h-full sm:h-auto sm:max-h-[92vh] sm:max-w-3xl lg:max-w-6xl flex flex-col overflow-hidden">
@@ -76,8 +90,8 @@ export default function SaleVehicleModal({ booking = null, onClose, onSaved }) {
         {/* Header */}
         <div className="flex items-center gap-3 pl-4 sm:pl-7 pr-2 sm:pr-4 py-3 border-b border-slate-200">
           <div className="flex-1 min-w-0">
-            <h2 className="text-xl font-extrabold text-slate-900 truncate" style={{ fontFamily: "Manrope, sans-serif" }}>{booking ? "Sale Vehicle from Booking" : "Sale Vehicle"}</h2>
-            <p className="hidden sm:block text-[13px] text-slate-500">Sell a vehicle from your stock <span className="text-slate-400">· <span className="text-red-600">*</span> needed to save</span></p>
+            <h2 className="text-xl font-extrabold text-slate-900 truncate" style={{ fontFamily: "Manrope, sans-serif" }}>{booking ? "Sale Vehicle from Booking" : isBooking ? "Book Vehicle" : "Sale Vehicle"}</h2>
+            <p className="hidden sm:block text-[13px] text-slate-500">{isBooking ? "Reserve a vehicle from your stock with a deposit" : "Sell a vehicle from your stock"} <span className="text-slate-400">· <span className="text-red-600">*</span> needed to save</span></p>
           </div>
           <button type="button" onClick={onClose} aria-label="Close" className="w-11 h-11 flex items-center justify-center rounded-[10px] text-slate-600 hover:bg-slate-100 shrink-0">
             <X size={20} />
@@ -109,22 +123,31 @@ export default function SaleVehicleModal({ booking = null, onClose, onSaved }) {
 
           {/* Footer: what this sale adds up to, and the actions */}
           <div className="shrink-0 flex flex-wrap items-center gap-x-7 gap-y-3 px-4 sm:px-7 py-3 border-t border-slate-200 bg-slate-50" data-testid="grand-total-section">
-            <div className="hidden sm:block">
-              <div className="text-[11px] font-semibold text-slate-500">Sale price</div>
-              <div className="text-lg font-extrabold text-slate-900" style={{ fontFamily: "Manrope, sans-serif" }}>{digits(form.sale_price) ? formatNPR(digits(form.sale_price)) : "Not set"}</div>
-            </div>
-            <div>
-              <div className="text-[11px] font-semibold text-slate-500">Grand total</div>
-              <div className="text-lg font-extrabold text-slate-900" style={{ fontFamily: "Manrope, sans-serif" }} data-testid="grand-total-value">{formatNPR(f.grandTotal)}</div>
-            </div>
-            <div title="Cash + bank + advance + exchange valuation">
-              <div className="text-[11px] font-semibold text-slate-500">Paid</div>
-              <div className={`text-lg font-extrabold ${f.amountPaid > 0 ? "text-emerald-700" : "text-slate-400"}`} style={{ fontFamily: "Manrope, sans-serif" }} data-testid="paid-total-value">{formatNPR(f.amountPaid)}</div>
-            </div>
-            {f.amountDue > 0 ? (
-              <span className="text-xs font-semibold text-red-700 bg-red-100 rounded-full px-3 py-1.5" data-testid="due-amount-bubble">Due: {formatNPR(f.amountDue)}</span>
-            ) : f.grandTotal > 0 && (
-              <span className="hidden md:inline-block text-xs font-semibold text-emerald-800 bg-emerald-100 rounded-full px-3 py-1.5" data-testid="paid-in-full-bubble">Paid in full</span>
+            {isBooking ? (
+              <div>
+                <div className="text-[11px] font-semibold text-slate-500">Booking amount</div>
+                <div className={`text-lg font-extrabold ${digits(form.booking_amount) ? "text-emerald-700" : "text-slate-400"}`} style={{ fontFamily: "Manrope, sans-serif" }} data-testid="booking-total-value">{digits(form.booking_amount) ? formatNPR(digits(form.booking_amount)) : "Not set"}</div>
+              </div>
+            ) : (
+              <>
+                <div className="hidden sm:block">
+                  <div className="text-[11px] font-semibold text-slate-500">Sale price</div>
+                  <div className="text-lg font-extrabold text-slate-900" style={{ fontFamily: "Manrope, sans-serif" }}>{digits(form.sale_price) ? formatNPR(digits(form.sale_price)) : "Not set"}</div>
+                </div>
+                <div>
+                  <div className="text-[11px] font-semibold text-slate-500">Grand total</div>
+                  <div className="text-lg font-extrabold text-slate-900" style={{ fontFamily: "Manrope, sans-serif" }} data-testid="grand-total-value">{formatNPR(f.grandTotal)}</div>
+                </div>
+                <div title="Cash + bank + advance + exchange valuation">
+                  <div className="text-[11px] font-semibold text-slate-500">Paid</div>
+                  <div className={`text-lg font-extrabold ${f.amountPaid > 0 ? "text-emerald-700" : "text-slate-400"}`} style={{ fontFamily: "Manrope, sans-serif" }} data-testid="paid-total-value">{formatNPR(f.amountPaid)}</div>
+                </div>
+                {f.amountDue > 0 ? (
+                  <span className="text-xs font-semibold text-red-700 bg-red-100 rounded-full px-3 py-1.5" data-testid="due-amount-bubble">Due: {formatNPR(f.amountDue)}</span>
+                ) : f.grandTotal > 0 && (
+                  <span className="hidden md:inline-block text-xs font-semibold text-emerald-800 bg-emerald-100 rounded-full px-3 py-1.5" data-testid="paid-in-full-bubble">Paid in full</span>
+                )}
+              </>
             )}
             <div className="flex-1" />
             <div className="flex gap-3 w-full sm:w-auto">
@@ -133,7 +156,7 @@ export default function SaleVehicleModal({ booking = null, onClose, onSaved }) {
                 type="submit" disabled={saving} data-testid="save-sale-btn"
                 className="flex-1 sm:flex-none h-12 px-7 rounded-[10px] bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold shadow-sm transition-all active:scale-95 disabled:opacity-60"
               >
-                {saving ? "Saving..." : "Sale Vehicle"}
+                {saving ? "Saving..." : isBooking ? "Book Vehicle" : "Sale Vehicle"}
               </button>
             </div>
           </div>

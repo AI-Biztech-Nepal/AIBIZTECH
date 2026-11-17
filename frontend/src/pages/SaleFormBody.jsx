@@ -69,7 +69,7 @@ export default function SaleFormBody({ f, booking = null, sale = null, readOnly 
           <div className="sm:col-span-2">
             <label htmlFor="sv-customer" className={LBL}>Customer name</label>
             <div className="flex gap-2">
-              <select id="sv-customer" value={form.customer_id} onChange={e => set({ customer_id: e.target.value })} className={`${BOX} ${OK}`} data-testid="sale-customer-select">
+              <select id="sv-customer" value={form.customer_id} onChange={e => set({ customer_id: e.target.value })} className={`${BOX} ${bad("sv-customer") ? BAD : OK}`} data-testid="sale-customer-select">
                 <option value="">Walk-in / No customer record</option>
                 {form.customer_id && !f.selectedCustomer && <option value={form.customer_id}>{sale?.customer_name || "Customer"}</option>}
                 {f.customers.map(c => (
@@ -85,7 +85,8 @@ export default function SaleFormBody({ f, booking = null, sale = null, readOnly 
                 </button>
               )}
             </div>
-            {!readOnly && <p className="mt-1 text-xs text-slate-500">{existing ? "Pick a customer, or press the person button to enter a new buyer" : "Pick a customer, or press the person button to enter a new buyer and the sale-deed witness"}</p>}
+            {!readOnly && <p className="mt-1 text-xs text-slate-500">{existing || form.booking ? "Pick a customer, or press the person button to enter a new buyer" : "Pick a customer, or press the person button to enter a new buyer and the sale-deed witness"}</p>}
+            {bad("sv-customer") && <p className="mt-1 text-xs font-semibold text-red-700">A booking needs a customer: pick one, or enter a new one</p>}
           </div>
           <div>
             <span className={LBL}>Date (BS)</span>
@@ -119,7 +120,7 @@ export default function SaleFormBody({ f, booking = null, sale = null, readOnly 
                     {existing && buyerInfo && !readOnly && <p className="text-xs text-slate-500" data-testid="buyer-edit-hint">Changing these updates the customer's record, wherever it is used.</p>}
                   </div>
                 )}
-                {(!existing || hasWitness || !readOnly) && (
+                {!form.booking && (!existing || hasWitness || !readOnly) && (
                   <div className="min-w-0 space-y-3">
                     <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide" data-testid="witness-details-panel">Witness details <span className="normal-case font-medium text-blue-600/80">· for the sale deed</span></p>
                     {DEED_ROWS.map(({ label, ph: hint, wkey, wid }) => (
@@ -163,7 +164,7 @@ export default function SaleFormBody({ f, booking = null, sale = null, readOnly 
             {bad("sv-vehicle") && <p className="mt-1.5 text-xs font-semibold text-red-700">Pick the vehicle being sold</p>}
           </div>
           <div>
-            <label htmlFor="sv-sale_price" className={LBL}>Sale price <span className="text-red-600">*</span></label>
+            <label htmlFor="sv-sale_price" className={LBL}>Sale price {!form.booking && <span className="text-red-600">*</span>}</label>
             <Money id="sv-sale_price" testid="sale-price-input" value={form.sale_price} onChange={v => set({ sale_price: v })} error={bad("sv-sale_price")} />
             {bad("sv-sale_price") && <p className="mt-1 text-xs font-semibold text-red-700">Enter the price it is sold for</p>}
           </div>
@@ -181,6 +182,47 @@ export default function SaleFormBody({ f, booking = null, sale = null, readOnly 
           </div>
         </div>
       </section>
+
+      {/* Booking: the tick turns a new sale into a booking (a deposit, the vehicle reserved, a receipt); it opens the deposit fields.
+          Not offered on a recorded sale or when the sale completes a booking. */}
+      {!existing && !booking && (
+        <section id="sv-section-booking" className={SECTION} data-testid="booking-section">
+          <label htmlFor="sv-booking" className="flex items-start gap-3 cursor-pointer select-none">
+            <input
+              id="sv-booking" type="checkbox" checked={form.booking} onChange={e => set({ booking: e.target.checked })} data-testid="booking-checkbox"
+              className="mt-0.5 h-5 w-5 shrink-0 rounded border-slate-400 text-blue-600 focus:ring-2 focus:ring-blue-500"
+            />
+            <span>
+              <span className="block text-base font-bold text-slate-900" style={{ fontFamily: "Manrope, sans-serif" }}>Booking</span>
+              <span className="block text-xs text-slate-500">Tick if the customer is only booking the vehicle: a deposit is taken and the vehicle is reserved, and no sale is recorded yet</span>
+            </span>
+          </label>
+          {form.booking && (
+            <div className={`${GRID} mt-5`} data-testid="booking-fields">
+              <div>
+                <label htmlFor="sv-booking-amount" className={LBL}>Booking Amount (NPR) <span className="text-red-600">*</span></label>
+                <Money id="sv-booking-amount" testid="booking-amount-input" placeholder="e.g. 20000" value={form.booking_amount} onChange={v => set({ booking_amount: v })} error={bad("sv-booking-amount")} />
+                {bad("sv-booking-amount") && <p className="mt-1 text-xs font-semibold text-red-700">Enter the deposit taken</p>}
+              </div>
+              <div>
+                <label htmlFor="sv-booking-method" className={LBL}>Paid By</label>
+                <select id="sv-booking-method" value={form.booking_method} onChange={e => set({ booking_method: e.target.value })} className={`${BOX} ${OK}`} data-testid="booking-method-select">
+                  <option>Cash</option>
+                  <option>Bank Transfer</option>
+                </select>
+              </div>
+              <div>
+                <label htmlFor="sv-agreed-price" className={LBL}>Agreed Sale Price (NPR)</label>
+                <Money id="sv-agreed-price" testid="booking-agreed-price-input" placeholder="Optional" value={form.agreed_price} onChange={v => set({ agreed_price: v })} />
+              </div>
+              <div>
+                <span className={LBL}>Booking Date</span>
+                <BSDatePicker value={form.booking_date} onChange={val => set({ booking_date: val })} data-testid="booking-date-input" triggerClassName={`${DATE_BOX} ${OK}`} />
+              </div>
+            </div>
+          )}
+        </section>
+      )}
 
       {/* 2 Payment */}
       {!compact && <section id="sv-section-payment" className={SECTION}>

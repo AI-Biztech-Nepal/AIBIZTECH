@@ -21,6 +21,8 @@ const EMPTY_FORM = {
   sanakhat_cost: "", resanakhat_cost: "",
   exchange_valuation: "", exchange_brand: "", exchange_model: "", exchange_reg_no: "", exchange_year: "",
   witness_name: "", witness_address: "", witness_phone: "", witness_id_number: "",
+  // "Booking" tick (a new sale only): the form then records a booking instead of a sale - a deposit, the vehicle reserved.
+  booking: false, booking_amount: "", booking_method: "Cash", agreed_price: "", booking_date: "",
 };
 
 const EMPTY_BUYER = { name: "", contact_number: "", address: "", id_number: "" };
@@ -196,18 +198,21 @@ export default function useSaleForm({ booking = null, sale = null } = {}) {
   // existing customer picked from the list covers the buyer half itself), and on a new sale the witness is mandatory
   // too (sale deed). Lead and Referred by are optional, except that a new buyer must be tagged with one or the other.
   const enteringNewBuyer = showAddCust && !form.customer_id;
+  // A booking needs a customer on record (the Bookings page never takes one without), no witness, no sale price, and a deposit.
   const missing = [
+    form.booking && !form.customer_id && !enteringNewBuyer && ["sv-customer", "customer"],
     enteringNewBuyer && !buyer.name.trim() && ["sv-buyer-name", "buyer's name"],
     enteringNewBuyer && !buyer.address.trim() && ["sv-buyer-address", "buyer's address"],
     enteringNewBuyer && !buyer.contact_number.trim() && ["sv-buyer-phone", "buyer's phone"],
     buyerChanged && !buyerInfo.name.trim() && ["sv-buyer-name", "buyer's name"],
     buyerChanged && !buyerInfo.contact_number.trim() && ["sv-buyer-phone", "buyer's phone"],
-    !existing && showAddCust && !form.witness_name.trim() && ["sv-witness-name", "witness's name"],
-    !existing && showAddCust && !form.witness_address.trim() && ["sv-witness-address", "witness's address"],
-    !existing && showAddCust && !form.witness_phone.trim() && ["sv-witness-phone", "witness's phone"],
+    !existing && showAddCust && !form.booking && !form.witness_name.trim() && ["sv-witness-name", "witness's name"],
+    !existing && showAddCust && !form.booking && !form.witness_address.trim() && ["sv-witness-address", "witness's address"],
+    !existing && showAddCust && !form.booking && !form.witness_phone.trim() && ["sv-witness-phone", "witness's phone"],
     !form.vehicle_id && ["sv-vehicle", "vehicle"],
-    !form.sale_price && ["sv-sale_price", "sale price"],
+    !form.booking && !form.sale_price && ["sv-sale_price", "sale price"],
     enteringNewBuyer && !isSourceComplete(buyerSource) && ["sv-lead", "lead, or who referred the buyer"],
+    form.booking && !(Number(form.booking_amount) > 0) && ["sv-booking-amount", "booking amount"],
   ].filter(Boolean);
 
   // The buyer's customer id: the one picked, or a new customer created from the panel.
@@ -224,6 +229,18 @@ export default function useSaleForm({ booking = null, sale = null } = {}) {
       id_number: buyerInfo.id_number.trim() || null,
     });
   };
+
+  // The body for POST /bookings (the "Booking" tick): the deposit, how it was paid, and the price agreed (the sale price, if that
+  // is what was filled in). Its date is the Booking Date, else the form's Date; blank means today.
+  const bookingPayload = (customerId) => ({
+    vehicle_id: form.vehicle_id,
+    customer_id: customerId,
+    booking_amount: Number(form.booking_amount),
+    payment_method: form.booking_method,
+    booking_date: form.booking_date || form.sale_date || undefined,
+    agreed_price: Number(form.agreed_price) || Number(form.sale_price) || undefined,
+    notes: form.notes || undefined,
+  });
 
   // The body for POST /sales (a new sale) or PUT /sales/:id (a recorded one: it always sends the lead, referrer, witness and
   // exchange, so clearing them sticks, and has no booking).
@@ -295,6 +312,6 @@ export default function useSaleForm({ booking = null, sale = null } = {}) {
     newExpName, setNewExpName, newExpAmt, setNewExpAmt,
     addPresetExpense, addCustomExpense, updateExpenseAmount, removeExpenseItem,
     grandTotal, exchangeValuation, amountPaid, autoDue, amountDue,
-    missing, ensureCustomer, payload,
+    missing, ensureCustomer, payload, bookingPayload,
   };
 }
