@@ -72,12 +72,6 @@ function TransferStatus({ vehicle, editable, onChange }) {
   );
 }
 
-// Profit on the sale: the vehicle's realized margin, or — once returned — what was kept.
-function marginOf(sale, vehicle) {
-  if (sale.returned) return sale.retained_amount ?? null;
-  return vehicle?.expected_profit ?? null;
-}
-
 export default function Sales() {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -407,7 +401,6 @@ export default function Sales() {
               {filteredBookings.map(b => <BookedCard key={b.id} b={b} cost={costOf(b.vehicle_id)} isAdmin={isAdmin} actions={bookingActions} />)}
               {filtered.map(s => {
                 const v = vehicleById[s.vehicle_id];
-                const margin = marginOf(s, v);
                 const cost = costOf(s.vehicle_id);
                 return (
                   <div
@@ -431,7 +424,9 @@ export default function Sales() {
                       )}
                     </div>
                     <div className="flex items-center justify-between mt-2">
-                      <span className="text-sm font-bold text-green-700">{formatNPR(s.total_amount)}</span>
+                      {s.profit != null
+                        ? <span className={`text-sm font-bold ${s.profit < 0 ? "text-red-600" : "text-green-700"}`} data-testid="sale-profit-mobile"><span className="text-xs font-medium text-slate-400">Profit </span>{formatNPR(s.profit)}</span>
+                        : <span className="text-sm font-bold text-green-700"><span className="text-xs font-medium text-slate-400">Sale price </span>{formatNPR(s.sale_price)}</span>}
                       {s.returned
                         ? <span className="text-xs text-amber-700">Refunded {formatNPR(s.refund_amount || 0)}</span>
                         : <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700">{s.payment_method}</span>}
@@ -442,9 +437,8 @@ export default function Sales() {
                         Transfer <TransferStatus vehicle={v} editable={isAdmin} onChange={updateTransfer} />
                       </div>
                     )}
-                    <div className="mt-1.5 flex items-center justify-between text-xs text-slate-400">
+                    <div className="mt-1.5 text-xs text-slate-400">
                       <HoverADDate date={s.sale_date} />
-                      {margin != null && <span className={margin < 0 || v?.low_margin ? "text-red-600 font-semibold" : "text-green-700 font-semibold"}>{s.returned ? "Kept" : "Margin"} {formatNPR(margin)}</span>}
                     </div>
                   </div>
                 );
@@ -464,7 +458,7 @@ export default function Sales() {
                     <th className="text-right">Sale Price</th>
                     <th className="text-right" title="The vehicle's overall cost: purchase price + expenses + accessories">Cost Price</th>
                     <th>Transfer</th>
-                    <th className="text-right">Total</th>
+                    <th className="text-right" title="What the sale earned: the sale price less the vehicle's overall cost (what was kept, for a returned sale)">Profit</th>
                     <th>Payment</th>
                     <th>Date</th>
                     <th className="w-10" />
@@ -500,7 +494,9 @@ export default function Sales() {
                         <td className="whitespace-nowrap">
                           {s.returned ? <span className="text-gray-300">—</span> : <TransferStatus vehicle={v} editable={isAdmin} onChange={updateTransfer} />}
                         </td>
-                        <td className="text-right font-bold text-green-700 whitespace-nowrap">{formatNPR(s.total_amount)}</td>
+                        <td className="text-right font-bold whitespace-nowrap" data-testid="sale-profit">
+                          {s.profit != null ? <span className={s.profit < 0 ? "text-red-600" : "text-green-700"}>{formatNPR(s.profit)}</span> : <span className="text-gray-300 font-normal">—</span>}
+                        </td>
                         <td>
                           {s.returned ? (
                             <div className="text-xs text-amber-700 whitespace-nowrap">Refunded {formatNPR(s.refund_amount || 0)}</div>

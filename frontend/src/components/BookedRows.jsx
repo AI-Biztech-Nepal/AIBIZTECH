@@ -35,8 +35,8 @@ function BookedActions({ b, isAdmin, actions }) {
   );
 }
 
-// The cells line up with the Sales table's columns: SN, Vehicle, Status, Customer, Sale Price, Cost Price, Transfer, Total,
-// Payment, Date, actions.
+// The cells line up with the Sales table's columns: SN, Vehicle, Status, Customer, Sale Price, Cost Price, Transfer, Profit
+// (none yet: it isn't sold), Payment, Date, actions.
 export function BookedTableRow({ b, index, cost, isAdmin, actions }) {
   const agreed = agreedOf(b);
   return (
