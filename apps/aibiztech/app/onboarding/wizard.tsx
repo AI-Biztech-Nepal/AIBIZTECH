@@ -5,7 +5,7 @@ import { useFormStatus } from 'react-dom';
 import { createOrganization } from '../actions';
 import { FIELDS, MAX_PHOTO_BYTES, validatePhoto, type Details } from '@/lib/org-details';
 
-const STEPS = ['Organization', 'Owner', 'PAN', 'Confirm'];
+const STEPS = ['Owner', 'PAN', 'Confirm'];
 const LAST = STEPS.length - 1;
 const PHONE_PATTERN = '\+?[0-9][0-9 \-]{6,19}';
 const blank = Object.fromEntries(FIELDS.map((f) => [f, ''])) as Details;
@@ -16,9 +16,14 @@ function Create() {
 }
 
 // Entries live only in this component's state, so leaving the flow (success, error redirect, reload) starts clean
-export function Wizard() {
+export function Wizard({ initial }: { initial: { name: string; address: string; phone: string; email: string } }) {
   const [step, setStep] = useState(0);
-  const [v, setV] = useState<Details>(blank);
+  // Organization details come from sign-up; the owner is the person who signed up, so they start prefilled
+  const [v, setV] = useState<Details>({
+    ...blank,
+    ...initial,
+    owner_name: '', owner_address: initial.address, owner_phone: initial.phone, owner_email: initial.email,
+  });
   const [photoName, setPhotoName] = useState('');
   const form = useRef<HTMLFormElement>(null);
   const set = (f: keyof Details) => (e: { target: { value: string } }) => setV((p) => ({ ...p, [f]: e.target.value }));
@@ -58,15 +63,9 @@ export function Wizard() {
       </div>
 
       <form ref={form} action={createOrganization} onKeyDown={onKeyDown}>
-        <fieldset hidden={step !== 0}>
-          <legend>Organization details</legend>
-          {text('name', 'Organization name', { autoComplete: 'organization' })}
-          {text('address', 'Address')}
-          {text('phone', 'Phone number', { type: 'tel', pattern: PHONE_PATTERN, title: 'Digits, optionally starting with +' })}
-          {text('email', 'Email', { type: 'email' })}
-        </fieldset>
+        {(['address', 'phone', 'email'] as const).map((f) => <input key={f} type="hidden" name={f} value={v[f]} />)}
 
-        <fieldset hidden={step !== 1}>
+        <fieldset hidden={step !== 0}>
           <legend>Owner details</legend>
           {text('owner_name', 'Owner full name')}
           {text('owner_address', 'Owner address')}
@@ -74,7 +73,7 @@ export function Wizard() {
           {text('owner_email', 'Owner email', { type: 'email' })}
         </fieldset>
 
-        <fieldset hidden={step !== 2}>
+        <fieldset hidden={step !== 1}>
           <legend>Registered PAN</legend>
           {text('pan_no', 'PAN number', { inputMode: 'numeric', pattern: '[0-9]{9}', maxLength: 9, title: 'Exactly 9 digits' })}
           <label>PAN card photo (optional)
@@ -83,10 +82,10 @@ export function Wizard() {
           <small>JPG, PNG or WebP, up to {MAX_PHOTO_BYTES / 1024 / 1024} MB.</small>
         </fieldset>
 
-        <fieldset hidden={step !== 3}>
+        <fieldset hidden={step !== 2}>
           <legend>Review</legend>
+          {text('name', 'Organization name', { autoComplete: 'organization' })}
           <dl>
-            {row('Organization', v.name)}{row('Address', v.address)}{row('Phone', v.phone)}{row('Email', v.email)}
             {row('Owner', v.owner_name)}{row('Owner address', v.owner_address)}{row('Owner phone', v.owner_phone)}{row('Owner email', v.owner_email)}
             {row('PAN', v.pan_no)}{row('PAN photo', photoName)}
           </dl>
