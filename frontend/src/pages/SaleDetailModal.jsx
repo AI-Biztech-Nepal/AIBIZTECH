@@ -14,6 +14,7 @@ import { formatNPR, getTransferStatusStyle, splitSanakhatExpenses, deleteSaleCon
 import { ReturnModal } from "./VehicleModals";
 import SaleFormBody from "./SaleFormBody";
 import useSaleForm from "../hooks/useSaleForm";
+import useBackdropClose from "../hooks/useBackdropClose";
 import WarrantyHistory from "../components/WarrantyHistory";
 import WarrantyBadge from "../components/WarrantyBadge";
 import { useAuth } from "../context/AuthContext";
@@ -46,6 +47,7 @@ function Loaded({ sale, vehicle, booking, reload, onClose, onChanged }) {
   const [showReturn, setShowReturn] = useState(false);
   const [returnForm, setReturnForm] = useState({ refund_amount: "", new_status: "available", notes: "" });
   const [returning, setReturning] = useState(false);
+  const backdrop = useBackdropClose(() => { if (!saving && !returning) onClose(); }); // clicking outside the pop-up closes it
 
   const returned = !!sale.returned;
   const live = !returned && vehicle?.status === "sold"; // still sold: it has a warranty and can be returned
@@ -133,7 +135,7 @@ function Loaded({ sale, vehicle, booking, reload, onClose, onChanged }) {
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 sm:p-4" data-testid="sale-detail-modal">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 sm:p-4" data-testid="sale-detail-modal" {...backdrop}>
       <div className="bg-white sm:rounded-2xl shadow-2xl w-full h-full sm:h-auto sm:max-w-5xl sm:max-h-[90vh] overflow-y-auto">
         {/* Header + status and actions: sticky as one block, so Save Changes and the other buttons stay reachable. */}
         <div className="sticky top-0 bg-white z-10 border-b border-slate-100">

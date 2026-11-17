@@ -15,6 +15,7 @@ import api from "../utils/api";
 import { formatNPR } from "../utils/helpers";
 import { digits } from "../components/formKit";
 import useSaleForm from "../hooks/useSaleForm";
+import useBackdropClose from "../hooks/useBackdropClose";
 import SaleFormBody from "./SaleFormBody";
 import BookingReceipt from "../components/BookingReceipt";
 
@@ -37,6 +38,7 @@ export default function SaleVehicleModal({ booking = null, onClose, onSaved }) {
   const [active, setActive] = useState("sale");
   const [receipt, setReceipt] = useState(null); // the booking just made (the "Booking" tick): its printable receipt replaces the form
   const isBooking = form.booking;
+  const backdrop = useBackdropClose(() => { if (!saving) onClose(); }); // clicking outside the form closes it
 
   useEffect(() => { loadLists(); }, [loadLists]);
 
@@ -84,7 +86,7 @@ export default function SaleVehicleModal({ booking = null, onClose, onSaved }) {
   if (receipt) return <BookingReceipt booking={receipt} onClose={() => { setReceipt(null); onClose(); }} />;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 sm:p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 sm:p-4" {...backdrop}>
       <div className="bg-white sm:rounded-2xl shadow-2xl w-full h-full sm:h-auto sm:max-h-[92vh] sm:max-w-3xl lg:max-w-6xl flex flex-col overflow-hidden">
 
         {/* Header */}

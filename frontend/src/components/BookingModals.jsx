@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import api from "../utils/api";
 import { formatNPR } from "../utils/helpers";
 import VehicleComboBox from "./VehicleComboBox";
+import useBackdropClose from "../hooks/useBackdropClose";
 
 const inp = "w-full h-9 px-3 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500";
 
@@ -33,6 +34,7 @@ export function EditBookingModal({ booking, onClose, onSaved }) {
   });
   const [vehicles, setVehicles] = useState([]);
   const [saving, setSaving] = useState(false);
+  const backdrop = useBackdropClose(() => { if (!saving) onClose(); }); // clicking outside the form closes it
 
   // The booked vehicle is "reserved", so it isn't in the available list: add it so it stays selectable.
   useEffect(() => {
@@ -60,7 +62,7 @@ export function EditBookingModal({ booking, onClose, onSaved }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 sm:p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 sm:p-4" {...backdrop}>
       <div className="bg-white sm:rounded-2xl shadow-2xl w-full h-full sm:h-auto sm:max-w-lg sm:max-h-[90vh] overflow-y-auto" data-testid="booking-modal">
         <div className="flex items-center justify-between p-4 sm:p-5 border-b border-slate-100 sticky top-0 bg-white z-10">
           <div className="min-w-0">
