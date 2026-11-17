@@ -2,7 +2,7 @@ import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 import { cookieOptions } from './lib/supabase';
 
-const PUBLIC = ['/login', '/signup', '/forgot-password', '/auth/callback'];
+const PUBLIC = ['/login', '/signup', '/forgot-password', '/auth/callback', '/finance-config.js'];
 
 // Refreshes the Supabase session cookie on every request and sends signed-out users to /login
 export async function proxy(request: NextRequest) {
