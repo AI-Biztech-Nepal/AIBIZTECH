@@ -62,6 +62,36 @@ export async function resetPassword(form: FormData) {
   redirect('/');
 }
 
+// Starts the chosen apps (15-day trial) for a business and makes the person admin in each
+async function enableApps(supabase: Awaited<ReturnType<typeof createClient>>, org_id: string, user_id: string, keys: string[]) {
+  const core = supabase.schema('core');
+  const { data: valid } = await core.from('services').select('key').eq('is_active', true).in('key', keys);
+  const chosen = (valid ?? []).map((s) => s.key);
+  if (!chosen.length) return null;
+  const { data: have } = await core.from('org_services').select('service_key').eq('org_id', org_id);
+  const started = new Set((have ?? []).map((s) => s.service_key));
+  const fresh = chosen.filter((k) => !started.has(k));
+  if (fresh.length) {
+    const { error } = await core.from('org_services').insert(fresh.map((service_key) => ({ org_id, service_key })));
+    if (error) return error.message;
+  }
+  const { error } = await core.from('service_roles').upsert(chosen.map((service_key) => ({ org_id, user_id, service_key, role: 'admin' })), { onConflict: 'org_id,user_id,service_key', ignoreDuplicates: true });
+  return error?.message ?? null;
+}
+
+// Tick more apps later (Apps page)
+export async function addApps(form: FormData) {
+  const { supabase, ctx } = await getContext();
+  const org = ctx?.orgs.find((o) => o.id === ctx.active_org_id) ?? ctx?.orgs[0];
+  if (!ctx || !org || org.org_role === 'member') fail('/', 'Only owners and admins can add apps.');
+  const keys = form.getAll('apps').map(String);
+  if (!keys.length) fail('/apps', 'Tick at least one app.');
+  const problem = await enableApps(supabase, org!.id, ctx!.user_id, keys);
+  if (problem) fail('/apps', problem);
+  revalidatePath('/', 'layout');
+  redirect('/?message=' + encodeURIComponent('Apps added. Your 15-day trial has started.'));
+}
+
 export async function createOrganization(form: FormData) {
   const v = Object.fromEntries(FIELDS.map((f) => [f, str(form, f)])) as Details;
   const problem = validateDetails(v);
@@ -91,6 +121,11 @@ export async function createOrganization(form: FormData) {
       : await supabase.schema('core').from('organizations').update({ pan_photo_path: path }).eq('id', orgId);
     if (linkError) fail('/', 'Your organization was created, but the PAN photo could not be saved. You can add it later.');
   }
+  const keys = form.getAll('apps').map(String);
+  const { data: me } = await supabase.auth.getUser();
+  const appsProblem = keys.length && me.user ? await enableApps(supabase, String(orgId), me.user.id, keys) : null;
+  if (appsProblem) fail('/', `Your organization was created, but the apps could not be started: ${appsProblem}. Add them from the Apps page.`);
+  revalidatePath('/', 'layout');
   redirect('/');
 }
 

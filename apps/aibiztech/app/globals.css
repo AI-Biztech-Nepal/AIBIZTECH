@@ -233,3 +233,13 @@ form.row { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); align-it
 .table .in { color: var(--ok); } .table .out { color: #ff9b8f; }
 .table tr.total td { font-weight: 700; border-bottom: 0; }
 select { font: inherit; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); }
+
+/* App picker (onboarding and Apps page) */
+.app-picker { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; margin: 12px 0; }
+.pick { position: relative; display: grid; justify-items: center; gap: 8px; padding: 16px 10px; border: 2px solid var(--border); border-radius: 14px; background: var(--surface); color: var(--text); text-align: center; cursor: pointer; }
+.pick:hover { border-color: var(--cyan); }
+.pick.on { border-color: var(--accent); box-shadow: 0 0 0 1px rgba(11,121,238,0.4), 0 8px 24px rgba(11,121,238,0.18); }
+.pick input { position: absolute; top: 10px; right: 10px; width: 18px; height: 18px; accent-color: var(--accent); }
+.pick .svc-logo { margin: 0; }
+.pick.static { cursor: default; }
+.pick small { color: var(--ok); }

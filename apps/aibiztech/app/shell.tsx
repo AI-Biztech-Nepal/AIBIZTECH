@@ -4,7 +4,7 @@ import { createClient, type Org } from '@/lib/supabase';
 import { signOut, switchOrg } from './actions';
 import { Icon, serviceIcon } from './icons';
 
-type Page = 'home' | 'admin' | 'team' | 'finance';
+type Page = 'home' | 'admin' | 'team' | 'finance' | 'apps';
 
 // App shell: left navigation like the apps themselves. Apps come from core.services, so a new
 // service (or a feature turned on for a business) shows up here without touching this file.
@@ -46,7 +46,7 @@ export async function Shell({ org, orgs = [], page, children }: { org: Org | nul
 
           <details className="group" open>
             <summary>Apps</summary>
-            {services?.map((s) => {
+            {services?.filter((s) => !org || org.services[s.key]).map((s) => {
               const on = !!org?.services[s.key];
               // Finance runs inside AIBIZTECH; the other apps are still opened through single sign-on
               return on && s.key === 'finance'
@@ -55,6 +55,7 @@ export async function Shell({ org, orgs = [], page, children }: { org: Org | nul
                 ? item(`/go/${s.key}`, serviceIcon(s.key, s.name), s.name)
                 : item(org ? '/' : '/onboarding', serviceIcon(s.key, s.name), s.name, false, <Icon name="lockmini" size={14} />);
             })}
+            {isAdmin && item('/apps', 'plus', 'Add apps', page === 'apps')}
           </details>
 
           {isAdmin && (

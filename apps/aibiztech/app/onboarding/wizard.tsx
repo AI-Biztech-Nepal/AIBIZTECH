@@ -3,9 +3,10 @@
 import { useRef, useState, type KeyboardEvent } from 'react';
 import { useFormStatus } from 'react-dom';
 import { createOrganization } from '../actions';
+import { ServiceLogo } from '../icons';
 import { FIELDS, MAX_PHOTO_BYTES, validatePhoto, type Details } from '@/lib/org-details';
 
-const STEPS = ['Company', 'Confirm'];
+const STEPS = ['Company', 'Apps', 'Confirm'];
 const LAST = STEPS.length - 1;
 const PHONE_PATTERN = '\+?[0-9][0-9 \-]{6,19}';
 const blank = Object.fromEntries(FIELDS.map((f) => [f, ''])) as Details;
@@ -16,7 +17,7 @@ function Create() {
 }
 
 // Entries live only in this component's state, so leaving the flow (success, error redirect, reload) starts clean
-export function Wizard({ initial }: { initial: { name: string; address: string; phone: string; email: string } }) {
+export function Wizard({ initial, services }: { initial: { name: string; address: string; phone: string; email: string }; services: { key: string; name: string }[] }) {
   const [step, setStep] = useState(0);
   // Organization details come from sign-up; the owner is the person who signed up, so they start prefilled
   const [v, setV] = useState<Details>({
@@ -26,6 +27,9 @@ export function Wizard({ initial }: { initial: { name: string; address: string; 
     owner_name: initial.name, owner_address: initial.address, owner_phone: initial.phone, owner_email: initial.email,
   });
   const [photoName, setPhotoName] = useState('');
+  const [picked, setPicked] = useState<string[]>([]);
+  const [pickError, setPickError] = useState('');
+  const toggle = (k: string) => setPicked((p) => (p.includes(k) ? p.filter((x) => x !== k) : [...p, k]));
   const form = useRef<HTMLFormElement>(null);
   const set = (f: keyof Details) => (e: { target: { value: string } }) => setV((p) => ({ ...p, [f]: e.target.value }));
   const text = (f: keyof Details, label: string, extra: React.InputHTMLAttributes<HTMLInputElement> = {}) => (
@@ -33,6 +37,11 @@ export function Wizard({ initial }: { initial: { name: string; address: string; 
   );
 
   function next() {
+    if (step === 1) {
+      if (!picked.length) return setPickError('Tick at least one app to continue.');
+      setPickError('');
+      return setStep(2);
+    }
     const fieldset = form.current?.querySelectorAll('fieldset')[step];
     const bad = Array.from(fieldset?.querySelectorAll('input') ?? []).find((i) => !i.checkValidity());
     if (bad) return bad.reportValidity();
@@ -78,9 +87,24 @@ export function Wizard({ initial }: { initial: { name: string; address: string; 
         </fieldset>
 
         <fieldset hidden={step !== 1}>
+          <legend>Which apps do you need?</legend>
+          <small>Tick the ones you want. Each starts with a free 15-day trial, and you can add more later.</small>
+          <div className="app-picker">
+            {services.map((s) => (
+              <label key={s.key} className={`pick${picked.includes(s.key) ? ' on' : ''}`}>
+                <input type="checkbox" name="apps" value={s.key} checked={picked.includes(s.key)} onChange={() => toggle(s.key)} />
+                <ServiceLogo svc={s} />
+                <span>{s.name}</span>
+              </label>
+            ))}
+          </div>
+          {pickError && <p role="alert" className="error">{pickError}</p>}
+        </fieldset>
+
+        <fieldset hidden={step !== 2}>
           <legend>Review</legend>
           <dl>
-            {row('Company', v.name)}
+            {row('Company', v.name)}{row('Apps', services.filter((s) => picked.includes(s.key)).map((s) => s.name).join(', '))}
             {row('Owner', v.owner_name)}{row('Owner address', v.owner_address)}{row('Owner phone', v.owner_phone)}{row('Owner email', v.owner_email)}
             {row('PAN', v.pan_no)}{row('PAN photo', photoName)}
           </dl>
