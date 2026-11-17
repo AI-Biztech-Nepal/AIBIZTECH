@@ -91,9 +91,28 @@ export function useAuthListener() {
   useEffect(() => {
     let isMounted = true;
 
-    async function loadProfile(userId: string) {
-      const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).single();
-      if (!error && isMounted) setProfile(data as Profile);
+    async function loadProfile(userId: string, meta?: Record<string, unknown>) {
+      let { data } = await supabase.from('profiles').select('*').eq('id', userId).maybeSingle();
+      if (!data) {
+        // Someone who signed up in the portal has no Finance profile yet: make it from their sign-up and business details
+        const db = supabase as any;
+        const { data: ctx } = await db.schema('core').rpc('my_context');
+        const org = ctx?.orgs?.find((o: { id: string }) => o.id === ctx?.active_org_id) ?? ctx?.orgs?.[0];
+        const created = await supabase
+          .from('profiles')
+          .insert({
+            id: userId,
+            role: 'store',
+            full_name: (meta?.full_name as string | undefined) ?? ctx?.full_name ?? null,
+            phone: (meta?.phone as string | undefined) ?? null,
+            business_name: org?.name ?? null,
+            business_address: (meta?.address as string | undefined) ?? null,
+          } as never)
+          .select('*')
+          .maybeSingle();
+        data = created.data;
+      }
+      if (data && isMounted) setProfile(data as Profile);
       await loadOrg(userId, (data as Profile | null)?.business_name?.trim() || (data as Profile | null)?.full_name);
     }
 
@@ -123,7 +142,7 @@ export function useAuthListener() {
       if (event === 'SIGNED_OUT') setRecovering(false);
       setSession(session);
       if (session?.user) {
-        const profileLoaded = loadProfile(session.user.id);
+        const profileLoaded = loadProfile(session.user.id, session.user.user_metadata as Record<string, unknown>);
         // A page refresh (the session is restored from storage): keep the app on its
         // spinner until the profile is in. Mounted earlier, the signed-in screens lose
         // the page the address points at, and every refresh landed on the dashboard.
