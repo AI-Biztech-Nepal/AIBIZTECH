@@ -91,5 +91,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: linkError.message }, { status: 500 });
   }
 
+  const { error: provErr } = await admin.schema('core').rpc('provision_service_user', {
+    p_org: callerProfile.company_id,
+    p_user: created.user.id,
+    p_service: 'attendance',
+    p_role: 'employee',
+  });
+  if (provErr) {
+    await admin.auth.admin.deleteUser(created.user.id);
+    return NextResponse.json({ error: provErr.message }, { status: 500 });
+  }
+
   return NextResponse.json({ email, employeeName: employee.name });
 }

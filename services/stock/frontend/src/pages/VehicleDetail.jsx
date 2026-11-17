@@ -428,7 +428,7 @@ export function VehicleDetailModal({ id, onClose }) {
                   ? <>Booked by <span className="font-semibold">{vehicle.booking.customer_name || "customer"}</span>{vehicle.booking.booking_amount != null && <> · {formatNPR(vehicle.booking.booking_amount)} deposit</>}{vehicle.booking.booking_date && <> · <HoverADDate date={vehicle.booking.booking_date} /></>}</>
                   : "Reserved"}
               </span>
-              {vehicle.booking && <button type="button" onClick={() => navigate("/bookings")} className="font-semibold underline">Open in Bookings</button>}
+              {vehicle.booking && <button type="button" onClick={() => navigate("/sales")} className="font-semibold underline">Open in Sales</button>}
             </div>
           )}
 
@@ -662,7 +662,7 @@ export function VehicleDetailModal({ id, onClose }) {
                     data-testid="vehicle-photo"
                   >
                     <button type="button" onClick={() => !photo.pending && !suppressPhotoClick.current && setPreviewPhoto(photo.url)} className="block w-full h-full">
-                      <img src={photo.url} alt="Vehicle" draggable={false} className={`w-full h-full object-cover transition-opacity ${photo.pending ? "opacity-50" : ""}`} />
+                      <img src={photo.thumb || photo.url} alt="Vehicle" draggable={false} className={`w-full h-full object-cover transition-opacity ${photo.pending ? "opacity-50" : ""}`} />
                     </button>
                     {photo.pending && (
                       <div className="absolute inset-0 flex items-center justify-center bg-black/10 pointer-events-none">

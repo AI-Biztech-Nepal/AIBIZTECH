@@ -99,6 +99,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: linkError.message }, { status: 500 });
   }
 
+  const { error: provErr } = await admin.schema('core').rpc('provision_service_user', {
+    p_org: auth.companyId,
+    p_user: created.user.id,
+    p_service: 'attendance',
+    p_role: 'admin',
+  });
+  if (provErr) {
+    await admin.auth.admin.deleteUser(created.user.id);
+    return NextResponse.json({ error: provErr.message }, { status: 500 });
+  }
+
   const envFile = [
     `SUPABASE_URL=${process.env.NEXT_PUBLIC_SUPABASE_URL ?? ''}`,
     `SUPABASE_ANON_KEY=${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? ''}`,
@@ -132,6 +143,13 @@ export async function DELETE(req: NextRequest) {
   if (!target || !target.is_device_bridge || target.company_id !== auth.companyId) {
     return NextResponse.json({ error: 'Credential not found.' }, { status: 404 });
   }
+
+  const { error: deprovErr } = await admin.schema('core').rpc('deprovision_service_user', {
+    p_org: auth.companyId,
+    p_user: id,
+    p_service: 'attendance',
+  });
+  if (deprovErr) return NextResponse.json({ error: deprovErr.message }, { status: 500 });
 
   const { error } = await admin.auth.admin.deleteUser(id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });

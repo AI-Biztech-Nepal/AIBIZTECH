@@ -5,6 +5,7 @@ import useMediaQuery from "../hooks/useMediaQuery";
 import { Plus, Search, Trash2, Filter, X, EyeOff, Package, Wallet, DollarSign, Lock, Moon, Sparkles, Store, User, Wrench, Clock, CheckCircle2, AlertTriangle, ImageOff, ChevronDown } from "lucide-react";
 import { toast } from "sonner";
 import api, { postWithRetry } from "../utils/api";
+import { peek, remember, cacheTicket } from "../utils/listCache";
 import { EMPTY_DOC_PHOTOS, flattenStagedDocs, revokeStagedDocs, uploadStagedDocs } from "../utils/stagedDocs";
 import { formatNPR, getAgingStyle, getStatusStyle, getTerminationStyle, isSanakhatOverdue, sanakhatPendingDays, sanakhatDaysLeft, SANAKHAT_CYCLE_DAYS, SANAKHAT_WARN_DAYS, BRANDS, VEHICLE_STATUS_OPTIONS, formatOwnership } from "../utils/helpers";
 import { AddVehicleModal } from "./AddVehicleModal";
@@ -43,6 +44,12 @@ const sortStock = (a, b) => {
   return (a.aging?.days ?? 0) - (b.aging?.days ?? 0);
 };
 
+// The vehicle list arrives in two halves (see fetchVehicles); put them back together newest first, as the server sends one list.
+const newestFirst = (list) => list.sort((a, b) => {
+  const ca = a.created_at || "", cb = b.created_at || "";
+  return ca < cb ? 1 : ca > cb ? -1 : 0;
+});
+
 const EMPTY = {
   brand: "", model: "", year: new Date().getFullYear(), engine_cc: 125, fuel_type: "Petrol", vehicle_type: "bike",
   ownership_number: "", purchase_price: "", purchase_date: "", purchase_source: "", purchase_from: "",
@@ -63,9 +70,10 @@ export default function Inventory() {
   const hideFinancials = isFrontDesk || hidePricing;
   const canManageStock = hasFullVehicleAccess(user?.role);
   const [searchParams, setSearchParams] = useSearchParams();
-  const [vehicles, setVehicles] = useState([]);
+  // Coming back to this page shows the last list at once (see utils/listCache.js); fetchVehicles below refreshes it as always.
+  const [vehicles, setVehicles] = useState(() => newestFirst([...(peek("vehicles:unsold") ?? []), ...(peek("vehicles:sold") ?? [])]));
   const [filtered, setFiltered] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => peek("vehicles:unsold") === undefined);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState(searchParams.get("aging") ? "available" : "all");
   const [brandFilter, setBrandFilter] = useState("all");
@@ -299,18 +307,31 @@ export default function Inventory() {
   };
 
   const fetchVehicles = useCallback(async () => {
+    // The grid only shows unsold vehicles, so those load first and the page appears as soon as they arrive. Sold vehicles
+    // (about half the list, and the slower half) only feed the duplicate-plate banner and the "this one was sold" hint
+    // when searching, so they follow in the background and are merged in when they land. Both requests start together.
+    const ticket = cacheTicket();
+    const soldRequest = api.get("/vehicles", { params: { status: "sold" } });
+    soldRequest.catch(() => {});  // handled below; this only keeps a failure from being reported twice
     try {
-      const r = await api.get("/vehicles");
-      setVehicles(r.data);
+      const r = await api.get("/vehicles", { params: { exclude_status: "sold" } });
+      remember("vehicles:unsold", r.data, ticket);
+      setVehicles(prev => newestFirst([...r.data, ...prev.filter(v => v.status === "sold")]));  // keeps the sold ones already loaded
       // One-time migration: "hidden" was renamed to "unlisted" — silently carry over any leftover legacy records.
       const legacyHidden = r.data.filter(v => v.status === "hidden");
       if (legacyHidden.length > 0) {
         await Promise.allSettled(legacyHidden.map(v => api.put(`/vehicles/${v.id}`, { status: "unlisted" })));
-        const r2 = await api.get("/vehicles");
-        setVehicles(r2.data);
+        const r2 = await api.get("/vehicles", { params: { exclude_status: "sold" } });
+        remember("vehicles:unsold", r2.data);
+        setVehicles(prev => newestFirst([...r2.data, ...prev.filter(v => v.status === "sold")]));
       }
     } catch { toast.error("Failed to load vehicles"); }
     finally { setLoading(false); }
+    try {
+      const rs = await soldRequest;
+      remember("vehicles:sold", rs.data, ticket);
+      setVehicles(prev => newestFirst([...prev.filter(v => v.status !== "sold"), ...rs.data]));
+    } catch { /* the sold half only adds the duplicate warning and search hint; the page works without it */ }
   }, []);
 
   useEffect(() => { fetchVehicles(); }, [fetchVehicles]);
@@ -851,12 +872,12 @@ export default function Inventory() {
                       <td>
                         <div className="flex items-center gap-2">
                           <div className="w-8 h-8 rounded-lg overflow-hidden border border-gray-200 shrink-0 bg-gray-50 flex items-center justify-center">
-                            {photo ? <LazyThumb src={photo.url} /> : <Package size={14} className="text-gray-300" />}
+                            {photo ? <LazyThumb src={photo.thumb || photo.url} /> : <Package size={14} className="text-gray-300" />}
                           </div>
                           <div className="min-w-0">
                             <div className="font-semibold text-gray-900 truncate" style={{ fontFamily: "Manrope" }}>{v.model}</div>
                             <div className="text-[11px] text-gray-500 truncate">
-                              {v.year} · {formatOwnership(v.ownership_number)}{v.status === "reserved" && v.booking?.customer_name ? ` · Booked by ${v.booking.customer_name}` : ""}{isAdmin && v.created_by ? ` · by ${v.created_by}` : ""}
+                              {v.year || "—"} · {formatOwnership(v.ownership_number)}{v.status === "reserved" && v.booking?.customer_name ? ` · Booked by ${v.booking.customer_name}` : ""}{isAdmin && v.created_by ? ` · by ${v.created_by}` : ""}
                             </div>
                           </div>
                         </div>
@@ -931,8 +952,9 @@ export default function Inventory() {
                 <div className="flex items-start justify-between gap-2 mb-3">
                   <div className="min-w-0">
                     <div className="font-bold text-slate-900 text-sm truncate" style={{ fontFamily: "Manrope" }}>{v.brand} {v.model}</div>
-                    <div className="text-xs text-slate-500 mt-0.5">{v.year} · {v.engine_cc}cc · {v.fuel_type} · {formatOwnership(v.ownership_number)}</div>
+                    <div className="text-xs text-slate-500 mt-0.5">{v.year || "—"} · {v.engine_cc}cc · {v.fuel_type} · {formatOwnership(v.ownership_number)}</div>
                     {v.registration_number && <div className="text-xs font-mono text-slate-500 mt-0.5">{v.registration_number}</div>}
+                    {v.purchase_source === "Exchange" && <span className="inline-block mt-1 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide bg-purple-100 text-purple-800" data-testid="exchange-tag">Exchange</span>}
                     {isAdmin && v.created_by && <div className="text-[11px] text-slate-400 mt-0.5" data-testid="vehicle-author">Added by {v.created_by}</div>}
                   </div>
                   <span className="shrink-0 flex flex-col items-end gap-1.5">
@@ -1024,7 +1046,7 @@ export default function Inventory() {
                           className="w-11 h-11 rounded-lg overflow-hidden border border-slate-200 shrink-0"
                           data-testid="vehicle-card-photo"
                         >
-                          <LazyThumb src={photo.url} />
+                          <LazyThumb src={photo.thumb || photo.url} />
                         </button>
                       ) : (
                         <div key={i} className="w-11 h-11 rounded-lg border border-dashed border-slate-200 shrink-0" />

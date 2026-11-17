@@ -17,6 +17,19 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Company creation moved to the portal: it owns orgs, memberships and service roles now. The
+  // old flow below is kept (disabled) for reference; flip this to re-enable it.
+  const REGISTER_DISABLED = true;
+  if (REGISTER_DISABLED) {
+    return NextResponse.json(
+      {
+        error: 'Sign-up has moved to the portal. Create your account there.',
+        portalUrl: process.env.PORTAL_SIGNUP_URL ?? null,
+      },
+      { status: 410 }
+    );
+  }
+
   const body = await req.json().catch(() => null);
   const fullName = typeof body?.fullName === 'string' ? body.fullName.trim() : '';
   const companyName = typeof body?.companyName === 'string' ? body.companyName.trim() : '';

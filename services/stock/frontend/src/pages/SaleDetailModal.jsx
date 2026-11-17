@@ -2,7 +2,7 @@
  * SaleDetailModal.jsx — a sale's details as a pop-up over the Sales list, the way a vehicle's details open over Inventory.
  *
  * The Overview tab is the Sale Vehicle form (SaleFormBody) filled in and read-only; Edit makes the same fields editable in
- * place, with Save Changes and Cancel at the top. A sold vehicle also gets a Warranty & service tab. Return, Undo Return
+ * place (the buyer's details, the witness and the exchange too), with Save Changes and Cancel at the top. A sold vehicle also gets a Warranty & service tab. Return, Undo Return
  * and Delete are here too. onChanged lets the Sales page reload after any change.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -14,6 +14,7 @@ import { formatNPR, getTransferStatusStyle, splitSanakhatExpenses, deleteSaleCon
 import { ReturnModal } from "./VehicleModals";
 import SaleFormBody from "./SaleFormBody";
 import useSaleForm from "../hooks/useSaleForm";
+import useBackdropClose from "../hooks/useBackdropClose";
 import WarrantyHistory from "../components/WarrantyHistory";
 import WarrantyBadge from "../components/WarrantyBadge";
 import { useAuth } from "../context/AuthContext";
@@ -46,6 +47,7 @@ function Loaded({ sale, vehicle, booking, reload, onClose, onChanged }) {
   const [showReturn, setShowReturn] = useState(false);
   const [returnForm, setReturnForm] = useState({ refund_amount: "", new_status: "available", notes: "" });
   const [returning, setReturning] = useState(false);
+  const backdrop = useBackdropClose(() => { if (!saving && !returning) onClose(); }); // clicking outside the pop-up closes it
 
   const returned = !!sale.returned;
   const live = !returned && vehicle?.status === "sold"; // still sold: it has a warranty and can be returned
@@ -64,8 +66,13 @@ function Loaded({ sale, vehicle, booking, reload, onClose, onChanged }) {
     setSaving(true);
     try {
       const customerId = await f.ensureCustomer();
-      await api.put(`/sales/${sale.id}`, f.payload(customerId));
-      toast.success("Sale updated successfully!");
+      const r = await api.put(`/sales/${sale.id}`, f.payload(customerId));
+      // The sale is saved; the changes to the buyer's own details go to the customer's record after it.
+      let buyerSaved = true;
+      try { await f.saveBuyerEdits(); } catch { buyerSaved = false; }
+      if (buyerSaved) toast.success("Sale updated successfully!");
+      else toast.error("The sale was saved, but the buyer's details could not be updated");
+      if (r.data?.exchange_note) toast(r.data.exchange_note);
       await reload(); // shows the saved sale, read-only again
       onChanged?.();
     } catch (err) { toast.error(getErrMsg(err, "Failed to save sale")); setSaving(false); }
@@ -128,7 +135,7 @@ function Loaded({ sale, vehicle, booking, reload, onClose, onChanged }) {
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 sm:p-4" data-testid="sale-detail-modal">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 sm:p-4" data-testid="sale-detail-modal" {...backdrop}>
       <div className="bg-white sm:rounded-2xl shadow-2xl w-full h-full sm:h-auto sm:max-w-5xl sm:max-h-[90vh] overflow-y-auto">
         {/* Header + status and actions: sticky as one block, so Save Changes and the other buttons stay reachable. */}
         <div className="sticky top-0 bg-white z-10 border-b border-slate-100">

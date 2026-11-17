@@ -83,7 +83,8 @@ export default function Layout() {
 
   useEffect(() => {
     if (!user || !canSeeInventory) return;
-    const load = () => { api.get("/vehicles").then(r => setNotifVehicles(r.data)).catch(() => {}); };
+    // Not the whole vehicle list (about 1 MB of prices and costs): the bell only needs name, plate and photo count.
+    const load = () => { api.get("/vehicles/attention").then(r => setNotifVehicles(r.data)).catch(() => {}); };
     load();
     const id = setInterval(load, 5 * 60 * 1000); // refresh every 5 min — this isn't chat, no need to poll faster
     return () => clearInterval(id);
@@ -98,8 +99,9 @@ export default function Layout() {
   useEffect(() => {
     if (!user || !isAdmin) return;
     const load = () => {
-      api.get("/leads").then(r => {
-        const n = r.data.filter(l => l.status === "new" && !l.seen_at).length;
+      // Just the number: the full leads list (with the photos some leads carry) is megabytes, and this runs every minute.
+      api.get("/leads/new-count").then(r => {
+        const n = r.data.count;
         if (lastNewLeads.current !== null && n > lastNewLeads.current) {
           toast.info(`${n - lastNewLeads.current} new website lead${n - lastNewLeads.current > 1 ? "s" : ""}`, { action: { label: "View", onClick: () => navigate("/marketing?tab=leads") } });
         }
@@ -112,6 +114,17 @@ export default function Layout() {
     window.addEventListener("leads-changed", load);
     return () => { clearInterval(id); window.removeEventListener("leads-changed", load); };
   }, [user, isAdmin, navigate]);
+
+  // The nightly backup (backend/auto_backup.py): warns in the bell if none has worked for a day and a half. Only the main company's
+  // Admin gets an answer; for anyone else the request is refused and nothing shows.
+  const [backupProblem, setBackupProblem] = useState(false);
+  useEffect(() => {
+    if (!user || !isAdmin) return;
+    const load = () => { api.get("/admin/backups").then(r => setBackupProblem(!!r.data?.problem)).catch(() => {}); };
+    load();
+    const id = setInterval(load, 10 * 60 * 1000);
+    return () => clearInterval(id);
+  }, [user, isAdmin]);
 
   const missingDataVehicles = useMemo(() => {
     return notifVehicles
@@ -332,7 +345,7 @@ export default function Layout() {
   );
 
   return (
-    <div className="flex h-app overflow-hidden bg-slate-50 pl-safe pr-safe">
+    <div className="app-shell flex h-app overflow-hidden bg-slate-50 pl-safe pr-safe">
       {/* Desktop Sidebar */}
       {renderSidebar()}
 
@@ -348,7 +361,7 @@ export default function Layout() {
       {/* Main */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Header */}
-        <header className="sticky top-0 z-30 bg-white border-b border-slate-200 shadow-sm h-14 box-content pt-safe flex items-center px-4 lg:px-6 gap-4">
+        <header className="sticky top-0 z-30 bg-white border-b border-slate-200 shadow-sm h-14 sm:h-16 box-content pt-safe flex items-center px-4 lg:px-6 gap-4">
           <button
             className="lg:hidden w-11 h-11 -ml-2.5 rounded-lg flex items-center justify-center text-slate-500 hover:bg-slate-50 hover:text-slate-900 transition-colors"
             onClick={() => setSidebarOpen(true)}
@@ -370,7 +383,9 @@ export default function Layout() {
                 <TitleIcon size={19} className="shrink-0 text-slate-400" /> {parts ? "Spare Parts" : "Inventory"}
               </h1>
             );
-          })() : pathname.startsWith("/marketing") ? (() => {
+          })() : pathname === "/sales" ? (
+            <h1 className="flex-1 min-w-0 text-2xl font-bold text-slate-900 truncate" data-testid="header-title">Sales</h1>
+          ) : pathname.startsWith("/marketing") ? (() => {
             // Named after the tab that is open (Leads, CRM, Share...), like any other page's title.
             const tabs = marketingTabsFor(user?.role);
             const requested = new URLSearchParams(search).get("tab");
@@ -381,8 +396,8 @@ export default function Layout() {
               </h1>
             );
           })() : <div className="flex-1" />}
-          {/* Pages put their date range / view switch here (wide screens only); see Inventory. */}
-          <div ref={setTopbarSlot} className="hidden sm:flex items-center gap-2" data-testid="topbar-slot" />
+          {/* Pages put their date range / view switch / buttons here (wide screens only); see Inventory and Sales. */}
+          <div ref={setTopbarSlot} className="hidden sm:flex items-center gap-2 min-w-0" data-testid="topbar-slot" />
           {canSeeInventory && (
             <div className="relative" ref={notifRef}>
               <button
@@ -395,9 +410,9 @@ export default function Layout() {
                 title="Vehicles needing attention"
               >
                 <Bell size={17} />
-                {missingDataVehicles.length + newLeads > 0 && (
+                {missingDataVehicles.length + newLeads + (backupProblem ? 1 : 0) > 0 && (
                   <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center leading-none" data-testid="notif-bell-badge">
-                    {missingDataVehicles.length + newLeads > 99 ? "99+" : missingDataVehicles.length + newLeads}
+                    {missingDataVehicles.length + newLeads + (backupProblem ? 1 : 0) > 99 ? "99+" : missingDataVehicles.length + newLeads + (backupProblem ? 1 : 0)}
                   </span>
                 )}
               </button>
@@ -414,13 +429,18 @@ export default function Layout() {
                     )}
                   </div>
                   <div className="max-h-80 overflow-y-auto divide-y divide-slate-50">
+                    {backupProblem && (
+                      <button onClick={() => { setNotifOpen(false); navigate("/settings"); }} data-testid="notif-backup-problem" className="w-full text-left px-4 py-2.5 hover:bg-red-50 bg-red-50/60 flex items-center gap-2 text-sm font-medium text-red-700">
+                        <ShieldCheck size={14} /> Automatic backup hasn't worked for a while — open Settings
+                      </button>
+                    )}
                     {newLeads > 0 && (
                       <button onClick={() => { setNotifOpen(false); navigate("/marketing?tab=leads"); }} className="w-full text-left px-4 py-2.5 hover:bg-blue-50 bg-blue-50/50 flex items-center gap-2 text-sm font-medium text-blue-700">
                         <Inbox size={14} /> {newLeads} new website lead{newLeads > 1 ? "s" : ""}
                       </button>
                     )}
                     {missingDataVehicles.length === 0 ? (
-                      <div className="px-4 py-6 text-center text-sm text-slate-400">Nothing needs attention ✅</div>
+                      !backupProblem && newLeads === 0 && <div className="px-4 py-6 text-center text-sm text-slate-400">Nothing needs attention ✅</div>
                     ) : (
                       missingDataVehicles.map(v => (
                         <button

@@ -183,6 +183,45 @@ async def ensure_schema(db, registry=None):
     except Exception:  # noqa: BLE001
         logger.warning("Could not check fin_parties' columns", exc_info=True)
 
+
+async def ensure_schema_postgres(db, registry=None):
+    """The Supabase (Postgres) counterpart of ensure_schema. The tables and every column already exist there (they
+    come from backend/supabase/schema.sql), so nothing is created; this only checks that the late-added columns are
+    present and tells the SQL layer's table registry about them, exactly as ensure_schema does. Never raises."""
+    global _services_ready, _groups_ready, _types_ready
+    if registry is None:
+        import sqldb
+        registry = sqldb.TABLES
+    _services_ready = _groups_ready = _types_ready = False
+
+    async def columns(table):
+        try:
+            rows = await db.fetch_raw("SELECT column_name FROM information_schema.columns "
+                                      f"WHERE table_schema = current_schema() AND table_name = '{table}'")
+            return {r["column_name"] for r in rows}
+        except Exception:  # noqa: BLE001
+            logger.warning("Could not check %s's columns", table, exc_info=True)
+            return set()
+
+    have = await columns("fin_transactions")
+    if all(col in have for col, _ in SERVICE_COLUMNS):
+        meta = registry["fin_transactions"]
+        meta["columns"].update(col for col, _ in SERVICE_COLUMNS)
+        meta.setdefault("json_cols", set()).add("service_charges")
+        _services_ready = True
+    else:
+        logger.warning("Finance services are off: fin_transactions has no installation_charge / service_charges columns")
+    if "expense_group" in await columns("fin_expense_categories"):
+        registry["fin_expense_categories"]["columns"].add("expense_group")
+        _groups_ready = True
+    else:
+        logger.warning("Finance expense heads are all direct: fin_expense_categories has no expense_group column")
+    if "party_type_id" in await columns("fin_parties"):
+        registry["fin_parties"]["columns"].add("party_type_id")
+        _types_ready = True
+    else:
+        logger.warning("Ledger types are off: fin_parties has no party_type_id column")
+
 LEDGER_SIDES = {"customer": ("fin_customer_ledger", "customer_id"),
                 "vendor": ("fin_vendor_ledger", "vendor_id")}
 BILL_TYPES = {"sale", "purchase", "expense"}
@@ -490,6 +529,106 @@ class StatementCheck(BaseModel):
     references: List[str]
 
 
+async def sync_bill_ledger(db, t: dict):
+    """Keep the debt a bill books in step with the bill (what the original triggers did)."""
+    for coll, field, kind in ((db.fin_customer_ledger, "customer_id", "sale"),
+                              (db.fin_vendor_ledger, "vendor_id", "purchase")):
+        existing = await coll.find_one({"source_type": "business_transaction", "source_id": t["id"]}, {"_id": 0})
+        if t["type"] == kind and t.get("customer_id") and (t.get("amount") or 0) > 0:
+            fields = {field: t["customer_id"], "amount": t["amount"], "note": t.get("note"),
+                      "entry_date": t.get("bill_date")}
+            if existing:
+                await coll.update_one({"id": existing["id"]}, {"$set": fields})
+            else:
+                await coll.insert_one({"id": _id(), "entry_type": "debit", "source": "booking",
+                                       "source_type": "business_transaction", "source_id": t["id"],
+                                       "bank_account_id": None, "receipt_no": None, "created_at": _now(), **fields})
+        elif existing:
+            await coll.delete_one({"id": existing["id"]})
+
+
+# ── a vehicle sold on the Sales page, as a Sale bill ──────────────────────
+# Recording a sale there books a Sale bill for it on the customer's Finance Ledger (a debt: what they owe), linked to the
+# sale (source_type "vehicle_sale", source_id = the sale's id) so editing, returning or deleting the sale changes or removes
+# that bill. Only the bill is posted: what the customer pays is entered in Finance as an ordinary Received entry. A sale
+# with no customer posts nothing (in Finance a bill with no party counts as cash taken on the spot). Sales imported from a
+# spreadsheet are not posted.
+SALE_BILL_SOURCE = "vehicle_sale"
+
+
+async def _party_for_customer(db, customer: dict) -> Optional[dict]:
+    """The Finance party of a customer of the main Ledger, found the way _sync_main_ledger finds one (by phone, else by name
+    when either side has no phone) and made, typed Customer, when there is none yet."""
+    name, phone = _clean(customer.get("name")), _ledger_phone(customer.get("contact_number"))
+    if not name:
+        return None
+    parties = await db.fin_parties.find({}, {"_id": 0, "id": 1, "name": 1, "phone": 1}).to_list(100000)
+    if phone:
+        for p in parties:
+            if p.get("phone") == phone:
+                return p
+    key = name.lower()
+    for p in parties:
+        if (p.get("name") or "").strip().lower() == key and (phone is None or not p.get("phone")):
+            return p
+    now = _now()
+    doc = {"id": _id(), "name": name[:200], "phone": phone, "address": (_clean(customer.get("address")) or "")[:300] or None,
+           "created_at": now, "updated_at": now}
+    if _types_ready:
+        try:
+            customer_type = await db.fin_party_types.find_one({"name": "Customer"}, {"_id": 0, "id": 1})
+        except Exception:  # noqa: BLE001 -- no types table yet: the party is left untyped
+            customer_type = None
+        doc["party_type_id"] = (customer_type or {}).get("id")
+    await db.fin_parties.insert_one(doc)
+    return doc
+
+
+async def remove_sale_bill(db, sale_id: str) -> None:
+    """Take a sale's bill, and the debt it booked, out of the books (the sale was deleted, or no longer has a customer)."""
+    existing = await db.fin_transactions.find_one({"source_type": SALE_BILL_SOURCE, "source_id": sale_id}, {"_id": 0, "id": 1})
+    if existing:
+        await db.fin_customer_ledger.delete_many({"source_type": "business_transaction", "source_id": existing["id"]})
+        await db.fin_transactions.delete_one({"id": existing["id"]})
+
+
+async def sync_sale_bill(db, sale: dict, customer: Optional[dict], vehicle_label: str = "") -> None:
+    """Make the sale's Sale bill match the sale: made when it is new, otherwise updated, and removed when the sale has no
+    customer or nothing is owed. The amount is what the customer pays (the sale price and any extra charges), or, for a
+    returned sale, what the shop kept. Safe to call again and again. Never raises: a problem in the Finance books must not
+    stop a sale from being saved."""
+    try:
+        returned = bool(sale.get("returned"))
+        owed = sale.get("retained_amount") if returned else (sale.get("total_amount") or sale.get("sale_price"))
+        amount = round(float(owed or 0), 2)
+        party = await _party_for_customer(db, customer) if customer and amount > 0 else None
+        if not party:
+            await remove_sale_bill(db, sale["id"])
+            return
+        now = _now()
+        note = "Vehicle sale" + (f" · {vehicle_label}" if vehicle_label else "") + (" (returned)" if returned else "")
+        fields = {
+            "type": "sale", "amount": amount, "note": note, "party_name": party.get("name"), "customer_id": party["id"],
+            "bill_date": (sale.get("sale_date") or "")[:10] or None, "party_address": (_clean(customer.get("address")) or "")[:300] or None,
+            "items": [{"description": vehicle_label or "Vehicle", "qty": 1, "rate": amount, "amount": amount}],
+            "discount_amount": 0, "vat_amount": 0, "payment_mode": "credit", "bank_account_id": None, "expense_category_id": None,
+        }
+        if _services_ready:
+            fields.update({"service_charges": [], "installation_charge": 0})
+        existing = await db.fin_transactions.find_one({"source_type": SALE_BILL_SOURCE, "source_id": sale["id"]}, {"_id": 0})
+        if existing:
+            fields["updated_at"] = now
+            await db.fin_transactions.update_one({"id": existing["id"]}, {"$set": fields})
+            bill = {**existing, **fields}
+        else:
+            bill = {"id": _id(), "source_type": SALE_BILL_SOURCE, "source_id": sale["id"], "bill_no": None,
+                    "created_at": now, "updated_at": now, **fields}
+            await db.fin_transactions.insert_one(dict(bill))
+        await sync_bill_ledger(db, bill)
+    except Exception:  # noqa: BLE001
+        logger.warning("Could not post sale %s to the Finance books", sale.get("id"), exc_info=True)
+
+
 def register(api_router, db, admin_only):
     """Attach the /fin/* routes. `db` is the company-scoped database wrapper from server.py."""
 
@@ -511,20 +650,7 @@ def register(api_router, db, admin_only):
 
     async def _sync_bill_ledger(t: dict):
         """Keep the debt a bill books in step with the bill (what the original triggers did)."""
-        for coll, field, kind in ((db.fin_customer_ledger, "customer_id", "sale"),
-                                  (db.fin_vendor_ledger, "vendor_id", "purchase")):
-            existing = await coll.find_one({"source_type": "business_transaction", "source_id": t["id"]}, {"_id": 0})
-            if t["type"] == kind and t.get("customer_id") and (t.get("amount") or 0) > 0:
-                fields = {field: t["customer_id"], "amount": t["amount"], "note": t.get("note"),
-                          "entry_date": t.get("bill_date")}
-                if existing:
-                    await coll.update_one({"id": existing["id"]}, {"$set": fields})
-                else:
-                    await coll.insert_one({"id": _id(), "entry_type": "debit", "source": "booking",
-                                           "source_type": "business_transaction", "source_id": t["id"],
-                                           "bank_account_id": None, "receipt_no": None, "created_at": _now(), **fields})
-            elif existing:
-                await coll.delete_one({"id": existing["id"]})
+        await sync_bill_ledger(db, t)
 
     async def _sync_rental_rent():
         """Make the renters' ledgers match their rentals: one "Daily rent" debit per rental per day it has
@@ -621,11 +747,15 @@ def register(api_router, db, admin_only):
     async def fin_books(cu: dict = Depends(admin_only)):
         """All of the company's books at once. The screens compute balances from this one payload
         with a single shared money module, so two screens can never disagree."""
-        rentals = await _optional(db.fin_rentals, "start_date")
-        cash_rows = await _optional(db.fin_cash_account, "updated_at")
+        # Independent reads are asked at the same time (the database is in another city, so each one in turn cost a
+        # full round trip). The rent catch-up below does not touch party types, so reading them here is the same.
+        rentals, cash_rows, party_types = await asyncio.gather(
+            _optional(db.fin_rentals, "start_date"),
+            _optional(db.fin_cash_account, "updated_at"),
+            _optional(db.fin_party_types, "name"),
+        )
         if rentals:
             await _sync_rental_rent()  # catches up the days since the books were last read
-        party_types = await _optional(db.fin_party_types, "name")
         if party_types == []:
             # The three starter types, the first time the books are opened (as Finance Nepal does).
             now = _now()
@@ -636,17 +766,27 @@ def register(api_router, db, admin_only):
                     pass
             party_types = await _all(db.fin_party_types, "name")
         await _sync_main_ledger(party_types or [])
+        parties, accounts, transfers, categories, items, transactions, customer_ledger, vendor_ledger = await asyncio.gather(
+            _all(db.fin_parties, "name"),
+            _all(db.fin_bank_accounts, "name"),
+            _all(db.fin_account_transfers),
+            _all(db.fin_expense_categories, "name"),
+            _all(db.fin_items, "name"),
+            _all(db.fin_transactions),
+            _all(db.fin_customer_ledger),
+            _all(db.fin_vendor_ledger),
+        )
         return {
             "party_types": party_types or [],
             "types_ready": _types_ready and party_types is not None,
-            "parties": await _all(db.fin_parties, "name"),
-            "accounts": await _all(db.fin_bank_accounts, "name"),
-            "transfers": await _all(db.fin_account_transfers),
-            "categories": await _all(db.fin_expense_categories, "name"),
-            "items": await _all(db.fin_items, "name"),
-            "transactions": await _all(db.fin_transactions),
-            "customer_ledger": await _all(db.fin_customer_ledger),
-            "vendor_ledger": await _all(db.fin_vendor_ledger),
+            "parties": parties,
+            "accounts": accounts,
+            "transfers": transfers,
+            "categories": categories,
+            "items": items,
+            "transactions": transactions,
+            "customer_ledger": customer_ledger,
+            "vendor_ledger": vendor_ledger,
             "rentals": rentals or [],
             "cash_account": (cash_rows or [None])[0],
             # False while the Rent tables / service columns are not in the database: the screens say so.

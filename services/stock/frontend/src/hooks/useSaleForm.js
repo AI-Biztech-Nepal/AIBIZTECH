@@ -21,6 +21,10 @@ const EMPTY_FORM = {
   sanakhat_cost: "", resanakhat_cost: "",
   exchange_valuation: "", exchange_brand: "", exchange_model: "", exchange_reg_no: "", exchange_year: "",
   witness_name: "", witness_address: "", witness_phone: "", witness_id_number: "",
+  // "Booking" tick (a new sale only): it only marks the vehicle as booked, the form stays the same. Save then records a booking
+  // instead of a sale - the vehicle reserved. The deposit is not asked for here (it starts at Rs 0 and is filled in from the
+  // booking's details).
+  booking: false,
 };
 
 const EMPTY_BUYER = { name: "", contact_number: "", address: "", id_number: "" };
@@ -40,8 +44,8 @@ const stateForNew = (booking) => ({
   referrer: EMPTY_REFERRER,
 });
 
-// What the form holds for a sale that is already recorded (the sale as GET /sales/:id returns it). The exchange and the
-// witness come along so the form can show them and count the exchange as paid, but an edit cannot change them.
+// What the form holds for a sale that is already recorded (the sale as GET /sales/:id returns it), the exchange and the
+// witness included: all of it can be edited.
 const stateFromSale = (sale) => {
   const { sanakhat, resanakhat, others } = splitSanakhatExpenses(sale.extra_expenses || []);
   const text = (n) => (n ? String(n) : "");
@@ -95,6 +99,7 @@ export default function useSaleForm({ booking = null, sale = null } = {}) {
   const [showAddCust, setShowAddCust] = useState(false);
   const [buyer, setBuyer] = useState(EMPTY_BUYER);
   const [addingCust, setAddingCust] = useState(false);
+  const [buyerEdits, setBuyerEdits] = useState({}); // recorded sale only: changes to the buyer's own details, by customer id
   const [presetToAdd, setPresetToAdd] = useState("");
   const [newExpName, setNewExpName] = useState("");
   const [newExpAmt, setNewExpAmt] = useState("");
@@ -104,7 +109,7 @@ export default function useSaleForm({ booking = null, sale = null } = {}) {
   const reset = (fromSale) => {
     const s = stateFromSale(fromSale);
     setForm(s.form); setExpenseItems(s.expenseItems); setLeadSource(s.leadSource); setReferrer(s.referrer);
-    setShowAddCust(false); setBuyer(EMPTY_BUYER); setPresetToAdd(""); setNewExpName(""); setNewExpAmt("");
+    setShowAddCust(false); setBuyer(EMPTY_BUYER); setBuyerEdits({}); setPresetToAdd(""); setNewExpName(""); setNewExpAmt("");
   };
 
   // The vehicles to pick from (the available ones for a new sale, only the booked one from a booking, any for a recorded
@@ -123,6 +128,18 @@ export default function useSaleForm({ booking = null, sale = null } = {}) {
 
   const selectedCustomer = customers.find(c => c.id === form.customer_id) || null;
   const buyerComplete = buyer.name.trim() && buyer.address.trim() && buyer.contact_number.trim();
+
+  // The buyer's own details (name, phone, address, licence no.) of the customer picked. A new sale shows them as they are.
+  // A recorded sale lets them be edited: the changes go to the customer's record on Save (saveBuyerEdits). Until the
+  // customer list has loaded, the sale's own copy stands in.
+  const buyerKeys = ["name", "contact_number", "address", "id_number"];
+  const known = selectedCustomer || (existing && form.customer_id && form.customer_id === sale.customer_id
+    ? { name: sale.customer_name, contact_number: sale.customer_contact, address: sale.customer_address, id_number: sale.customer_id_number }
+    : null);
+  const baseBuyer = known && Object.fromEntries(buyerKeys.map(k => [k, known[k] || ""]));
+  const buyerInfo = baseBuyer && { ...baseBuyer, ...(existing ? buyerEdits[form.customer_id] : null) };
+  const setBuyerField = (key, value) => setBuyerEdits(e => ({ ...e, [form.customer_id]: { ...e[form.customer_id], [key]: value } }));
+  const buyerChanged = existing && !!baseBuyer && buyerKeys.some(k => buyerInfo[k].trim() !== baseBuyer[k].trim());
 
   // The CRM keeps one source per customer, so a new buyer is tagged as referred when a referrer is named, else with the lead.
   const referrerNamed = !!referrer.referred_by_id || !!referrer.source_note.trim();
@@ -183,14 +200,18 @@ export default function useSaleForm({ booking = null, sale = null } = {}) {
   // existing customer picked from the list covers the buyer half itself), and on a new sale the witness is mandatory
   // too (sale deed). Lead and Referred by are optional, except that a new buyer must be tagged with one or the other.
   const enteringNewBuyer = showAddCust && !form.customer_id;
+  // The Booking tick changes none of this, except that a booking needs a customer on record (it can't be made for a walk-in).
   const missing = [
-    !form.vehicle_id && ["sv-vehicle", "vehicle"],
+    form.booking && !form.customer_id && !enteringNewBuyer && ["sv-customer", "customer"],
     enteringNewBuyer && !buyer.name.trim() && ["sv-buyer-name", "buyer's name"],
     enteringNewBuyer && !buyer.address.trim() && ["sv-buyer-address", "buyer's address"],
     enteringNewBuyer && !buyer.contact_number.trim() && ["sv-buyer-phone", "buyer's phone"],
+    buyerChanged && !buyerInfo.name.trim() && ["sv-buyer-name", "buyer's name"],
+    buyerChanged && !buyerInfo.contact_number.trim() && ["sv-buyer-phone", "buyer's phone"],
     !existing && showAddCust && !form.witness_name.trim() && ["sv-witness-name", "witness's name"],
     !existing && showAddCust && !form.witness_address.trim() && ["sv-witness-address", "witness's address"],
     !existing && showAddCust && !form.witness_phone.trim() && ["sv-witness-phone", "witness's phone"],
+    !form.vehicle_id && ["sv-vehicle", "vehicle"],
     !form.sale_price && ["sv-sale_price", "sale price"],
     enteringNewBuyer && !isSourceComplete(buyerSource) && ["sv-lead", "lead, or who referred the buyer"],
   ].filter(Boolean);
@@ -198,8 +219,32 @@ export default function useSaleForm({ booking = null, sale = null } = {}) {
   // The buyer's customer id: the one picked, or a new customer created from the panel.
   const ensureCustomer = async () => (enteringNewBuyer ? (await createCustomer()).id : form.customer_id || null);
 
-  // The body for POST /sales (a new sale) or PUT /sales/:id (a recorded one: it always sends the lead and referrer, so
-  // clearing them sticks, and has no booking, exchange or witness, which an edit cannot change).
+  // Saves the changes made to the buyer's own details: a recorded sale's customer record is updated (a no-op when nothing
+  // changed). Call it after the sale itself is saved.
+  const saveBuyerEdits = async () => {
+    if (!buyerChanged) return;
+    await api.put(`/customers/${form.customer_id}`, {
+      name: buyerInfo.name.trim(),
+      contact_number: buyerInfo.contact_number.trim(),
+      address: buyerInfo.address.trim() || null,
+      id_number: buyerInfo.id_number.trim() || null,
+    });
+  };
+
+  // The body for POST /bookings (the "Booking" tick): no deposit yet (Rs 0, paid in cash until it is edited). The agreed price
+  // is the Sale price (if filled in) and the booking date is the form's Date (blank means today).
+  const bookingPayload = (customerId) => ({
+    vehicle_id: form.vehicle_id,
+    customer_id: customerId,
+    booking_amount: 0,
+    payment_method: "Cash",
+    booking_date: form.sale_date || undefined,
+    agreed_price: Number(form.sale_price) || undefined,
+    notes: form.notes || undefined,
+  });
+
+  // The body for POST /sales (a new sale) or PUT /sales/:id (a recorded one: it always sends the lead, referrer, witness and
+  // exchange, so clearing them sticks, and has no booking).
   const payload = (customerId) => {
     const payMethodParts = [];
     if (Number(form.paid_cash) > 0) payMethodParts.push("Cash");
@@ -228,6 +273,15 @@ export default function useSaleForm({ booking = null, sale = null } = {}) {
         lead_note: leadSource.source_note.trim() || null,
         referred_by_id: referrer.referred_by_id || null,
         referred_by_name: referrer.source_note.trim() || null,
+        witness_name: form.witness_name.trim(),
+        witness_address: form.witness_address.trim(),
+        witness_phone: form.witness_phone.trim(),
+        witness_id_number: form.witness_id_number.trim(),
+        exchange_valuation: exchangeValuation,
+        exchange_brand: form.exchange_brand.trim() || null,
+        exchange_model: form.exchange_model.trim() || null,
+        exchange_reg_no: form.exchange_reg_no.trim() || null,
+        exchange_year: form.exchange_year.trim() || null,
       };
     }
     return {
@@ -253,11 +307,12 @@ export default function useSaleForm({ booking = null, sale = null } = {}) {
     existing, form, set, reset,
     vehicles, customers, listsLoaded, loadLists, selectedCustomer,
     showAddCust, setShowAddCust, buyer, setBuyer, addingCust, saveNewCustomer, enteringNewBuyer,
+    buyerInfo, setBuyerField, buyerChanged, saveBuyerEdits,
     leadSource, setLeadSource, referrer, setReferrer,
     expenseItems, extraExpenses, expensesTotal, availablePresets, presetToAdd, setPresetToAdd,
     newExpName, setNewExpName, newExpAmt, setNewExpAmt,
     addPresetExpense, addCustomExpense, updateExpenseAmount, removeExpenseItem,
     grandTotal, exchangeValuation, amountPaid, autoDue, amountDue,
-    missing, ensureCustomer, payload,
+    missing, ensureCustomer, payload, bookingPayload,
   };
 }
