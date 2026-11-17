@@ -25,9 +25,12 @@ export async function signIn(form: FormData) {
 export async function signUp(form: FormData) {
   const supabase = await createClient();
   const next = safeNext(str(form, 'next')); // an invitation link survives sign-up
+  const password = String(form.get('password'));
+  if (password !== String(form.get('confirm_password'))) fail('/signup', 'Passwords do not match.');
+  if (!/[A-Za-z]/.test(password) || !/\d/.test(password)) fail('/signup', 'Password needs letters and numbers.');
   const { data, error } = await supabase.auth.signUp({
     email: str(form, 'email'),
-    password: String(form.get('password')),
+    password,
     options: { emailRedirectTo: `${await origin()}/auth/callback?next=${encodeURIComponent(next)}`, data: { full_name: str(form, 'full_name'), company: str(form, 'company'), address: str(form, 'address'), phone: str(form, 'phone') } },
   });
   if (error) fail('/signup', error.message);
@@ -52,6 +55,7 @@ export async function forgotPassword(form: FormData) {
 }
 
 export async function resetPassword(form: FormData) {
+  if (String(form.get('password')) !== String(form.get('confirm_password'))) fail('/reset-password', 'Passwords do not match.');
   const supabase = await createClient();
   const { error } = await supabase.auth.updateUser({ password: String(form.get('password')) });
   if (error) fail('/reset-password', error.message);

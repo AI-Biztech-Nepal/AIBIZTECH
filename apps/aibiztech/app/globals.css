@@ -138,4 +138,4 @@ main.wide > .tile { margin-bottom: 16px; }
 .pw input { width: 100%; padding-right: 44px; }
 .pw .eye { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: none; padding: 4px; color: var(--muted); }
 
-.auth-logo { box-shadow: 0 0 40px rgba(34, 211, 238, 0.15); display: block; width: 100%; max-width: 280px; height: auto; margin: 0 auto 16px; border-radius: 16px; }
+.auth-logo { display: block; width: 100%; max-width: 240px; height: auto; margin: 0 auto 16px; }

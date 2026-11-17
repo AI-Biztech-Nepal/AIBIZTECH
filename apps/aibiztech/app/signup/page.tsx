@@ -18,7 +18,8 @@ export default async function SignUp({ searchParams }: { searchParams: Search })
         <label><span>Address <b className="req">*</b></span><input name="address" autoComplete="street-address" placeholder="Your address" required /></label>
         <label><span>Phone Number <b className="req">*</b></span><input name="phone" type="tel" autoComplete="tel" placeholder="98XXXXXXXX" required /></label>
         <label><span>Email <b className="req">*</b></span><input name="email" type="email" autoComplete="email" placeholder="you@example.com" required /></label>
-        <label><span>Password</span><PasswordInput name="password" autoComplete="new-password" minLength={8} placeholder="••••••••" /><small>At least 8 characters, with letters and numbers.</small></label>
+        <label><span>Password <b className="req">*</b></span><PasswordInput name="password" autoComplete="new-password" minLength={8} placeholder="••••••••" /><small>At least 8 characters, with letters and numbers.</small></label>
+        <label><span>Confirm Password <b className="req">*</b></span><PasswordInput name="confirm_password" autoComplete="new-password" minLength={8} placeholder="••••••••" /></label>
         <button className="primary">Create Account</button>
       </form>
       <p className="center">Already have an account? <Link href={next ? `/login?next=${encodeURIComponent(next)}` : '/login'}>Sign in</Link></p>
