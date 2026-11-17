@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
-import { Plus, Search, Trash2, Eye, TrendingUp, DollarSign, Calendar, ShoppingBag, AlertTriangle, UploadCloud, FileSpreadsheet, CheckCircle2, Undo2, BookmarkCheck, ArrowRight, Tags } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { Plus, Search, Trash2, Eye, TrendingUp, DollarSign, Calendar, ShoppingBag, AlertTriangle, UploadCloud, FileSpreadsheet, CheckCircle2, Undo2, Tags } from "lucide-react";
 import { toast } from "sonner";
 import api from "../utils/api";
 import { peek, remember, cacheTicket } from "../utils/listCache";
@@ -10,7 +10,9 @@ import { useAuth } from "../context/AuthContext";
 import HoverADDate from "../components/HoverADDate";
 import { BOOK_CARD, BookTableStyle } from "../components/BookTable";
 import WarrantyBadge from "../components/WarrantyBadge";
-import Bookings from "./Bookings";
+import { BookedTableRow, BookedCard } from "../components/BookedRows";
+import BookingReceipt from "../components/BookingReceipt";
+import { EditBookingModal, WithdrawBookingModal } from "../components/BookingModals";
 import SaleVehicleModal from "./SaleVehicleModal";
 import SaleDetailModal from "./SaleDetailModal";
 import DateRangeFilter, { resolveDateFilter } from "../components/DateRangeFilter";
@@ -87,7 +89,6 @@ function marginOf(sale, vehicle) {
 
 export default function Sales() {
   const navigate = useNavigate();
-  const location = useLocation();
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
   // Coming back to this page shows the last lists at once (see utils/listCache.js); fetchAll below refreshes them as always.
@@ -96,9 +97,12 @@ export default function Sales() {
   // margin, sanakhat) onto each sale row.
   const [soldVehicles, setSoldVehicles] = useState(() => peek("vehicles:sold") ?? []);
   const [summary, setSummary] = useState(() => peek("sales:summary") ?? null);
-  // Bookings are fetched here so open ones can be converted from this page and converted ones
-  // can be tagged on their sale row.
+  // Bookings are fetched here: the open ones are rows of the table below (status "Booked"), and the ones that became a
+  // sale are tagged on their sale row.
   const [bookings, setBookings] = useState([]);
+  const [receipt, setReceipt] = useState(null);                   // the booking whose receipt is open for printing
+  const [editingBooking, setEditingBooking] = useState(null);     // the booking being edited
+  const [withdrawingBooking, setWithdrawingBooking] = useState(null); // the booking whose customer is backing out
   const [loading, setLoading] = useState(() => peek("sales:list") === undefined);
   const [search, setSearch] = useState("");
   // Set via the Today/This Week/This Month toggle in the header — "all" (default) shows
@@ -107,8 +111,7 @@ export default function Sales() {
   const [statusFilter, setStatusFilter] = useState("all"); // "all" | "sold" | "returned"
   const [showModal, setShowModal] = useState(false);
 
-  // "Sale Vehicle" on a booking (strip below or Bookings page) opens this same sale form
-  // pre-filled, with the booking kept in activeBooking.
+  // "Sale Vehicle" on a booked row opens this same sale form pre-filled, with the booking kept in activeBooking.
   const [activeBooking, setActiveBooking] = useState(null);
 
   // Spreadsheet import ("Sales Record 20XX" workbook)
@@ -171,20 +174,17 @@ export default function Sales() {
   const openModal = (booking = null) => { setActiveBooking(booking); setShowModal(true); };
   const closeModal = () => { setShowModal(false); setActiveBooking(null); };
 
-  // Arrived from the Bookings page (/sales?booking=ID): open the sale form for that booking
-  // once bookings have loaded, then drop the param so a refresh doesn't reopen it.
-  const tabParam = new URLSearchParams(location.search).get("tab");
-  const tab = tabParam === "bookings" ? "bookings" : "sales";
-  const setTab = (t) => navigate(t === "sales" ? "/sales" : `/sales?tab=${t}`, { replace: true });
-  const bookingParam = new URLSearchParams(location.search).get("booking");
-  useEffect(() => {
-    if (!bookingParam || loading) return;
-    navigate(location.pathname, { replace: true });
-    api.get("/bookings").then(r => {
-      const b = r.data.find(x => x.id === bookingParam && x.status === "active");
-      if (b) openModal(b); else toast.error("That booking is no longer open");
-    }).catch(() => toast.error("Failed to load booking"));
-  }, [bookingParam, loading]); // eslint-disable-line react-hooks/exhaustive-deps
+  const deleteBooking = async (b) => {
+    if (!window.confirm("Delete this booking record? Use Withdraw instead if the customer is cancelling.")) return;
+    try {
+      await api.delete(`/bookings/${b.id}`);
+      toast.success("Booking deleted");
+      fetchAll();
+    } catch (err) { toast.error(getErrMsg(err, "Failed to delete booking")); }
+  };
+
+  // What the buttons of a booked row do (see components/BookedRows.jsx).
+  const bookingActions = { onSell: openModal, onReceipt: setReceipt, onEdit: setEditingBooking, onWithdraw: setWithdrawingBooking, onDelete: deleteBooking };
 
   const runImport = async (confirm) => {
     if (!importFile) { toast.error("Choose the spreadsheet first"); return; }
@@ -248,7 +248,20 @@ export default function Sales() {
 
   const returnedCount = sales.filter(s => s.returned).length;
 
+  // The open bookings ("Booked") are rows above the sales, filtered the same way: the date, the search, and the status filter.
+  const filteredBookings = (statusFilter === "all" || statusFilter === "booked") ? openBookings.filter(b => {
+    const d = (b.booking_date || b.created_at || "").slice(0, 10);
+    if (periodRange && !(d >= periodRange.start && d <= periodRange.end)) return false;
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return (b.vehicle_info || "").toLowerCase().includes(q) ||
+      (b.customer_name || "").toLowerCase().includes(q) ||
+      (b.customer_contact || "").toLowerCase().includes(q) ||
+      (b.payment_method || "").toLowerCase().includes(q);
+  }) : [];
+
   const filtered = sales.filter(s => {
+    if (statusFilter === "booked") return false;
     if (statusFilter === "sold" && s.returned) return false;
     if (statusFilter === "returned" && !s.returned) return false;
     if (periodRange && !(s.sale_date >= periodRange.start && s.sale_date <= periodRange.end)) return false;
@@ -265,19 +278,6 @@ export default function Sales() {
 
   return (
     <div className="space-y-5 animate-fade-in">
-      <div className="flex items-center gap-1 border-b border-slate-200" data-testid="sales-tabs">
-        {[{ key: "sales", label: "Sales" }, { key: "bookings", label: `Bookings${openBookings.length ? ` (${openBookings.length})` : ""}` }].map(t => (
-          <button key={t.key} onClick={() => setTab(t.key)} data-testid={`sales-tab-${t.key}`}
-            className={`px-4 h-10 text-sm font-semibold border-b-2 -mb-px transition-colors ${tab === t.key ? "border-blue-600 text-blue-600" : "border-transparent text-slate-500 hover:text-slate-700"}`}>
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      {tab === "bookings" ? (
-        <Bookings key={`${sales.length}-${openBookings.length}`} embedded onRecordSale={openModal} />
-      ) : (
-      <>
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
@@ -285,6 +285,7 @@ export default function Sales() {
           <p className="text-sm text-slate-500">
             {periodRange ? `${filtered.length} sales · ${periodRange.label}` : `${sales.length} sales recorded`}
             {returnedCount > 0 && ` · ${returnedCount} returned`}
+            {openBookings.length > 0 && ` · ${openBookings.length} booked`}
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -385,48 +386,18 @@ export default function Sales() {
           <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search vehicle, reg#, customer..." className="w-full h-9 pl-9 pr-3 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" data-testid="sales-search" />
         </div>
-        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="h-9 px-3 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500" data-testid="sales-status-filter" aria-label="Show sold or returned">
-          <option value="all">All sales</option>
+        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="h-9 px-3 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500" data-testid="sales-status-filter" aria-label="Filter by status">
+          <option value="all">All</option>
           <option value="sold">Sold only</option>
           <option value="returned">Returned only{returnedCount ? ` (${returnedCount})` : ""}</option>
+          <option value="booked">Booked only{openBookings.length ? ` (${openBookings.length})` : ""}</option>
         </select>
       </div>
 
-      {/* Open bookings — deposits waiting on the balance; Sale Vehicle opens the normal sale form pre-filled */}
-      {openBookings.length > 0 && (
-        <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4" data-testid="open-bookings-strip">
-          <div className="flex items-center justify-between gap-2 mb-2">
-            <div className="flex items-center gap-2 text-sm font-semibold text-yellow-900">
-              <BookmarkCheck size={16} /> {openBookings.length} open booking{openBookings.length > 1 ? "s" : ""} awaiting sale
-            </div>
-            <button onClick={() => setTab("bookings")} className="text-xs font-medium text-yellow-800 hover:underline">Manage bookings</button>
-          </div>
-          <div className="divide-y divide-yellow-100">
-            {openBookings.map(b => {
-              const agreed = b.agreed_price ?? b.vehicle_selling_price;
-              const balance = agreed != null ? Math.max(agreed - (b.booking_amount || 0), 0) : null;
-              return (
-                <div key={b.id} className="flex items-center justify-between gap-3 py-2" data-testid="open-booking-row">
-                  <div className="min-w-0">
-                    <div className="text-sm font-medium text-slate-900 truncate">{b.vehicle_info || "—"}</div>
-                    <div className="text-xs text-slate-600 truncate">
-                      {b.customer_name} · Deposit {formatNPR(b.booking_amount)}{balance != null && ` · Balance ${formatNPR(balance)}`}
-                    </div>
-                  </div>
-                  <button onClick={() => openModal(b)} className="shrink-0 flex items-center gap-1.5 h-9 px-3 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium active:scale-95 transition-all">
-                    Sale Vehicle <ArrowRight size={14} />
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Sales Table */}
+      {/* Sales Table: the open bookings come first, each with the status "Booked"; a sale has no status here */}
       <div className={BOOK_CARD}>
         <BookTableStyle />
-        {filtered.length === 0 ? (
+        {filtered.length === 0 && filteredBookings.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-40 text-slate-500">
             <ShoppingBag size={32} className="mb-2 opacity-30" />
             <p className="font-medium">{anyFilter ? "No sales match this filter" : "No sales recorded yet"}</p>
@@ -436,6 +407,7 @@ export default function Sales() {
           <>
             {/* Card list — phones only, avoids squeezing a wide table into a narrow viewport */}
             <div className="sm:hidden divide-y divide-slate-100">
+              {filteredBookings.map(b => <BookedCard key={b.id} b={b} isAdmin={isAdmin} actions={bookingActions} />)}
               {filtered.map(s => {
                 const v = vehicleById[s.vehicle_id];
                 const margin = marginOf(s, v);
@@ -497,6 +469,7 @@ export default function Sales() {
                   <tr>
                     <th className="w-10">SN</th>
                     <th>Vehicle</th>
+                    <th>Status</th>
                     <th>Customer</th>
                     <th className="text-right">Sale Price</th>
                     <th className="text-right">Extra Expenses</th>
@@ -510,6 +483,7 @@ export default function Sales() {
                   </tr>
                 </thead>
                 <tbody>
+                  {filteredBookings.map((b, i) => <BookedTableRow key={b.id} b={b} index={i + 1} isAdmin={isAdmin} actions={bookingActions} />)}
                   {filtered.map((s, i) => {
                     const v = vehicleById[s.vehicle_id];
                     const margin = marginOf(s, v);
@@ -521,7 +495,7 @@ export default function Sales() {
                         onClick={() => openSale(s)}
                         className="cursor-pointer"
                       >
-                        <td className="text-gray-500">{i + 1}</td>
+                        <td className="text-gray-500">{filteredBookings.length + i + 1}</td>
                         <td className="min-w-[12rem]">
                           <div className="font-semibold text-gray-900 flex items-center gap-1.5">
                             {s.vehicle_info || "—"}
@@ -529,6 +503,7 @@ export default function Sales() {
                           </div>
                           <div className="flex items-center gap-1 flex-wrap mt-1"><SaleTags sale={s} vehicle={v} booking={bookingBySaleId[s.id]} /></div>
                         </td>
+                        <td />
                         <td>
                           <div className="text-gray-700">{s.customer_name}</div>
                           {s.customer_contact && <div className="text-xs text-gray-400">{s.customer_contact}</div>}
@@ -596,11 +571,13 @@ export default function Sales() {
         )}
       </div>
 
-      </>
-      )}
-
       {/* Sale Vehicle form */}
       {showModal && <SaleVehicleModal booking={activeBooking} onClose={closeModal} onSaved={fetchAll} />}
+
+      {/* A booked row's receipt, edit and withdraw */}
+      <BookingReceipt booking={receipt} onClose={() => setReceipt(null)} />
+      {editingBooking && <EditBookingModal booking={editingBooking} onClose={() => setEditingBooking(null)} onSaved={fetchAll} />}
+      {withdrawingBooking && <WithdrawBookingModal booking={withdrawingBooking} onClose={() => setWithdrawingBooking(null)} onSaved={fetchAll} />}
 
       {/* A sale's details */}
       {detailId && <SaleDetailModal saleId={detailId} onClose={() => setDetailId(null)} onChanged={fetchAll} />}

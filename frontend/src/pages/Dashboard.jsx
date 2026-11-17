@@ -417,7 +417,7 @@ function AccountingSummary({ range }) {
                       {bookings.map(b => (
                         <div
                           key={b.id}
-                          onClick={() => { setSalesModalView(null); navigate("/bookings"); }}
+                          onClick={() => { setSalesModalView(null); navigate("/sales"); }}
                           data-testid="period-bookings-modal-row"
                           className="flex items-center justify-between gap-3 px-4 sm:px-5 py-3 cursor-pointer hover:bg-slate-50 transition-colors"
                         >
