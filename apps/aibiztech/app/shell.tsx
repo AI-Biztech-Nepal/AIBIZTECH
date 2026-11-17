@@ -51,8 +51,8 @@ export async function Shell({ org, orgs = [], page, children }: { org: Org | nul
             {services?.filter((s) => !org || org.services[s.key]).map((s) => {
               const on = !!org?.services[s.key];
               // Attendance Nepal opens its own menu here (live app, new tab); a bare address with no path keeps the link usable
-              if (on && s.key === 'attendance') return <AppMenu key={s.key} icon="attendance" name={s.name} base={s.base_url} nodes={ATTENDANCE_MENU} isAdmin={org?.services.attendance === 'admin'} />;
-              if (on && s.key === 'stock') return <AppMenu key={s.key} icon="stock" name={s.name} base={s.base_url} nodes={STOCK_MENU} isAdmin={org?.services.stock === 'admin'} />;
+              if (on && s.key === 'attendance') return <AppMenu key={s.key} service="attendance" icon="attendance" name={s.name} base={s.base_url} nodes={ATTENDANCE_MENU} isAdmin={org?.services.attendance === 'admin'} />;
+              if (on && s.key === 'stock') return <AppMenu key={s.key} service="stock" icon="stock" name={s.name} base={s.base_url} nodes={STOCK_MENU} isAdmin={org?.services.stock === 'admin'} />;
               // Finance runs inside AIBIZTECH (served at /finance); the other apps are still opened through single sign-on
               return on && s.key === 'finance'
                 ? item('/finance', serviceIcon(s.key, s.name), s.name)
@@ -85,10 +85,12 @@ export async function Shell({ org, orgs = [], page, children }: { org: Org | nul
 
 // An app's own menu as a dropdown under the app name; its pages are on the app itself, so they open in a new tab.
 // "from=aibiztech" lets the app show a way back to the portal (only for people who arrived from here).
-function AppMenu({ icon, name, base, nodes, isAdmin }: { icon: string; name: string; base: string; nodes: MenuNode[]; isAdmin: boolean }) {
+function AppMenu({ service, icon, name, base, nodes, isAdmin }: { service: string; icon: string; name: string; base: string; nodes: MenuNode[]; isAdmin: boolean }) {
   const root = base.replace(/\/$/, '');
   const visible = (list: MenuNode[]) => list.filter((n) => !n.adminOnly || isAdmin);
-  const href = (path = '/') => `${root}${path}${path.includes('?') ? '&' : '?'}from=aibiztech`;
+  // Apps with single sign-on go through the portal's /go, which hands over a signed pass and lands on the page
+  const sso = !!process.env.SSO_SECRET && (process.env.SSO_SERVICES ?? '').split(',').map((s) => s.trim()).includes(service);
+  const href = (path = '/') => (sso ? `/go/${service}?to=${encodeURIComponent(path)}` : `${root}${path}${path.includes('?') ? '&' : '?'}from=aibiztech`);
   const render = (list: MenuNode[]): ReactNode =>
     visible(list).map((n) =>
       n.children ? (

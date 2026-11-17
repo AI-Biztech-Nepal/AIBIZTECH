@@ -1532,6 +1532,9 @@ async def ai_suggestions(req: AISuggestionsRequest, cu: dict = Depends(admin_onl
 class LoginRequest(BaseModel):
     username: str; password: str
 
+class SsoRequest(BaseModel):
+    token: str
+
 class RegisterRequest(BaseModel):
     # Same reasoning as SignUpRequest.email: stored in the `username` column, so this only
     # affects newly-created accounts -- existing plain-username staff accounts are unaffected.
@@ -2035,6 +2038,52 @@ async def login(request: Request, req: LoginRequest):
     company = await db.companies.find_one({"id": user.get("company_id")}, {"_id": 0, "name": 1}) if user.get("company_id") else None
     return {"token": token, "username": user["username"], "name": user.get("name", user["username"]),
             "role": user.get("role", "admin"), "company_name": company["name"] if company else None}
+
+# Single sign-on from the AIBIZTECH portal. The portal signs a short-lived pass (HS256, 60 s) with SSO_SECRET, the same
+# value on both sides. A business in the portal becomes one company here (company id = the portal's organization id), and
+# the person is signed in to it. Nothing about existing companies or accounts is changed: an email that already belongs to
+# a different company is refused, not moved.
+SSO_ROLES = {"admin", "stock_supervisor", "parts_supervisor", "social_media"}
+
+@api_router.post("/auth/sso")
+@limiter.limit("20/minute")
+async def sso_login(request: Request, req: SsoRequest):
+    secret = os.environ.get("SSO_SECRET", "").strip()
+    if not secret:
+        raise HTTPException(503, "Single sign-on is not set up on this server.")
+    try:
+        claims = jwt.decode(req.token, secret, algorithms=["HS256"], audience="stock", issuer="aibiztech")
+    except jwt.InvalidTokenError:
+        raise HTTPException(401, "This sign-in link is invalid or has expired. Open Stock Manager again from AIBIZTECH.")
+    email = str(claims.get("email", "")).strip().lower()
+    org_id = str(claims.get("org_id", "")).strip()
+    org_name = str(claims.get("org_name", "")).strip() or "My business"
+    role = claims.get("role")
+    if not email or not org_id:
+        raise HTTPException(401, "This sign-in link is incomplete. Open Stock Manager again from AIBIZTECH.")
+    if role not in SSO_ROLES:
+        raise HTTPException(403, "You do not have a Stock Manager role in this business. Ask the business owner.")
+    now = datetime.now(timezone.utc).isoformat()
+    company = await db.companies.find_one({"id": org_id})
+    if not company:
+        await db.companies.insert_one({"id": org_id, "name": org_name, "created_at": now})
+        await db.settings.insert_one({"id": str(uuid.uuid4()), "company_id": org_id, "business_name": org_name})
+        company = {"id": org_id, "name": org_name}
+    user = await db.users.find_one({"username": email})
+    if user and user.get("company_id") != org_id:
+        raise HTTPException(409, "This email already has a Stock Manager account in another company, so it cannot be used here.")
+    if not user:
+        user = {"id": str(uuid.uuid4()), "username": email,
+                "password_hash": await hash_pw_async(secrets.token_urlsafe(32)),  # nobody knows it: sign-in is through the portal
+                "name": str(claims.get("name") or email), "role": role, "company_id": org_id,
+                "email_verified_at": now, "created_at": now}
+        await db.users.insert_one(user)
+    elif user.get("role") != role:
+        await db.users.update_one({"id": user["id"]}, {"$set": {"role": role}})
+        user["role"] = role
+    token = create_token(user["id"], email, user.get("role", role), org_id)
+    return {"token": token, "username": email, "name": user.get("name", email),
+            "role": user.get("role", role), "company_name": company.get("name")}
 
 @api_router.get("/auth/verify-email")
 @limiter.limit("10/minute")
