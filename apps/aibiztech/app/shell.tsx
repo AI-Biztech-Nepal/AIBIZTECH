@@ -3,13 +3,14 @@ import type { ReactNode } from 'react';
 import { createClient, type Org } from '@/lib/supabase';
 import { signOut, switchOrg } from './actions';
 import { Icon, serviceIcon } from './icons';
+import { ATTENDANCE_MENU, type MenuNode } from '@/lib/attendance-menu';
 
 type Page = 'home' | 'admin' | 'team' | 'apps';
 
 // App shell: left navigation like the apps themselves. Apps come from core.services, so a new
 // service (or a feature turned on for a business) shows up here without touching this file.
 export async function Shell({ org, orgs = [], page, children }: { org: Org | null; orgs?: Org[]; page: Page; children: ReactNode }) {
-  const { data: services } = await (await createClient()).schema('core').from('services').select('key, name').eq('is_active', true).order('name');
+  const { data: services } = await (await createClient()).schema('core').from('services').select('key, name, base_url').eq('is_active', true).order('name');
   const isAdmin = !!org && org.org_role !== 'member';
   const initials = (org?.name ?? 'AIBIZTECH').split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
   const item = (href: string, icon: string, label: string, active = false, extra?: ReactNode, newTab = href.startsWith('/go/')) => (
@@ -48,6 +49,8 @@ export async function Shell({ org, orgs = [], page, children }: { org: Org | nul
             <summary>Apps</summary>
             {services?.filter((s) => !org || org.services[s.key]).map((s) => {
               const on = !!org?.services[s.key];
+              // Attendance Nepal opens its own menu here (live app, new tab); a bare address with no path keeps the link usable
+              if (on && s.key === 'attendance') return <AppMenu key={s.key} name={s.name} base={s.base_url} nodes={ATTENDANCE_MENU} isAdmin={org?.services.attendance === 'admin'} />;
               // Finance runs inside AIBIZTECH (served at /finance); the other apps are still opened through single sign-on
               return on && s.key === 'finance'
                 ? item('/finance', serviceIcon(s.key, s.name), s.name)
@@ -75,5 +78,31 @@ export async function Shell({ org, orgs = [], page, children }: { org: Org | nul
       </aside>
       <main className="content">{children}</main>
     </div>
+  );
+}
+
+// An app's own menu as a dropdown under the app name; its pages are on the app itself, so they open in a new tab
+function AppMenu({ name, base, nodes, isAdmin }: { name: string; base: string; nodes: MenuNode[]; isAdmin: boolean }) {
+  const root = base.replace(/\/$/, '');
+  const visible = (list: MenuNode[]) => list.filter((n) => !n.adminOnly || isAdmin);
+  const leaf = (n: MenuNode) => (
+    <a key={n.label} className="nav-item sub-item" href={root + (n.path ?? '/')} target="_blank" rel="noopener">
+      <Icon name={n.icon} size={16} /><span>{n.label}</span>
+    </a>
+  );
+  return (
+    <details className="app-menu">
+      <summary className="nav-item"><Icon name="attendance" size={18} /><span>{name}</span></summary>
+      <div className="sub">
+        {visible(nodes).map((n) =>
+          n.children ? (
+            <details key={n.label} className="sub-group">
+              <summary className="nav-item sub-item"><Icon name={n.icon} size={16} /><span>{n.label}</span></summary>
+              <div className="sub">{visible(n.children).map(leaf)}</div>
+            </details>
+          ) : leaf(n),
+        )}
+      </div>
+    </details>
   );
 }

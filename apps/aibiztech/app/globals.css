@@ -243,3 +243,12 @@ select { font: inherit; padding: 8px 10px; border: 1px solid var(--border); bord
 .pick .svc-logo { margin: 0; }
 .pick.static { cursor: default; }
 .pick small { color: var(--ok); }
+
+/* An app's own menu under its name in the sidebar */
+.app-menu > summary, .sub-group > summary { cursor: pointer; list-style: none; }
+.app-menu > summary::-webkit-details-marker, .sub-group > summary::-webkit-details-marker { display: none; }
+.app-menu > summary::after, .sub-group > summary::after { content: '▾'; margin-left: auto; color: var(--muted); font-size: 0.8rem; }
+.app-menu:not([open]) > summary::after, .sub-group:not([open]) > summary::after { content: '▸'; }
+.app-menu[open] > summary { color: #fff; }
+.sub { display: grid; gap: 2px; margin: 2px 0 6px 20px; padding-left: 10px; border-left: 1px solid var(--border); }
+.nav-item.sub-item { padding: 8px 10px; font-size: 0.92rem; }
