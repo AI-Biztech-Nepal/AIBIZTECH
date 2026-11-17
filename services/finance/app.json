@@ -1,0 +1,82 @@
+{
+  "expo": {
+    "scheme": "storebooks",
+    "plugins": [
+      "expo-router",
+      "expo-document-picker",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Finance Nepal needs access to your photos so you can attach a picture of a bill or product."
+        }
+      ],
+      [
+        "expo-contacts",
+        {
+          "contactsPermission": "Finance Nepal needs access to your contacts so you can quickly fill in a customer's name and phone number."
+        }
+      ],
+      "@react-native-community/datetimepicker",
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Finance Nepal uses Face ID to quickly and securely unlock the app."
+        }
+      ],
+      "expo-secure-store",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Finance Nepal needs microphone access so you can add entries by voice."
+        }
+      ],
+      "expo-sharing",
+      "expo-font",
+      "expo-asset"
+    ],
+    "name": "Finance Nepal",
+    "slug": "store-books",
+    "owner": "ai-biztech-nepal",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.storebooks.app"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#FFFFFF",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.READ_CONTACTS",
+        "android.permission.WRITE_CONTACTS",
+        "android.permission.USE_BIOMETRIC",
+        "android.permission.USE_FINGERPRINT",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
+      ],
+      "package": "com.storebooks.app",
+      "versionCode": 3
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "experiments": {
+      "baseUrl": "/finance"
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "3aeab32c-ecf0-417c-9da8-4b8e5b86c308"
+      }
+    }
+  }
+}

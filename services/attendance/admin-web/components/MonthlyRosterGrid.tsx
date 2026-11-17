@@ -1,0 +1,544 @@
+'use client';
+
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { supabase } from '@/lib/supabase';
+import Avatar from '@/components/Avatar';
+import HorizontalScrollButtons from '@/components/HorizontalScrollButtons';
+import { buildMonth, monthDateRange, stepAnchor, todayAnchor, type CalendarAnchor } from '@/lib/calendar';
+import { useCalendarSystem } from '@/lib/calendarSystem';
+import { holidayDatesByGender } from '@/lib/weekOff';
+import { fetchAll } from '@/lib/leaveBalance';
+import type { CompanyHoliday, Employee, Shift } from '@/lib/types';
+
+const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+/** Two sentinel cell values, distinct from any real shift_id: "no row for
+ * this cell at all" (falls back to the employee's normal shift) vs. "an
+ * explicit Week Off row" (shift_id stored as null) — same convention
+ * WeeklyRosterGrid uses, see employee_daily_shifts' design
+ * (20260806100000_employee_daily_shifts.sql). */
+const UNSET = 'unset';
+const WEEK_OFF_VALUE = 'week-off';
+
+type RosterRow = { employee_id: string; work_date: string; shift_id: string | null };
+type PatternRow = { employee_id: string; weekday: number; shift_id: string | null };
+
+const todayIso = () => new Date().toISOString().slice(0, 10);
+
+/** One exact date per column (employee_daily_shifts), spanning a whole AD/BS
+ * month — for filling in exceptions (someone covering nights all month, a
+ * rotating crew, etc.) without paging through 4-5 separate weeks. A blank
+ * day isn't Absent by default: it inherits that weekday's pick from the
+ * Recurring Weekly Pattern (employee_weekly_pattern, read-only here, see
+ * patternValue()) — the same fallback resolveShiftForDate() uses for real
+ * attendance/payroll — so setting up the pattern once is enough for every
+ * month going forward. Explicitly picking a day here overrides the pattern
+ * for that one date only, without changing the pattern itself. */
+export default function MonthlyRosterGrid() {
+  const { system } = useCalendarSystem();
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [anchor, setAnchor] = useState(todayAnchor);
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [shifts, setShifts] = useState<Shift[]>([]);
+  const [rosterRows, setRosterRows] = useState<RosterRow[]>([]);
+  const [patternRows, setPatternRows] = useState<PatternRow[]>([]);
+  const [holidays, setHolidays] = useState<CompanyHoliday[]>([]);
+  const [loading, setLoading] = useState(true);
+  // "employeeId|date" -> a real shift_id, WEEK_OFF_VALUE, or UNSET — staged
+  // here until Save is clicked, not written on every pick.
+  const [pending, setPending] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [copyModalOpen, setCopyModalOpen] = useState(false);
+  const [copyTargetAnchor, setCopyTargetAnchor] = useState<CalendarAnchor | null>(null);
+  const [copying, setCopying] = useState(false);
+  const [copyError, setCopyError] = useState<string | null>(null);
+  const [copyDone, setCopyDone] = useState(false);
+  const month = useMemo(() => buildMonth(system, anchor), [system, anchor]);
+  const monthCells = useMemo(() => month.weeks.flat().filter(c => c.inMonth), [month]);
+  const dates = useMemo(() => monthCells.map(c => c.adKey), [monthCells]);
+  const templateShifts = useMemo(() => shifts.filter(s => s.employee_id === null), [shifts]);
+  const shiftById = useMemo(() => new Map(templateShifts.map(s => [s.id, s])), [templateShifts]);
+  const today = todayIso();
+  // Gender-scoped holidays (e.g. Teej) count only for the employees they
+  // cover — same per-gender lookup the Attendance Report uses.
+  const holidayDatesFor = useMemo(() => holidayDatesByGender(holidays), [holidays]);
+  const holidayNameByDate = useMemo(() => new Map(holidays.map(h => [h.holiday_date, h.name])), [holidays]);
+
+  const copyTargetMonth = useMemo(() => (copyTargetAnchor ? buildMonth(system, copyTargetAnchor) : null), [system, copyTargetAnchor]);
+  const copyTargetIsSameMonth = useMemo(
+    () => (copyTargetAnchor ? monthDateRange(system, copyTargetAnchor).start === dates[0] : false),
+    [system, copyTargetAnchor, dates]
+  );
+  // Only an EXPLICIT pick counts as something to copy — a day inherited from
+  // the Weekly Pattern needs no copying, since the target month already
+  // inherits the same pattern on its own.
+  const copyCandidateCount = useMemo(
+    () => employees.filter(emp => dates.some(date => explicitValue(emp.id, date) !== UNSET)).length,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [employees, dates, rosterRows, pending]
+  );
+
+  function reload() {
+    if (dates.length === 0) return;
+    setLoading(true);
+    const start = dates[0];
+    const end = dates[dates.length - 1];
+    Promise.all([
+      supabase.from('employees').select('*').eq('status', 'active'),
+      supabase.from('shifts').select('*'),
+      // One row per employee per day for a whole month — a company with
+      // more than ~32 active employees passes PostgREST's default 1000-row
+      // cap on a plain select(), which silently truncates rather than
+      // erroring. A cell whose real row got dropped this way renders as
+      // blank/inherited even though it has an explicit pick in the
+      // database — Save or Copy then acts on what the grid shows, not on
+      // what's actually stored, which can quietly clear or overwrite a real
+      // assignment the admin never saw. fetchAll pages through every row
+      // instead (same fix already applied elsewhere for this table).
+      fetchAll<RosterRow>((a, b) =>
+        supabase.from('employee_daily_shifts').select('employee_id, work_date, shift_id').gte('work_date', start).lte('work_date', end).range(a, b)
+      ),
+      supabase.from('employee_weekly_pattern').select('employee_id, weekday, shift_id'),
+      supabase.from('company_holidays').select('*').gte('holiday_date', start).lte('holiday_date', end),
+    ]).then(([empRes, shiftsRes, rosterRows, patternRes, holidaysRes]) => {
+      setEmployees((empRes.data ?? []).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })));
+      setShifts(shiftsRes.data ?? []);
+      setRosterRows(rosterRows);
+      setPatternRows(patternRes.data ?? []);
+      setHolidays(holidaysRes.data ?? []);
+      setLoading(false);
+    });
+  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(reload, [dates.join(',')]);
+
+  useEffect(() => {
+    setPending({});
+    setSaveError(null);
+  }, [dates.join(',')]);
+
+  // The exact-date pick for this cell only — UNSET when nothing is staged or
+  // saved for this specific date, whether or not the Weekly Pattern would
+  // otherwise cover it. This is what actually gets written on Save.
+  function explicitValue(employeeId: string, date: string): string {
+    const key = `${employeeId}|${date}`;
+    if (key in pending) return pending[key];
+    const row = rosterRows.find(r => r.employee_id === employeeId && r.work_date === date);
+    if (!row) return UNSET;
+    return row.shift_id === null ? WEEK_OFF_VALUE : row.shift_id;
+  }
+
+  // The Recurring Weekly Pattern's pick for this employee on this weekday, in
+  // the same UNSET / WEEK_OFF_VALUE / shift_id shape as explicitValue() —
+  // read-only here, this grid never writes employee_weekly_pattern.
+  function patternValue(employeeId: string, weekday: number): string {
+    const row = patternRows.find(r => r.employee_id === employeeId && r.weekday === weekday);
+    if (!row) return UNSET;
+    return row.shift_id === null ? WEEK_OFF_VALUE : row.shift_id;
+  }
+
+  // Whether this date is a company holiday for this employee specifically
+  // (gender-scoped — e.g. Teej only covers female employees).
+  function isHoliday(employeeId: string, date: string): boolean {
+    const emp = employees.find(e => e.id === employeeId);
+    return holidayDatesFor(emp?.gender).has(date);
+  }
+
+  // What the cell actually shows: the exact-date pick if there is one,
+  // else the Weekly Pattern's pick for that weekday, else a company holiday
+  // reads as Week Off — mirrors resolveShiftForDate()'s own priority, so
+  // this grid never disagrees with what attendance/payroll will actually
+  // use for the day.
+  function currentValue(employeeId: string, date: string): string {
+    const explicit = explicitValue(employeeId, date);
+    if (explicit !== UNSET) return explicit;
+    const weekday = new Date(date + 'T00:00:00Z').getUTCDay();
+    const pattern = patternValue(employeeId, weekday);
+    if (pattern !== UNSET) return pattern;
+    return isHoliday(employeeId, date) ? WEEK_OFF_VALUE : UNSET;
+  }
+
+  // True only when a blank cell's Week Off comes from a company holiday
+  // rather than an actual Week Off pick — shown as "Holiday" instead, in its
+  // own colour, so it reads differently from a real day off.
+  function isHolidayFallback(employeeId: string, date: string): boolean {
+    if (explicitValue(employeeId, date) !== UNSET) return false;
+    const weekday = new Date(date + 'T00:00:00Z').getUTCDay();
+    if (patternValue(employeeId, weekday) !== UNSET) return false;
+    return isHoliday(employeeId, date);
+  }
+
+  // True when what's shown came from the Weekly Pattern, not a pick made for
+  // this specific date — used to give inherited cells a lighter, dashed
+  // style so it's clear at a glance which days are "real" exact-date rows.
+  function isInherited(employeeId: string, date: string): boolean {
+    return explicitValue(employeeId, date) === UNSET && currentValue(employeeId, date) !== UNSET;
+  }
+
+  function setCell(employeeId: string, date: string, value: string) {
+    setPending(p => ({ ...p, [`${employeeId}|${date}`]: value }));
+  }
+
+  // The day columns run a whole month wide, so dragging the native
+  // scrollbar while also trying to open a shift dropdown further along the
+  // row is fiddly — these jump a week at a time instead.
+  function scrollDays(days: number) {
+    scrollRef.current?.scrollBy({ left: days * 100, behavior: 'smooth' });
+  }
+
+  function openCopyModal() {
+    setCopyError(null);
+    setCopyTargetAnchor(stepAnchor(system, anchor, 1));
+    setCopyModalOpen(true);
+  }
+
+  // Copies this whole month's picks into another month, matched by
+  // day-of-month position (this month's 1st -> target's 1st, and so on) —
+  // not by weekday, since two different months rarely share the same
+  // weekday-to-date alignment. If the months differ in length, whichever is
+  // shorter caps how many days actually copy. Only employees with a pick on
+  // a given source day write anything; an untouched (—) day leaves the
+  // matching target day alone rather than clearing it. Writes straight to
+  // Supabase (there's nothing to stage — every date it touches is outside
+  // this grid), same as WeeklyRosterGrid's "copy to rest of month".
+  async function performCopyToMonth() {
+    if (!copyTargetAnchor) return;
+    setCopying(true);
+    setCopyError(null);
+    const targetCells = buildMonth(system, copyTargetAnchor).weeks.flat().filter(c => c.inMonth);
+    const upserts: { employee_id: string; work_date: string; shift_id: string | null }[] = [];
+    for (const emp of employees) {
+      dates.forEach((date, i) => {
+        const targetCell = targetCells[i];
+        if (!targetCell) return;
+        // Explicit only — a day inherited from the Weekly Pattern needs no
+        // copying, since the target month already inherits the same pattern.
+        const value = explicitValue(emp.id, date);
+        if (value === UNSET) return;
+        upserts.push({ employee_id: emp.id, work_date: targetCell.adKey, shift_id: value === WEEK_OFF_VALUE ? null : value });
+      });
+    }
+    if (upserts.length === 0) {
+      setCopying(false);
+      setCopyModalOpen(false);
+      return;
+    }
+    const { error } = await supabase.from('employee_daily_shifts').upsert(upserts, { onConflict: 'employee_id,work_date' });
+    setCopying(false);
+    if (error) {
+      setCopyError(error.message);
+      return;
+    }
+    setCopyModalOpen(false);
+    setCopyDone(true);
+    setTimeout(() => setCopyDone(false), 3000);
+  }
+
+  const pendingCount = Object.keys(pending).length;
+
+  async function handleSave() {
+    setSaving(true);
+    setSaveError(null);
+
+    const toUpsert: { employee_id: string; work_date: string; shift_id: string | null }[] = [];
+    const toDelete: { employee_id: string; work_date: string }[] = [];
+    for (const [key, value] of Object.entries(pending)) {
+      const [employeeId, date] = key.split('|');
+      if (value === UNSET) toDelete.push({ employee_id: employeeId, work_date: date });
+      else toUpsert.push({ employee_id: employeeId, work_date: date, shift_id: value === WEEK_OFF_VALUE ? null : value });
+    }
+
+    if (toUpsert.length > 0) {
+      const { error } = await supabase.from('employee_daily_shifts').upsert(toUpsert, { onConflict: 'employee_id,work_date' });
+      if (error) {
+        setSaving(false);
+        setSaveError(error.message);
+        return;
+      }
+    }
+    for (const d of toDelete) {
+      const { error } = await supabase
+        .from('employee_daily_shifts')
+        .delete()
+        .eq('employee_id', d.employee_id)
+        .eq('work_date', d.work_date);
+      if (error) {
+        setSaving(false);
+        setSaveError(error.message);
+        return;
+      }
+    }
+
+    setSaving(false);
+    setPending({});
+    reload();
+  }
+
+  // `inherited` gives a day pulled from the Weekly Pattern a lighter, dashed
+  // border than one explicitly picked for this exact date, so it's clear at
+  // a glance which days are a real employee_daily_shifts row. `holiday`
+  // colours a blank-and-nothing-inherited cell as a company holiday instead
+  // of an ordinary Week Off; `onHoliday` rings a cell that's ALSO a holiday
+  // even though the employee has a real shift that day (rostered to work
+  // through it), so that's visible without hiding the shift itself.
+  function cellTone(value: string, dirty: boolean, inherited: boolean, holiday: boolean, onHoliday: boolean) {
+    if (dirty) return 'border-accent bg-accent/10 text-ink font-medium';
+    if (holiday) return 'border-dashed border-purple-300 bg-purple-50 text-purple-700';
+    const ring = onHoliday ? ' ring-1 ring-inset ring-purple-300' : '';
+    if (value === WEEK_OFF_VALUE) {
+      return (
+        (inherited
+          ? 'border-dashed border-warning/40 bg-warning-bg/50 text-warning-text'
+          : 'border-warning/30 bg-warning-bg text-warning-text font-semibold') + ring
+      );
+    }
+    if (value === UNSET) return 'border-slate-200 text-slate-400' + ring;
+    return (
+      (inherited
+        ? 'border-dashed border-accent/30 bg-accent/5 text-slate-600'
+        : 'border-accent/30 bg-accent/5 text-ink font-medium') + ring
+    );
+  }
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3 bg-gradient-to-r from-accent/10 via-accent/5 to-transparent px-4 py-3 sm:px-6">
+        <div className="flex items-center gap-3">
+          <button onClick={() => setAnchor(a => stepAnchor(system, a, -1))} className="rounded-md border border-slate-200 bg-white px-2 py-1 text-slate-500 shadow-sm hover:bg-slate-50">
+            ←
+          </button>
+          <span className="text-sm font-semibold text-ink">{month.label}</span>
+          <button onClick={() => setAnchor(a => stepAnchor(system, a, 1))} className="rounded-md border border-slate-200 bg-white px-2 py-1 text-slate-500 shadow-sm hover:bg-slate-50">
+            →
+          </button>
+          <button onClick={() => setAnchor(todayAnchor())} className="text-xs font-medium text-accent hover:underline">
+            Today
+          </button>
+        </div>
+        <div className="flex items-center gap-3">
+          {copyDone && <span className="text-xs font-semibold text-good-text">✓ Copied to {copyTargetMonth?.label}</span>}
+          <button
+            type="button"
+            onClick={openCopyModal}
+            disabled={copyCandidateCount === 0 || pendingCount > 0}
+            title={
+              pendingCount > 0
+                ? 'Save this month’s changes first'
+                : copyCandidateCount === 0
+                  ? 'Nothing to copy — no picks this month'
+                  : undefined
+            }
+            className="rounded-md border border-accent/30 bg-white px-2.5 py-1.5 text-xs font-semibold text-accent shadow-sm hover:bg-accent/5 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            ⧉ Copy this month to…
+          </button>
+        </div>
+      </div>
+
+      {pendingCount > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-accent/20 bg-accent/5 px-4 py-3 sm:px-6">
+          <span className="text-sm font-medium text-ink">
+            {pendingCount} unsaved change{pendingCount === 1 ? '' : 's'}
+          </span>
+          <div className="flex gap-2">
+            <button onClick={() => setPending({})} className="rounded-lg px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100">
+              Cancel
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="rounded-lg bg-accent px-4 py-1.5 text-sm font-semibold text-white hover:bg-accent/90 disabled:opacity-60"
+            >
+              {saving ? 'Saving…' : 'Save changes'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="p-4 sm:p-6">
+        {loading ? (
+          <p className="text-center text-sm text-slate-400">Loading…</p>
+        ) : employees.length === 0 ? (
+          <p className="text-center text-sm text-slate-400">No active employees.</p>
+        ) : templateShifts.length === 0 ? (
+          <p className="text-center text-sm text-slate-400">
+            Create at least one shift above first (e.g. Day Duty, Night Duty, Day &amp; Night Duty) — this roster assigns one of
+            those to each employee per day.
+          </p>
+        ) : (
+          <>
+          <div className="mb-2 flex items-center justify-end gap-2">
+            <span className="text-xs text-slate-400">Scroll days:</span>
+            <button
+              type="button"
+              onClick={() => scrollDays(-7)}
+              className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-500 shadow-sm hover:border-accent/40 hover:text-accent"
+            >
+              ‹ Back
+            </button>
+            <button
+              type="button"
+              onClick={() => scrollDays(7)}
+              className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-500 shadow-sm hover:border-accent/40 hover:text-accent"
+            >
+              Forward ›
+            </button>
+          </div>
+          <HorizontalScrollButtons targetRef={scrollRef} step={700} />
+          <div ref={scrollRef} className="max-h-[65vh] overflow-auto rounded-xl border border-slate-200">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="sticky top-0 z-20 border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                  <th className="sticky left-0 z-10 whitespace-nowrap bg-slate-50 px-3 py-2.5 font-medium">Employee</th>
+                  {monthCells.map(cell => {
+                    // Company-wide holidays only (no gender filter) for the
+                    // shared header tint — a gender-scoped one (e.g. Teej)
+                    // still shows correctly per employee in each cell below.
+                    const holidayName = holidayDatesFor(null).has(cell.adKey) ? holidayNameByDate.get(cell.adKey) : undefined;
+                    return (
+                      <th
+                        key={cell.adKey}
+                        title={holidayName}
+                        className={`whitespace-nowrap px-1 py-2.5 text-center font-medium ${
+                          holidayName ? 'bg-purple-50 text-purple-700' : cell.adKey === today ? 'bg-accent/10 text-accent' : ''
+                        }`}
+                      >
+                        {WEEKDAY_LABELS[new Date(cell.adKey + 'T00:00:00Z').getUTCDay()]}
+                        <div className="text-[11px] font-normal normal-case text-slate-400">{cell.displayDay}</div>
+                        {holidayName && <div className="max-w-[5.5rem] truncate text-[9px] font-semibold normal-case text-purple-600">{holidayName}</div>}
+                      </th>
+                    );
+                  })}
+                </tr>
+              </thead>
+              <tbody>
+                {employees.map((emp, i) => {
+                  const rowBg = i % 2 === 1 ? 'bg-slate-50' : 'bg-white';
+                  return (
+                    <tr key={emp.id} className="border-b border-slate-100 last:border-0">
+                      <td className={`sticky left-0 z-10 whitespace-nowrap px-3 py-2 ${rowBg}`}>
+                        <div className="flex items-center gap-2">
+                          <Avatar name={emp.name} photoUrl={emp.profile_photo_url} className="h-12 w-12 text-sm" />
+                          <span className="truncate font-medium text-ink">{emp.name}</span>
+                        </div>
+                      </td>
+                      {dates.map(date => {
+                        const value = currentValue(emp.id, date);
+                        const dirty = `${emp.id}|${date}` in pending;
+                        const inherited = !dirty && isInherited(emp.id, date);
+                        const holidayFallback = !dirty && isHolidayFallback(emp.id, date);
+                        const onHoliday = isHoliday(emp.id, date);
+                        const holidayName = holidayNameByDate.get(date);
+                        const shiftTitle = shiftById.get(value)
+                          ? `${shiftById.get(value)!.name} (${shiftById.get(value)!.start_time.slice(0, 5)}–${shiftById
+                              .get(value)!
+                              .end_time.slice(0, 5)})`
+                          : value === WEEK_OFF_VALUE
+                            ? holidayFallback
+                              ? (holidayName ?? 'Company holiday')
+                              : 'Week Off'
+                            : undefined;
+                        const title = onHoliday && !holidayFallback && shiftTitle
+                          ? `${shiftTitle} — rostered to work through ${holidayName ?? 'a company holiday'}`
+                          : inherited && shiftTitle
+                            ? `${shiftTitle} — from the Weekly Pattern`
+                            : shiftTitle;
+                        return (
+                          <td key={date} className={`px-0.5 py-1.5 text-center ${date === today ? 'bg-accent/5' : rowBg}`}>
+                            <select
+                              value={value}
+                              onChange={e => setCell(emp.id, date, e.target.value)}
+                              title={title}
+                              className={`w-24 rounded-md border px-1 py-1 text-[11px] shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-accent/30 disabled:cursor-not-allowed disabled:opacity-50 ${cellTone(
+                                value,
+                                dirty,
+                                inherited,
+                                holidayFallback,
+                                onHoliday && !holidayFallback
+                              )}`}
+                            >
+                              <option value={UNSET}>—</option>
+                              <option value={WEEK_OFF_VALUE}>{holidayFallback ? 'Holiday' : 'Week Off'}</option>
+                              {templateShifts.map(s => (
+                                <option key={s.id} value={s.id}>
+                                  {s.name} {s.start_time.slice(0, 2)}-{s.end_time.slice(0, 2)}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-400">
+            <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-sm border border-dashed border-slate-300" /> Dashed = inherited from the Weekly Pattern</span>
+            <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-sm border border-dashed border-purple-300 bg-purple-50" /> Company holiday</span>
+          </div>
+          </>
+        )}
+
+        {saveError && <p className="mt-3 text-sm text-critical">Could not save: {saveError}</p>}
+      </div>
+
+      {copyModalOpen && copyTargetAnchor && (
+        <div className="fixed inset-0 z-10 flex items-center justify-center bg-black/30 p-4">
+          <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-lg">
+            <h3 className="mb-2 text-lg font-semibold text-ink">Copy {month.label} to…</h3>
+            <div className="mb-4 flex items-center justify-center gap-3 rounded-lg border border-slate-200 bg-slate-50 py-2.5">
+              <button
+                type="button"
+                onClick={() => setCopyTargetAnchor(a => stepAnchor(system, a!, -1))}
+                className="rounded-md border border-slate-200 bg-white px-2 py-1 text-slate-500 shadow-sm hover:bg-slate-50"
+              >
+                ←
+              </button>
+              <span className="min-w-[10rem] text-center text-sm font-semibold text-ink">{copyTargetMonth?.label}</span>
+              <button
+                type="button"
+                onClick={() => setCopyTargetAnchor(a => stepAnchor(system, a!, 1))}
+                className="rounded-md border border-slate-200 bg-white px-2 py-1 text-slate-500 shadow-sm hover:bg-slate-50"
+              >
+                →
+              </button>
+            </div>
+            {copyTargetIsSameMonth ? (
+              <p className="mb-4 text-sm text-critical">Pick a different month — this is the month you&apos;re already viewing.</p>
+            ) : (
+              <p className="mb-4 text-sm text-slate-600">
+                {copyCandidateCount} employee{copyCandidateCount === 1 ? '' : 's'} with an exact-date pick this month will get
+                that same plan applied to {copyTargetMonth?.label}, matched by day-of-month position (the 1st here → the 1st
+                there, and so on). A day only inherited from the Weekly Pattern (dashed border) isn't copied — the target
+                month already inherits the same pattern on its own. If the two months are different lengths, the extra days
+                at the end are left alone, and an existing pick on the matching target day is left untouched — this only
+                fills in, it never clears. You can still hand-edit any single day afterward.
+              </p>
+            )}
+            {copyError && <p className="mb-3 text-sm text-critical">Could not copy: {copyError}</p>}
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setCopyModalOpen(false)}
+                disabled={copying}
+                className="rounded-lg px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={performCopyToMonth}
+                disabled={copying || copyTargetIsSameMonth}
+                className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent/90 disabled:opacity-60"
+              >
+                {copying ? 'Copying…' : 'Copy'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

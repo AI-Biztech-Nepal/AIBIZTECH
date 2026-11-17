@@ -1,0 +1,12 @@
+node_modules
+dist
+.expo
+.env
+.env.local
+android
+
+.vercel
+.env*
+
+# Auto Stock Manager import: downloaded data
+scripts/asm_import/data/

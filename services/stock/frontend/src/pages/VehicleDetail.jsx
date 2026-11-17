@@ -1,0 +1,854 @@
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
+import { Plus, Trash2, Edit, CheckCircle, AlertCircle, Clock, QrCode, Undo2, Download, FileText, Package, ChevronLeft, ChevronRight, GripVertical } from "lucide-react";
+import { toast } from "sonner";
+import api, { postWithRetry } from "../utils/api";
+import { formatNPR, getAgingStyle, getStatusStyle, getTerminationStyle, sanakhatDaysLeft, sanakhatPendingDays, sanakhatDueDate, sanakhatLeftText, SANAKHAT_CYCLE_DAYS, SANAKHAT_WARN_DAYS, getDocStyle, EXPENSE_CATEGORIES, VEHICLE_STATUS_OPTIONS } from "../utils/helpers";
+import { ExpenseModal, QRLabelModal, ReturnModal } from "./VehicleModals";
+import { VehicleFormBody, vehicleMissing } from "./AddVehicleModal";
+import HoverADDate from "../components/HoverADDate";
+import { useAuth } from "../context/AuthContext";
+import { hasFullVehicleAccess, canManageVehiclePhotos, hidesVehiclePricing, isBasicStockRole, PARTS_ALLOWED_VEHICLE_STATUSES } from "../utils/permissions";
+import { PhotoCropperModal } from "../components/PhotoCropperModal";
+import { usePhotoCropQueue } from "../hooks/usePhotoCropQueue";
+import { resizeImageFile } from "../utils/resizeImage";
+import { EMPTY_DOC_PHOTOS, flattenStagedDocs, revokeStagedDocs, uploadStagedDocs } from "../utils/stagedDocs";
+
+const DocCard = ({ label, status }) => {
+  const s = getDocStyle(status);
+  const icons = { ok: CheckCircle, pending: Clock, missing: AlertCircle };
+  const Icon = icons[status] || Clock;
+  return (
+    <div className={`flex items-center gap-2.5 p-3 rounded-lg border ${s.bg} ${s.text}`}>
+      <Icon size={16} />
+      <div>
+        <div className="text-xs font-semibold uppercase tracking-wide">{label}</div>
+        <div className="text-xs capitalize">{s.label}</div>
+      </div>
+    </div>
+  );
+};
+
+// A backend-rejected upload (bad file type, too large, no permission) always carries
+// e.response.data.detail. No response at all means the request never reached/returned
+// from the API cleanly (wrong backend URL, CORS block, cold-start timeout) — surface
+// that distinction instead of a generic "Upload failed" so it's actually debuggable.
+const describeUploadError = (e) => {
+  if (!e) return "Upload failed";
+  if (e.response?.data?.detail) return e.response.data.detail;
+  if (e.code === "ECONNABORTED") return "Upload timed out — server may be waking up, try again";
+  if (!e.response) return `Upload failed: could not reach server (${e.message || e.code || "network error"})`;
+  return `Upload failed (${e.response.status})`;
+};
+
+// Rendered either as a routed page (/inventory/:id, via the default-exported VehicleDetail
+// wrapper below) or embedded directly by Inventory.jsx with local state — the latter keeps
+// the Inventory page mounted underneath instead of unmounting/refetching it on open/close.
+export function VehicleDetailModal({ id, onClose }) {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
+  const isFrontDesk = user?.role === "stock_supervisor";
+  const isPartsOnly = user?.role === "parts_supervisor";
+  const hidePricing = hidesVehiclePricing(user?.role);
+  const hideFinancials = isFrontDesk || hidePricing;
+  const canManageStock = hasFullVehicleAccess(user?.role);
+  const canManagePhotos = canManageVehiclePhotos(user?.role);
+  // Social Media sees no costs at all -- the backend strips expenses/job cards for this role too.
+  const hideExpenses = isBasicStockRole(user?.role);
+  // Deep links from Sales/Sold Stock (and elsewhere) can land here with a specific tab
+  // requested via navigation state, e.g. navigate(`/inventory/${id}`, { state: { openTab: "expenses" } }).
+  const location = useLocation();
+  const [vehicle, setVehicle] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState((!hideExpenses && location.state?.openTab) || "overview");
+  const [showExpenseModal, setShowExpenseModal] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [expForm, setExpForm] = useState({ category: "servicing", amount: "", description: "", date: "" });
+  const [editForm, setEditForm] = useState({});
+  // Paperwork photos picked in the edit form, uploaded once the changes are saved.
+  const [docPhotos, setDocPhotos] = useState(EMPTY_DOC_PHOTOS);
+  const [showErrors, setShowErrors] = useState(false); // Save was pressed with something missing
+  const stagedDocs = flattenStagedDocs(docPhotos);
+  const [saving, setSaving] = useState(false);
+
+  const [showReturnModal, setShowReturnModal] = useState(false);
+  const [returnForm, setReturnForm] = useState({ refund_amount: "", new_status: "available", notes: "" });
+  const [returning, setReturning] = useState(false);
+  const [activeSale, setActiveSale] = useState(null);
+
+  const fetchVehicle = useCallback(async () => {
+    try {
+      const r = await api.get(`/vehicles/${id}`);
+      setVehicle(r.data);
+      setEditForm(r.data);
+    } catch { toast.error("Vehicle not found"); onClose(); }
+    finally { setLoading(false); }
+  }, [id, onClose]);
+
+  useEffect(() => {
+    fetchVehicle();
+  }, [fetchVehicle]);
+
+  const addExpense = async (e) => {
+    e.preventDefault();
+    if (!expForm.category || !expForm.amount) { toast.error("Fill required fields"); return; }
+    setSaving(true);
+    try {
+      await api.post("/expenses", { vehicle_id: id, ...expForm, amount: Number(expForm.amount) });
+      toast.success("Expense added"); setShowExpenseModal(false);
+      setExpForm({ category: "servicing", amount: "", description: "", date: "" });
+      fetchVehicle();
+    } catch { toast.error("Failed to add expense"); } finally { setSaving(false); }
+  };
+
+  const deleteExpense = async (eid) => {
+    if (!window.confirm("Delete this expense?")) return;
+    try { await api.delete(`/expenses/${eid}`); toast.success("Deleted"); fetchVehicle(); } catch { toast.error("Failed"); }
+  };
+
+  const updateStatus = async (status) => {
+    try {
+      await api.patch(`/vehicles/${id}/status`, { status });
+      toast.success(`Status updated to ${status}`);
+      fetchVehicle();
+    } catch (err) { toast.error(err.response?.data?.detail || "Failed"); }
+  };
+
+  const openReturnModal = async () => {
+    try {
+      const r = await api.get(`/vehicles/${id}/active-sale`);
+      setActiveSale(r.data);
+      setReturnForm({ refund_amount: "", new_status: "available", notes: "" });
+      setShowReturnModal(true);
+    } catch (err) { toast.error(err.response?.data?.detail || "No active sale found for this vehicle"); }
+  };
+
+  const submitReturn = async (e) => {
+    e.preventDefault();
+    const amt = Number(returnForm.refund_amount);
+    if (returnForm.refund_amount === "" || Number.isNaN(amt) || amt < 0 || amt > (activeSale?.total_amount ?? Infinity)) {
+      toast.error("Enter a valid refund amount");
+      return;
+    }
+    setReturning(true);
+    try {
+      await api.post(`/vehicles/${id}/return`, {
+        refund_amount: amt,
+        new_status: returnForm.new_status,
+        notes: returnForm.notes || null,
+      });
+      toast.success("Return recorded — vehicle back in stock");
+      setShowReturnModal(false);
+      fetchVehicle();
+    } catch (err) { toast.error(err.response?.data?.detail || "Failed to record return"); }
+    finally { setReturning(false); }
+  };
+
+  const saveEdit = async (e, confirmReusedRegistration = false) => {
+    e.preventDefault();
+    const missing = vehicleMissing(editForm, { editing: true });
+    if (missing.length) {
+      setShowErrors(true);
+      document.getElementById(`pv-${missing[0][0]}`)?.focus();
+      return;
+    }
+    setSaving(true);
+    try {
+      const payload = { ...editForm, selling_price: editForm.selling_price ? Number(editForm.selling_price) : null, sanakhat_cost: editForm.sanakhat_cost !== "" && editForm.sanakhat_cost != null ? Number(editForm.sanakhat_cost) : null, year: Number(editForm.year), engine_cc: Number(editForm.engine_cc), ownership_number: editForm.ownership_number ? Number(editForm.ownership_number) : null, confirm_reused_registration: confirmReusedRegistration };
+      if (isFrontDesk) { delete payload.purchase_price; delete payload.minimum_selling_price; delete payload.accessories_cost; }
+      else { payload.purchase_price = Number(editForm.purchase_price); payload.minimum_selling_price = editForm.minimum_selling_price ? Number(editForm.minimum_selling_price) : null; }
+      await api.put(`/vehicles/${id}`, payload);
+      if (stagedDocs.length > 0 && await uploadStagedDocs(id, stagedDocs)) {
+        toast.error("Saved, but some paperwork photos failed to upload. Add them under Legal Documents.");
+      }
+      toast.success("Vehicle updated");
+      revokeStagedDocs(stagedDocs); setDocPhotos(EMPTY_DOC_PHOTOS);
+      setShowErrors(false); setIsEditing(false); fetchVehicle(); loadDocs();
+      setSaving(false);
+    } catch (err) {
+      setSaving(false);
+      const detail = err.response?.data?.detail;
+      // Same buyback-vs-typo confirmation as Add Vehicle — no shared `finally` so the
+      // recursive confirmed re-submit isn't raced by this call's own cleanup.
+      if (err.response?.status === 409 && detail?.code === "duplicate_registration_closed") {
+        if (window.confirm(detail.message)) saveEdit(e, true);
+        return;
+      }
+      toast.error(typeof detail === "string" ? detail : "Failed to update");
+    }
+  };
+
+  const openEdit = () => { setEditForm(vehicle); setShowErrors(false); setIsEditing(true); };
+  const cancelEdit = () => { setEditForm(vehicle); revokeStagedDocs(stagedDocs); setDocPhotos(EMPTY_DOC_PHOTOS); setShowErrors(false); setIsEditing(false); };
+
+  const [showQR, setShowQR] = useState(false);
+  const [qrData, setQrData] = useState(null);
+  const [photos, setPhotos] = useState([]);
+  const [previewPhoto, setPreviewPhoto] = useState(null);
+  const [previewDoc, setPreviewDoc] = useState(null);
+  const [legalDocs, setLegalDocs] = useState([]);
+  const [isDraggingPhoto, setIsDraggingPhoto] = useState(false);
+  const [uploadingDoc, setUploadingDoc] = useState(false);
+
+  const loadPhotos = useCallback(async () => {
+    try { const r = await api.get(`/vehicles/${id}/photos`); setPhotos(r.data); }
+    catch (err) { console.error("Failed to load photos:", err); }
+  }, [id]);
+
+  const loadDocs = useCallback(async () => {
+    try { const r = await api.get(`/vehicles/${id}/legal-documents`); setLegalDocs(r.data); }
+    catch (err) { console.error("Failed to load documents:", err); }
+  }, [id]);
+
+  // Shows the picked/dropped file instantly as a local blob-URL preview (a "pending"
+  // photo entry), then uploads it in the background and swaps the preview for the real
+  // server copy the moment that upload resolves — so the UI never waits on the
+  // network, and a slow photo doesn't hold up the others finishing first. A pending
+  // count is exposed so the close button can warn before an in-flight upload is lost.
+  const uploadCroppedPhoto = (file) => {
+    const tempId = `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const previewUrl = URL.createObjectURL(file);
+    setPhotos(prev => [...prev, { id: tempId, url: previewUrl, pending: true }]);
+
+    const fd = new FormData(); fd.append("file", file);
+    postWithRetry(`/vehicles/${id}/photos`, fd, { headers: { "Content-Type": "multipart/form-data" } })
+      .then(r => setPhotos(prev => prev.map(p => (p.id === tempId ? r.data : p))))
+      .catch(err => {
+        setPhotos(prev => prev.filter(p => p.id !== tempId));
+        toast.error(describeUploadError(err));
+      })
+      .finally(() => URL.revokeObjectURL(previewUrl));
+  };
+  // Every picked/dropped file is routed through the crop dialog (one at a time)
+  // before it reaches uploadCroppedPhoto, so staff centre the bike in a 4:3
+  // frame instead of the storefront silently object-fit cropping it later.
+  const { activeSrc: activeCropSrc, enqueueFiles: uploadPhotos, cancelActive: cancelCrop, confirmActive: confirmCrop } = usePhotoCropQueue(uploadCroppedPhoto);
+
+  const onPhotoDragOver = (e) => { e.preventDefault(); setIsDraggingPhoto(true); };
+  const onPhotoDragLeave = () => setIsDraggingPhoto(false);
+  const onPhotoDrop = (e) => {
+    e.preventDefault();
+    setIsDraggingPhoto(false);
+    if (e.dataTransfer.files?.length) uploadPhotos(e.dataTransfer.files);
+  };
+
+  // Photo order = storefront order; the first photo is the cover. Saved optimistically,
+  // reverted on failure. Reordered by dragging (pointer events rather than HTML5 drag-and-drop,
+  // which never fires on touch screens): a mouse drags from anywhere on the tile, a finger from
+  // the grip handle (so swiping over photos still scrolls the page), or use the arrow buttons.
+  const [dragPhotoId, setDragPhotoId] = useState(null);
+  const [dragOverIdx, setDragOverIdx] = useState(null);
+  const suppressPhotoClick = useRef(false);  // a finished drag mustn't also open the preview
+  const photoIdxAt = (x, y) => {
+    const el = document.elementFromPoint(x, y)?.closest("[data-photo-idx]");
+    return el ? Number(el.dataset.photoIdx) : null;
+  };
+  const onPhotoPointerDown = (e, photo) => {
+    if (!canManagePhotos || photo.pending || e.button !== 0 || photos.length < 2) return;
+    if (e.target.closest("button[title]")) return;  // arrow / delete buttons
+    if (e.pointerType !== "mouse" && !e.target.closest("[data-drag-handle]")) return;
+    const start = { x: e.clientX, y: e.clientY };
+    let active = false;
+    const move = (ev) => {
+      if (!active) {
+        if (Math.hypot(ev.clientX - start.x, ev.clientY - start.y) < 6) return;
+        active = true;
+        setDragPhotoId(photo.id);
+      }
+      ev.preventDefault();
+      setDragOverIdx(photoIdxAt(ev.clientX, ev.clientY));
+    };
+    const end = (ev) => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+      if (active) {
+        suppressPhotoClick.current = true;
+        setTimeout(() => { suppressPhotoClick.current = false; }, 0);
+        const to = ev.type === "pointerup" ? photoIdxAt(ev.clientX, ev.clientY) : null;
+        if (to !== null) movePhoto(photo.id, to);
+      }
+      setDragPhotoId(null);
+      setDragOverIdx(null);
+    };
+    window.addEventListener("pointermove", move, { passive: false });
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+  };
+  const savePhotoOrder = async (next, prev) => {
+    setPhotos(next);
+    try {
+      await api.put(`/vehicles/${id}/photos/order`, { photo_ids: next.map(p => p.id) });
+      toast.success("Photo order saved");
+    } catch (err) {
+      setPhotos(prev);
+      toast.error(err.response?.data?.detail || "Couldn't save photo order");
+    }
+  };
+  const movePhoto = (fromId, toIndex) => {
+    const from = photos.findIndex(p => p.id === fromId);
+    if (from < 0 || toIndex < 0 || toIndex >= photos.length || from === toIndex) return;
+    if (photos.some(p => p.pending)) { toast.error("Wait for uploads to finish before reordering"); return; }
+    const next = [...photos];
+    const [moved] = next.splice(from, 1);
+    next.splice(toIndex, 0, moved);
+    savePhotoOrder(next, photos);
+  };
+
+  const deletePhoto = async (photoId) => {
+    if (!window.confirm("Delete this photo?")) return;
+    try {
+      await api.delete(`/vehicles/${id}/photos/${photoId}`);
+      toast.success("Photo deleted");
+      setPhotos(prev => prev.filter(p => p.id !== photoId));
+    } catch { toast.error("Failed to delete photo"); }
+  };
+
+  const uploadDoc = async (file, docType) => {
+    // Unlike vehicle photos (resized to <=1600px by the crop step before this ever runs),
+    // a document photo is sent at the camera's full resolution -- often several MB on a modern
+    // phone, especially for a close-up, detail-heavy shot like a bluebook page. That's a lot
+    // longer to sit on the wire on a flaky mobile connection, so shrink it client-side first too.
+    const upload = file.type.startsWith("image/") ? await resizeImageFile(file) : file;
+    const fd = new FormData(); fd.append("file", upload); fd.append("doc_type", docType);
+    setUploadingDoc(true);
+    try {
+      await postWithRetry(`/vehicles/${id}/legal-documents`, fd, { headers: { "Content-Type": "multipart/form-data" } });
+      toast.success("Document uploaded!"); loadDocs(); fetchVehicle();
+    } catch (e) { toast.error(describeUploadError(e)); }
+    finally { setUploadingDoc(false); }
+  };
+
+  const deleteDoc = async (docId) => {
+    if (!window.confirm("Delete this document?")) return;
+    try { await api.delete(`/vehicles/${id}/legal-documents/${docId}`); loadDocs(); fetchVehicle(); toast.success("Document deleted"); }
+    catch { toast.error("Failed to delete"); }
+  };
+
+  useEffect(() => { if (id) { loadPhotos(); loadDocs(); } }, [id, loadPhotos, loadDocs]);
+  const docsOnFile = legalDocs.reduce((n, d) => ({ ...n, [d.doc_type]: (n[d.doc_type] || 0) + 1 }), {});
+
+  const loadQR = async () => {
+    try {
+      const r = await api.get(`/vehicles/${id}/qr-data`);
+      setQrData(r.data);
+      setShowQR(true);
+    } catch { toast.error("Failed to load QR"); }
+  };
+
+  const financialCards = useMemo(() => {
+    if (!vehicle || hideExpenses) return [];
+    if (hideFinancials) {
+      return [{ label: "Total Expenses", value: formatNPR(vehicle.total_expenses), bold: false, highlight: false }];
+    }
+    return [
+      { label: "Purchase Price", value: formatNPR(vehicle.purchase_price), bold: false, highlight: false },
+      { label: "Total Expenses", value: formatNPR(vehicle.total_expenses), bold: false, highlight: false },
+      { label: "Total Investment", value: formatNPR(vehicle.total_investment), bold: true, highlight: false },
+      {
+        label: vehicle.status === "sold" ? "Realized Profit" : "Expected Profit",
+        value: vehicle.expected_profit !== null ? formatNPR(vehicle.expected_profit) : "N/A",
+        bold: false,
+        highlight: vehicle.profit_margin !== null,
+      },
+    ];
+  }, [vehicle, hideFinancials, hideExpenses]);
+
+  const pendingPhotoCount = photos.filter(p => p.pending).length;
+  const handleClose = () => {
+    if (pendingPhotoCount > 0) {
+      const noun = pendingPhotoCount > 1 ? "photos are" : "photo is";
+      if (!window.confirm(`${pendingPhotoCount} ${noun} still uploading. Close anyway? ${pendingPhotoCount > 1 ? "They" : "It"} won't be saved.`)) return;
+    }
+    onClose();
+  };
+
+  if (loading) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+        <div className="animate-spin w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full" />
+      </div>
+    );
+  }
+  if (!vehicle) return null;
+
+  const ag = getAgingStyle(vehicle.aging?.category);
+  const st = getStatusStyle(vehicle.status);
+
+  // Sanaakhat at a glance (header pill + overview rows): Done counts down the SANAKHAT_CYCLE_DAYS to the next one,
+  // Pending counts the days it has waited. Either needs sanakhat_date; a Done one without it says so.
+  const skState = vehicle.ownership_termination_status || "pending";
+  const skDate = (vehicle.sanakhat_date || "").slice(0, 10);
+  const skLeft = sanakhatDaysLeft(vehicle);
+  const skWaiting = sanakhatPendingDays(vehicle);
+  const skDue = sanakhatDueDate(vehicle);
+  const skTone = skLeft !== null && skLeft < 0 ? "bg-red-100 text-red-800"
+    : skLeft !== null && skLeft <= 7 ? "bg-amber-100 text-amber-800"
+    : skWaiting !== null && skWaiting > SANAKHAT_WARN_DAYS ? "bg-red-100 text-red-800"
+    : `${getTerminationStyle(skState).bg} ${getTerminationStyle(skState).text}`;
+  const skPill = `${getTerminationStyle(skState).label}${skLeft !== null ? ` · ${sanakhatLeftText(skLeft)}` : skState === "yes" && !skDate ? " · no date" : skWaiting !== null ? ` · ${skWaiting}d` : ""}`;
+
+  // The line under the Sanaakhat date in the form: when the next one is due, or how long this one has waited.
+  const sanakhatNote = skDue
+    ? <span className={skLeft < 0 ? "text-red-600" : skLeft <= 7 ? "text-amber-600" : ""}>Next due <HoverADDate date={skDue} /> · {sanakhatLeftText(skLeft)}</span>
+    : skWaiting !== null
+      ? <span className={skWaiting > SANAKHAT_WARN_DAYS ? "text-red-600" : ""}>{skWaiting === 0 ? "Waiting since today" : `Waiting ${skWaiting} day${skWaiting > 1 ? "s" : ""}`}</span>
+      : skState === "yes" && !skDate ? <span className="text-amber-600">Done, but no date saved yet</span> : null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 sm:p-4">
+      <div className="bg-white sm:rounded-2xl shadow-2xl w-full h-full sm:h-auto sm:max-w-5xl sm:max-h-[90vh] overflow-y-auto">
+        {/* Header + Status/Actions — sticky as one block so Cancel/Save Changes
+           (and the other action buttons) stay reachable without scrolling back
+           up, no matter how far down the form the fields go. */}
+        <div className="sticky top-0 bg-white z-10 border-b border-slate-100">
+          <div className="flex items-center justify-between gap-3 p-4 sm:p-5 pb-3">
+            <div className="min-w-0">
+              <h2 className="text-lg font-bold text-slate-900 truncate" style={{ fontFamily: "Manrope, sans-serif" }}>{vehicle.brand} {vehicle.model}</h2>
+              {vehicle.registration_number && (
+                <p className="text-base font-mono font-bold text-slate-900">{vehicle.registration_number}</p>
+              )}
+              <p className="text-xs text-slate-500">{vehicle.year} · {vehicle.engine_cc}cc · {vehicle.fuel_type}</p>
+            </div>
+            <div className="flex items-center gap-3 shrink-0">
+              {pendingPhotoCount > 0 && (
+                <span className="hidden sm:flex items-center gap-1.5 text-xs text-blue-600 font-medium" data-testid="photo-upload-indicator">
+                  <span className="animate-spin w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full" />
+                  Uploading {pendingPhotoCount} photo{pendingPhotoCount > 1 ? "s" : ""}…
+                </span>
+              )}
+              <button onClick={handleClose} className="w-11 h-11 flex items-center justify-center rounded-lg hover:bg-slate-100 text-slate-500 shrink-0">✕</button>
+            </div>
+          </div>
+
+          {vehicle.status === "reserved" && (
+            <div className="mx-4 sm:mx-5 mb-3 flex items-center justify-between gap-2 flex-wrap text-xs text-yellow-900 bg-yellow-100 border border-yellow-200 rounded-lg px-3 py-2" data-testid="vehicle-booking-banner">
+              <span>
+                {vehicle.booking
+                  ? <>Booked by <span className="font-semibold">{vehicle.booking.customer_name || "customer"}</span>{vehicle.booking.booking_amount != null && <> · {formatNPR(vehicle.booking.booking_amount)} deposit</>}{vehicle.booking.booking_date && <> · <HoverADDate date={vehicle.booking.booking_date} /></>}</>
+                  : "Reserved"}
+              </span>
+              {vehicle.booking && <button type="button" onClick={() => navigate("/bookings")} className="font-semibold underline">Open in Bookings</button>}
+            </div>
+          )}
+
+          {vehicle.status === "sold" && (
+            <div className="mx-4 sm:mx-5 mb-3 flex items-center justify-between gap-2 flex-wrap text-sm text-green-900 bg-green-100 border border-green-300 rounded-lg px-3 py-2" data-testid="vehicle-sold-banner">
+              <span>
+                <span className="font-bold uppercase tracking-wide">Sold</span>
+                {vehicle.sold_date && <> · <HoverADDate date={vehicle.sold_date} /></>}
+              </span>
+              <button type="button" onClick={() => navigate(`/sales/vehicle/${vehicle.id}`)} className="text-xs font-semibold underline" data-testid="vehicle-sold-banner-link">View sale details</button>
+            </div>
+          )}
+
+          {/* Status + Actions */}
+          <div className="flex items-center gap-2 flex-wrap px-4 sm:px-5 pb-4 sm:pb-5">
+            <span className={`px-2.5 py-1 rounded-full text-xs font-semibold uppercase tracking-wide ${ag.bg} ${ag.text}`}>{vehicle.aging?.days}d · {ag.label}</span>
+            <span className={`px-2.5 py-1 rounded-full text-xs font-semibold uppercase tracking-wide ${skTone}`} title={`Sanaakhat has to be done again every ${SANAKHAT_CYCLE_DAYS} days`} data-testid="vehicle-sanakhat-pill">{skPill}</span>
+            {!isEditing && (
+              <select
+                value={vehicle.status}
+                onChange={e => updateStatus(e.target.value)}
+                disabled={!canManageStock && !(isPartsOnly && PARTS_ALLOWED_VEHICLE_STATUSES.includes(vehicle.status))}
+                className={`appearance-none cursor-pointer px-2.5 py-1 pr-6 rounded-full text-xs font-semibold uppercase tracking-wide border-none focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-70 ${st.bg} ${st.text}`}
+                style={{ backgroundImage: "none" }}
+                data-testid="vehicle-status-select"
+                title={canManageStock ? "Change vehicle status" : isPartsOnly ? "Parts department can move a vehicle between Available, In Repair, and Scrap" : "View only — you don't have permission to change vehicle status"}
+              >
+                {/* Always include the vehicle's actual current status as an option, even if it falls
+                   outside what this role can pick — otherwise a filtered <select> with no matching
+                   <option> silently mis-renders (browsers show a blank/wrong label). The select is
+                   disabled in that case anyway, so this can't be used to bypass the restriction. */}
+                {(canManageStock ? VEHICLE_STATUS_OPTIONS : VEHICLE_STATUS_OPTIONS.filter(o => (isPartsOnly && PARTS_ALLOWED_VEHICLE_STATUSES.includes(o.value)) || o.value === vehicle.status)).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            )}
+            <div className="flex-1" />
+            {canManageStock && (isEditing ? (
+              <>
+                <button type="button" onClick={cancelEdit} className="flex items-center gap-1.5 px-3 py-3 border border-slate-200 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors" data-testid="cancel-edit-btn">Cancel</button>
+                <button type="button" onClick={saveEdit} disabled={saving} className="flex items-center gap-1.5 px-3 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold disabled:opacity-60 transition-colors" data-testid="save-vehicle-btn">
+                  {saving ? "Saving..." : "Save Changes"}
+                </button>
+              </>
+            ) : (
+              <button onClick={openEdit} className="flex items-center gap-1.5 px-3 py-3 border border-slate-200 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors" data-testid="edit-vehicle-btn"><Edit size={14} /> Edit</button>
+            ))}
+            {isAdmin && vehicle.status === "sold" && !isEditing && (
+              <button onClick={openReturnModal} className="flex items-center gap-1.5 px-3 py-3 border border-amber-200 text-amber-700 rounded-lg text-sm font-medium hover:bg-amber-50 transition-colors" data-testid="record-return-btn"><Undo2 size={14} /> Record Return</button>
+            )}
+            {!isEditing && !hideExpenses && (
+              <button onClick={loadQR} className="flex items-center gap-1.5 px-3 py-3 border border-slate-200 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors" data-testid="qr-btn"><QrCode size={14} /> QR Label</button>
+            )}
+          </div>
+        </div>
+
+        <div className="p-4 sm:p-5 space-y-4">
+          {/* Financial Summary */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            {financialCards.map(({ label, value, bold, highlight }) => {
+              let textClass = "text-slate-900";
+              if (highlight && !bold) textClass = vehicle.low_margin ? "text-red-600" : "text-green-600";
+              const isExpenses = label === "Total Expenses";
+              return (
+                <div
+                  key={label}
+                  onClick={isExpenses ? () => setActiveTab("expenses") : undefined}
+                  data-testid={isExpenses ? "total-expenses-card" : undefined}
+                  className={`bg-white rounded-xl border border-slate-200 shadow-sm p-4 ${isExpenses ? "cursor-pointer hover:border-blue-300 hover:shadow-md transition-all" : ""}`}
+                >
+                  <div className="text-xs text-slate-500 mb-1">{label}</div>
+                  <div className={`text-lg font-bold ${bold ? "text-slate-900" : textClass}`} style={{ fontFamily: "Manrope" }}>{value}</div>
+                  {label.includes("Profit") && vehicle.profit_margin !== null && (
+                    <div className={`text-xs mt-0.5 ${vehicle.low_margin ? "text-red-500" : "text-green-600"}`}>
+                      {vehicle.profit_margin}% margin {vehicle.low_margin ? "⚠ Low!" : ""}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Tabs */}
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="flex border-b border-slate-100">
+              {(hideExpenses ? ["overview"] : ["overview", "expenses"]).map(tab => (
+                <button key={tab} onClick={() => setActiveTab(tab)} data-testid={`tab-${tab}`}
+                  className={`px-5 py-3.5 text-sm font-medium capitalize transition-colors ${activeTab === tab ? "border-b-2 border-blue-600 text-blue-600" : "text-slate-500 hover:text-slate-700"}`}>
+                  {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                  {tab === "expenses" && (vehicle.expenses?.length > 0 || vehicle.job_cards?.length > 0) && <span className="ml-1.5 bg-slate-100 text-slate-600 text-xs px-1.5 py-0.5 rounded-full">{(vehicle.expenses?.length || 0) + (vehicle.job_cards?.length || 0)}</span>}
+                </button>
+              ))}
+            </div>
+
+            <div className="p-5">
+              {/* Overview Tab — stays mounted (hidden via CSS) instead of unmounting on tab switch. It is the Purchase
+                 Vehicle form (VehicleFormBody) filled in: read-only until Edit, then the same fields can be changed.
+                 -m-5 lets its sections run edge to edge, as they do in that form. */}
+              <div className={activeTab === "overview" ? "-m-5" : "hidden"}>
+                <VehicleFormBody
+                  editing
+                  readOnly={!isEditing}
+                  attempted={showErrors}
+                  form={editForm}
+                  setForm={setEditForm}
+                  docPhotos={docPhotos}
+                  setDocPhotos={setDocPhotos}
+                  existingDocs={docsOnFile}
+                  hideCost={hideFinancials}
+                  hidePricing={hidePricing}
+                  sanakhatNote={sanakhatNote}
+                />
+              </div>
+
+              {/* Expenses Tab — also kept mounted, hidden via CSS when inactive. */}
+              <div className={activeTab === "expenses" ? "" : "hidden"}>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-slate-500">Total: <strong className="text-slate-900">{formatNPR(vehicle.total_expenses)}</strong></span>
+                    {canManageStock && (
+                      <button onClick={() => setShowExpenseModal(true)} className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-all active:scale-95" data-testid="add-expense-btn">
+                        <Plus size={14} /> Add Expense
+                      </button>
+                    )}
+                  </div>
+                  {vehicle.expenses?.length === 0 && vehicle.job_cards?.length === 0 && !vehicle.sanakhat_cost ? (
+                    <div className="text-center py-8 text-slate-400 text-sm">No expenses recorded yet</div>
+                  ) : (
+                    <div className="divide-y divide-slate-50">
+                      {/* Sanaakhat cost is entered on the vehicle itself (Edit) and counts toward the total. */}
+                      {vehicle.sanakhat_cost > 0 && (
+                        <div data-testid="sanakhat-expense-row" className="flex items-center justify-between py-3">
+                          <div className="text-sm font-medium text-slate-900">Sanaakhat</div>
+                          <span className="font-semibold text-slate-900">{formatNPR(vehicle.sanakhat_cost)}</span>
+                        </div>
+                      )}
+                      {vehicle.expenses?.map(exp => {
+                        const catLabel = EXPENSE_CATEGORIES.find(c => c.value === exp.category)?.label || exp.category;
+                        return (
+                          <div key={exp.id} data-testid="expense-row" className="flex items-center justify-between py-3">
+                            <div>
+                              <div className="text-sm font-medium text-slate-900">{catLabel}</div>
+                              <div className="text-xs text-slate-500">{exp.description || "—"} · {exp.date?.slice(0,10)}</div>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <span className="font-semibold text-slate-900">{formatNPR(exp.amount)}</span>
+                              {canManageStock && (
+                                <button onClick={() => deleteExpense(exp.id)} className="text-red-400 hover:text-red-600 transition-colors"><Trash2 size={14} /></button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {/* Job cards contribute to the vehicle's expense total too (their parts total) —
+                         listed read-only here since they're managed from the Job Cards page, not this modal. */}
+                      {vehicle.job_cards?.map(job => {
+                        const partsTotal = job.parts?.reduce((s, p) => s + p.quantity * p.unit_cost, 0) || 0;
+                        const jobTotal = partsTotal > 0 ? partsTotal : job.actual_cost ?? job.estimated_cost ?? 0;
+                        return (
+                          <div key={job.id} data-testid="job-card-expense-row" className="py-3">
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <div className="text-sm font-medium text-slate-900 flex items-center gap-1.5">
+                                  {job.work_description}
+                                  <span className="px-1.5 py-0.5 rounded-full text-xs font-semibold uppercase tracking-wide bg-purple-100 text-purple-700">Job Card</span>
+                                </div>
+                                <div className="text-xs text-slate-500">{job.job_number} · {job.mechanic_name}</div>
+                              </div>
+                              <span className="font-semibold text-slate-900">{formatNPR(jobTotal)}</span>
+                            </div>
+                            {job.parts?.length > 0 ? (
+                              <div className="mt-2 bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">
+                                <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 mb-1.5">
+                                  <Package size={11} /> Parts Used
+                                </div>
+                                {job.parts.map((p, i) => {
+                                  const isExternal = p.external || !p.part_id;
+                                  return (
+                                    <div key={i} className={`flex justify-between text-xs py-0.5 ${isExternal ? "bg-orange-100 text-orange-900 font-semibold -mx-1.5 px-1.5 rounded" : "text-slate-600"}`}>
+                                      <span>{p.part_name} × {p.quantity}{isExternal && <span className="ml-1.5 text-xs font-bold uppercase tracking-wide text-orange-600">External</span>}</span>
+                                      <span className="font-medium">{formatNPR(p.quantity * p.unit_cost)}</span>
+                                    </div>
+                                  );
+                                })}
+                                <div className="flex justify-between text-xs font-bold text-slate-800 border-t border-slate-200 mt-1 pt-1">
+                                  <span>Parts Total</span>
+                                  <span className="text-blue-700">{formatNPR(partsTotal)}</span>
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Vehicle Photos */}
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5" data-testid="photos-section">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-bold text-slate-900" style={{ fontFamily: "Manrope" }}>Vehicle Photos</h2>
+              {canManagePhotos && photos.length > 1 && <span className="text-xs text-slate-400">Drag to reorder · first photo is the storefront cover</span>}
+            </div>
+            {photos.length === 0 ? (
+              canManagePhotos ? (
+                <label
+                  onDragOver={onPhotoDragOver}
+                  onDragLeave={onPhotoDragLeave}
+                  onDrop={onPhotoDrop}
+                  data-testid="upload-photo-btn"
+                  className={`border-2 border-dashed rounded-xl h-32 flex flex-col items-center justify-center cursor-pointer transition-colors ${isDraggingPhoto ? "border-blue-400 bg-blue-50 text-blue-500" : "border-slate-200 text-slate-400 hover:border-blue-300 hover:text-blue-400"}`}
+                >
+                  <p className="text-sm font-medium">No photos yet</p>
+                  <p className="text-xs mt-0.5">Click or drop photos to upload</p>
+                  <input type="file" accept="image/*" multiple className="hidden" onChange={e => { if (e.target.files.length) uploadPhotos(e.target.files); e.target.value = ""; }} />
+                </label>
+              ) : (
+                <div className="border-2 border-dashed border-slate-200 rounded-xl h-32 flex flex-col items-center justify-center text-slate-400">
+                  <p className="text-sm font-medium">No photos yet</p>
+                </div>
+              )
+            ) : (
+              <div className="grid grid-cols-3 sm:grid-cols-5 gap-3">
+                {photos.map((photo, idx) => (
+                  <div
+                    key={photo.id}
+                    data-photo-idx={idx}
+                    onPointerDown={e => onPhotoPointerDown(e, photo)}
+                    className={`relative rounded-xl overflow-hidden aspect-[4/3] bg-slate-100 select-none ${canManagePhotos && !photo.pending ? "cursor-grab" : ""} ${dragPhotoId === photo.id ? "opacity-40 cursor-grabbing" : ""} ${dragPhotoId && dragOverIdx === idx && dragPhotoId !== photo.id ? "ring-4 ring-blue-500" : ""}`}
+                    data-testid="vehicle-photo"
+                  >
+                    <button type="button" onClick={() => !photo.pending && !suppressPhotoClick.current && setPreviewPhoto(photo.url)} className="block w-full h-full">
+                      <img src={photo.url} alt="Vehicle" draggable={false} className={`w-full h-full object-cover transition-opacity ${photo.pending ? "opacity-50" : ""}`} />
+                    </button>
+                    {photo.pending && (
+                      <div className="absolute inset-0 flex items-center justify-center bg-black/10 pointer-events-none">
+                        <div className="animate-spin w-5 h-5 border-2 border-white border-t-transparent rounded-full" />
+                      </div>
+                    )}
+                    {idx === 0 && !photo.pending && (
+                      <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded-md bg-blue-600 text-white text-xs font-semibold uppercase tracking-wide pointer-events-none" data-testid="cover-photo-badge">Cover</span>
+                    )}
+                    {canManagePhotos && !photo.pending && photos.length > 1 && (
+                      <div className="absolute bottom-1.5 inset-x-1.5 flex justify-between">
+                        <button type="button" onClick={() => movePhoto(photo.id, idx - 1)} disabled={idx === 0} title="Move left" data-testid="photo-move-left" className="w-6 h-6 rounded-md bg-black/50 hover:bg-black/70 text-white flex items-center justify-center disabled:invisible"><ChevronLeft size={14} /></button>
+                        <span data-drag-handle title="Drag to reorder" className="w-6 h-6 rounded-md bg-black/50 text-white flex items-center justify-center cursor-grab" style={{ touchAction: "none" }}><GripVertical size={14} /></span>
+                        <button type="button" onClick={() => movePhoto(photo.id, idx + 1)} disabled={idx === photos.length - 1} title="Move right" data-testid="photo-move-right" className="w-6 h-6 rounded-md bg-black/50 hover:bg-black/70 text-white flex items-center justify-center disabled:invisible"><ChevronRight size={14} /></button>
+                      </div>
+                    )}
+                    {canManagePhotos && !photo.pending && (
+                      <button
+                        type="button"
+                        onClick={() => deletePhoto(photo.id)}
+                        className="absolute top-1.5 right-1.5 w-6 h-6 rounded-md bg-black/50 hover:bg-red-600 text-white flex items-center justify-center transition-colors"
+                        title="Delete photo"
+                        data-testid="delete-photo-btn"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    )}
+                  </div>
+                ))}
+                {canManagePhotos && (
+                <label
+                  onDragOver={onPhotoDragOver}
+                  onDragLeave={onPhotoDragLeave}
+                  onDrop={onPhotoDrop}
+                  className={`border-2 border-dashed rounded-xl aspect-[4/3] flex flex-col items-center justify-center cursor-pointer transition-colors ${isDraggingPhoto ? "border-blue-400 bg-blue-50 text-blue-500" : "border-slate-200 text-slate-400 hover:border-blue-400 hover:text-blue-500"}`}
+                >
+                  <Plus size={20} />
+                  <span className="text-xs mt-1">Add</span>
+                  <input type="file" accept="image/*" multiple className="hidden" onChange={e => { if (e.target.files.length) uploadPhotos(e.target.files); e.target.value = ""; }} />
+                </label>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Document Status + Upload */}
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+            <h2 className="text-sm font-bold text-slate-900 mb-3" style={{ fontFamily: "Manrope" }}>Legal Documents</h2>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
+              {[["bluebook", "Bluebook"], ["transfer", "Transfer"], ["tax_clearance", "Tax Clearance"]].map(([key, label]) => {
+                const status = vehicle[`${key}_status`];
+                const docs = legalDocs.filter(d => d.doc_type === key);
+                return (
+                  <div key={key} className="border border-slate-100 rounded-xl p-3">
+                    <DocCard label={label} status={status} />
+                    {canManageStock && (
+                      <label className={`mt-2 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-colors w-full ${uploadingDoc ? "bg-slate-100 text-slate-400" : "bg-blue-50 hover:bg-blue-100 text-blue-700"}`} data-testid={`upload-doc-${key}-btn`}>
+                        + Upload
+                        <input type="file" accept="image/*,.pdf" className="hidden" disabled={uploadingDoc} onChange={e => { if (e.target.files[0]) uploadDoc(e.target.files[0], key); e.target.value = ""; }} />
+                      </label>
+                    )}
+                    {docs.length > 0 && (
+                      <div className="mt-2 grid grid-cols-2 gap-1.5">
+                        {docs.map(doc => (
+                          <div key={doc.id} className="relative rounded-md overflow-hidden aspect-square bg-slate-100" data-testid="uploaded-doc">
+                            <button type="button" onClick={() => setPreviewDoc(doc)} className="block w-full h-full" title={doc.original_name}>
+                              {doc.content_type?.startsWith("image/") ? (
+                                <img src={doc.url} alt={doc.original_name} className="w-full h-full object-cover" />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center">
+                                  <FileText size={18} className="text-slate-400" />
+                                </div>
+                              )}
+                            </button>
+                            {canManageStock && (
+                              <button
+                                type="button"
+                                onClick={() => deleteDoc(doc.id)}
+                                className="absolute top-0.5 right-0.5 w-4 h-4 rounded bg-black/50 hover:bg-red-600 text-white flex items-center justify-center transition-colors"
+                                title="Delete"
+                              >
+                                <Trash2 size={9} />
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            {/* Other documents */}
+            {legalDocs.filter(d => d.doc_type === "other").length > 0 && (
+              <div>
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Other Documents</p>
+                <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
+                  {legalDocs.filter(d => d.doc_type === "other").map(doc => (
+                    <div key={doc.id} className="relative rounded-md overflow-hidden aspect-square bg-slate-100" data-testid="uploaded-doc-other">
+                      <button type="button" onClick={() => setPreviewDoc(doc)} className="block w-full h-full" title={doc.original_name}>
+                        {doc.content_type?.startsWith("image/") ? (
+                          <img src={doc.url} alt={doc.original_name} className="w-full h-full object-cover" />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center">
+                            <FileText size={20} className="text-slate-400" />
+                          </div>
+                        )}
+                      </button>
+                      {canManageStock && (
+                        <button
+                          type="button"
+                          onClick={() => deleteDoc(doc.id)}
+                          className="absolute top-0.5 right-0.5 w-5 h-5 rounded bg-black/50 hover:bg-red-600 text-white flex items-center justify-center transition-colors"
+                          title="Delete"
+                        >
+                          <Trash2 size={11} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Nested modals */}
+      {showExpenseModal && (
+        <ExpenseModal
+          onClose={() => setShowExpenseModal(false)}
+          onSubmit={addExpense}
+          form={expForm}
+          setForm={setExpForm}
+          saving={saving}
+        />
+      )}
+
+      {showQR && (
+        <QRLabelModal
+          onClose={() => setShowQR(false)}
+          qrData={qrData}
+        />
+      )}
+
+      {showReturnModal && (
+        <ReturnModal
+          onClose={() => setShowReturnModal(false)}
+          onSubmit={submitReturn}
+          form={returnForm}
+          setForm={setReturnForm}
+          saving={returning}
+          activeSale={activeSale}
+        />
+      )}
+
+      {previewPhoto && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4" onClick={() => setPreviewPhoto(null)}>
+          <button onClick={() => setPreviewPhoto(null)} className="absolute top-4 right-4 w-11 h-11 flex items-center justify-center rounded-lg bg-white/10 hover:bg-white/20 text-white">✕</button>
+          <img src={previewPhoto} alt="Vehicle full size" className="max-w-full max-h-full object-contain rounded-lg" onClick={e => e.stopPropagation()} />
+        </div>
+      )}
+
+      <PhotoCropperModal imageSrc={activeCropSrc} onCancel={cancelCrop} onConfirm={confirmCrop} />
+
+      {previewDoc && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4" onClick={() => setPreviewDoc(null)}>
+          <div className="absolute top-4 right-4 flex items-center gap-2">
+            <a href={previewDoc.url} download={previewDoc.original_name} onClick={e => e.stopPropagation()} className="w-11 h-11 flex items-center justify-center rounded-lg bg-white/10 hover:bg-white/20 text-white" title="Download"><Download size={18} /></a>
+            <button onClick={() => setPreviewDoc(null)} className="w-11 h-11 flex items-center justify-center rounded-lg bg-white/10 hover:bg-white/20 text-white">✕</button>
+          </div>
+          {previewDoc.content_type === "application/pdf" ? (
+            <iframe src={previewDoc.url} title={previewDoc.original_name} className="w-full h-full max-w-4xl bg-white rounded-lg" onClick={e => e.stopPropagation()} />
+          ) : (
+            <img src={previewDoc.url} alt={previewDoc.original_name} className="max-w-full max-h-full object-contain rounded-lg" onClick={e => e.stopPropagation()} />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Thin route wrapper for direct deep links (e.g. from Reports, Sold Stock) — closing here
+// still navigates back to /inventory since there's no local Inventory state to fall back to.
+export default function VehicleDetail() {
+  const { id } = useParams();
+  const navigate = useNavigate();
+  return <VehicleDetailModal id={id} onClose={() => navigate("/inventory")} />;
+}

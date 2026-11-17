@@ -1,0 +1,12 @@
+node_modules/
+attendance.db
+attendance.db-*
+.env
+.env.local
+*.env
+!.env.example
+.expo/
+.next/
+.vercel/
+dist/
+tsconfig.tsbuildinfo

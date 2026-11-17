@@ -1,0 +1,234 @@
+export const formatNPR = (amount) => {
+  if (amount === null || amount === undefined) return "N/A";
+  return `Rs. ${new Intl.NumberFormat("en-IN").format(Math.round(amount))}`;
+};
+
+export const getAgingStyle = (category) => {
+  const map = {
+    fresh:  { bg: "bg-green-100",  text: "text-green-800",  border: "border-green-200", label: "Fresh Stock" },
+    normal: { bg: "bg-yellow-100", text: "text-yellow-800", border: "border-yellow-200", label: "Normal" },
+    slow:   { bg: "bg-orange-100", text: "text-orange-800", border: "border-orange-200", label: "Slow Moving" },
+    dead:   { bg: "bg-red-100",    text: "text-red-800",    border: "border-red-200",   label: "Dead Stock" },
+  };
+  return map[category] || map.fresh;
+};
+
+export const getStatusStyle = (status) => {
+  const map = {
+    unlisted:  { bg: "bg-slate-200",  text: "text-slate-700",  label: "Unlisted",  cardBg: "bg-slate-50",  cardBorder: "border-slate-300" },
+    scrap:     { bg: "bg-red-100",    text: "text-red-800",    label: "Scrap",     cardBg: "bg-red-50",    cardBorder: "border-red-200" },
+    in_repair: { bg: "bg-purple-100", text: "text-purple-800", label: "In Repair", cardBg: "bg-purple-50", cardBorder: "border-purple-200" },
+    available: { bg: "bg-blue-100",   text: "text-blue-800",   label: "Available", cardBg: "bg-blue-50",   cardBorder: "border-blue-200" },
+    sold:      { bg: "bg-green-100",  text: "text-green-800",  label: "Sold",      cardBg: "bg-green-50",  cardBorder: "border-green-200" },
+    reserved:  { bg: "bg-yellow-100", text: "text-yellow-800", label: "Reserved",  cardBg: "bg-yellow-50", cardBorder: "border-yellow-200" },
+  };
+  if (status === "hidden") return map.unlisted; // legacy alias, pre-rename data
+  return map[status] || map.available;
+};
+
+// "scrap" is listed last on purpose: it's a do-not-disturb/terminal stage that should sink
+// to the bottom of any list built from this order, rather than interleave with active stages.
+export const VEHICLE_STATUS_OPTIONS = [
+  { value: "unlisted", label: "Unlisted" },
+  { value: "in_repair", label: "In Repair" },
+  { value: "available", label: "Available" },
+  { value: "reserved", label: "Reserved" },
+  { value: "sold", label: "Sold" },
+  { value: "scrap", label: "Scrap" },
+];
+
+const ordinal = (n) => `${n}${["st", "nd", "rd"][n - 1] || "th"}`;
+
+// ownership_number encodes a transcript (bluebook lost/damaged, duplicate copy issued) as
+// TRANSCRIPT_BASE + issue count, e.g. 91 = 1st transcript, 92 = 2nd transcript. Kept well
+// above the real 1-5 owner range, and non-zero so it stays truthy — several call sites use
+// `ownership_number || 1` as a missing-value fallback, which 0 would silently collide with.
+export const TRANSCRIPT_BASE = 90;
+
+export const formatOwnership = (n) => {
+  if (n === null || n === undefined || n === "") return "—";
+  if (n > TRANSCRIPT_BASE) return `${ordinal(n - TRANSCRIPT_BASE)} Transcript`;
+  return `${ordinal(n)} Owner`;
+};
+
+export const OWNERSHIP_OPTIONS = [
+  ...[1, 2, 3, 4, 5].map(n => ({ value: n, label: formatOwnership(n) })),
+  ...[1, 2, 3, 4, 5].map(n => ({ value: TRANSCRIPT_BASE + n, label: formatOwnership(TRANSCRIPT_BASE + n) })),
+];
+
+export const getJobStyle = (status) => {
+  const map = {
+    pending:     { bg: "bg-yellow-100", text: "text-yellow-800", label: "Pending" },
+    in_progress: { bg: "bg-blue-100",   text: "text-blue-800",   label: "In Progress" },
+    completed:   { bg: "bg-green-100",  text: "text-green-800",  label: "Completed" },
+  };
+  return map[status] || map.pending;
+};
+
+export const getDocStyle = (status) => {
+  const map = {
+    ok:      { bg: "bg-green-100", text: "text-green-800", label: "OK" },
+    pending: { bg: "bg-yellow-100", text: "text-yellow-800", label: "Pending" },
+    missing: { bg: "bg-red-100",   text: "text-red-800",   label: "Missing" },
+  };
+  return map[status] || map.pending;
+};
+
+// ownership_transfer_status — the post-sale name transfer to the buyer, tracked on the
+// Sold Stock screens. Its own field, separate from transfer_status (the in-inventory
+// transfer-paperwork doc status).
+export const TRANSFER_STATUS_OPTIONS = [
+  { value: "pending", label: "Pending" },
+  { value: "in_progress", label: "In Progress" },
+  { value: "done", label: "Done" },
+];
+export const getTransferStatusStyle = (status) => {
+  const map = {
+    pending:     { bg: "bg-yellow-100", text: "text-yellow-800", label: "Pending" },
+    in_progress: { bg: "bg-blue-100",   text: "text-blue-800",   label: "In Progress" },
+    done:        { bg: "bg-green-100",  text: "text-green-800",  label: "Done" },
+  };
+  return map[status] || map.pending;
+};
+
+// ownership_termination_status is a plain Yes/No/Pending answer (the paperwork stays
+// with the government office) — surfaced as a bullet on the inventory card.
+export const getTerminationStyle = (status) => {
+  const map = {
+    yes:     { bg: "bg-green-100",  text: "text-green-800",  label: "Sanaakhat: Yes" },
+    no:      { bg: "bg-red-100",    text: "text-red-800",    label: "Sanaakhat: No" },
+    pending: { bg: "bg-yellow-100", text: "text-yellow-800", label: "Sanaakhat: Pending" },
+  };
+  return map[status] || map.pending;
+};
+
+// Sanaakhat is timed from sanakhat_date, which staff set by hand once it reaches the shop.
+// No date yet = not running. Past SANAKHAT_WARN_DAYS still pending, the vehicle is overdue.
+export const SANAKHAT_WARN_DAYS = 30;
+export const sanakhatPendingDays = (v) => {
+  if (!v || v.status === "sold" || v.status === "scrap") return null;
+  if ((v.ownership_termination_status || "pending") !== "pending") return null;
+  const start = new Date((v.sanakhat_date || "").slice(0, 10));
+  if (isNaN(start)) return null;
+  return Math.max(0, Math.floor((Date.now() - start.getTime()) / 86400000));
+};
+export const isSanakhatOverdue = (v) => (sanakhatPendingDays(v) ?? -1) > SANAKHAT_WARN_DAYS;
+
+// Once Sanaakhat is marked Done, sanakhat_date is the day it was done, and it has to be done again within
+// SANAKHAT_CYCLE_DAYS of that. Days left until then (negative = overdue); null when it isn't Done, has no
+// date, or the vehicle is sold / scrap.
+export const SANAKHAT_CYCLE_DAYS = 35;
+export const sanakhatDaysLeft = (v) => {
+  if (!v || v.status === "sold" || v.status === "scrap") return null;
+  if (v.ownership_termination_status !== "yes") return null;
+  const done = new Date(`${(v.sanakhat_date || "").slice(0, 10)}T00:00:00`);
+  if (isNaN(done)) return null;
+  return SANAKHAT_CYCLE_DAYS - Math.max(0, Math.floor((Date.now() - done.getTime()) / 86400000));
+};
+// The day (YYYY-MM-DD) the next Sanaakhat is due: SANAKHAT_CYCLE_DAYS after the day it was done. null when sanakhatDaysLeft is.
+export const sanakhatDueDate = (v) => {
+  if (sanakhatDaysLeft(v) === null) return null;
+  const d = new Date(`${v.sanakhat_date.slice(0, 10)}T00:00:00`);
+  d.setDate(d.getDate() + SANAKHAT_CYCLE_DAYS);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+// "12d left" / "due today" / "3d overdue" for a sanakhatDaysLeft value.
+export const sanakhatLeftText = (left) => (left < 0 ? `${-left}d overdue` : left === 0 ? "due today" : `${left}d left`);
+
+export const BRANDS = ["Honda", "Yamaha", "TVS", "Bajaj", "Suzuki", "Hero", "KTM", "Royal Enfield", "Lifan", "Other"];
+export const SOURCES = ["Direct Owner", "Auction", "Exchange", "Dealer", "Other"];
+export const CONDITIONS = ["Excellent", "Good", "Fair", "Poor"];
+export const FUEL_TYPES = ["Petrol", "Electric", "Hybrid"];
+export const EXPENSE_CATEGORIES = [
+  { value: "denting_paint", label: "Denting/Paint" },
+  { value: "servicing", label: "Servicing" },
+  { value: "parts", label: "Parts Replacement" },
+  { value: "labor", label: "Labor Cost" },
+  { value: "transport", label: "Transport" },
+  { value: "commissions", label: "Commissions" },
+  { value: "other", label: "Other" },
+];
+
+// Builds a wa.me deep link. Nepali phone numbers are stored locally (e.g. "98XXXXXXXX");
+// wa.me requires the country code with no leading zero or "+".
+export const getWhatsAppLink = (phone, message) => {
+  const digits = (phone || "").replace(/\D/g, "").replace(/^0+/, "");
+  const withCountryCode = digits.startsWith("977") ? digits : `977${digits}`;
+  return `https://wa.me/${withCountryCode}?text=${encodeURIComponent(message)}`;
+};
+
+export const formatDateDual = (adDateStr) => {
+  if (!adDateStr) return "—";
+  try {
+    const d = new Date(adDateStr);
+    if (isNaN(d.getTime())) return adDateStr.slice(0, 10);
+    const adStr = d.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+    const yr = d.getFullYear();
+    const bsYear = (d.getMonth() > 3 || (d.getMonth() === 3 && d.getDate() >= 14)) ? yr + 57 : yr + 56;
+    return `${adStr} · ${bsYear} BS`;
+  } catch { return adDateStr?.slice(0, 10) || "—"; }
+};
+
+// Warranty lengths are stored in days (backend: warranty_days / warranty_days_default) but
+// entered and shown in whichever unit reads naturally. 6 months = 182 days, matching the
+// backend's VEHICLE_WARRANTY_DAYS default.
+export const WARRANTY_UNITS = { days: 1, months: 30.4, years: 365 };
+export const warrantyToDays = (amount, unit) => Math.round(Number(amount) * WARRANTY_UNITS[unit]);
+export const splitWarrantyDays = (days) => {
+  if (!days) return { amount: "", unit: "months" };
+  if (days % 365 === 0) return { amount: String(days / 365), unit: "years" };
+  const months = Math.round(days / WARRANTY_UNITS.months);
+  if (months > 0 && warrantyToDays(months, "months") === days) return { amount: String(months), unit: "months" };
+  return { amount: String(days), unit: "days" };
+};
+export const formatWarrantyLength = (days) => {
+  const { amount, unit } = splitWarrantyDays(days);
+  if (!amount) return "—";
+  return `${amount} ${amount === "1" ? unit.slice(0, -1) : unit}`;
+};
+
+// Sanakhat and re-sanakhat are entered on the sale (Record / Edit Sale) and stored as named
+// lines in its extra_expenses, so they count toward the expense total, grand total and due
+// like any other fee. These split them back out for their own form fields and table column.
+export const SANAKHAT_EXPENSE = "Sanakhat";
+export const RESANAKHAT_EXPENSE = "Re-Sanakhat";
+
+export const splitSanakhatExpenses = (items = []) => {
+  const amountOf = (name) => items.filter(e => e.name === name).reduce((s, e) => s + (Number(e.amount) || 0), 0);
+  return {
+    sanakhat: amountOf(SANAKHAT_EXPENSE),
+    resanakhat: amountOf(RESANAKHAT_EXPENSE),
+    others: items.filter(e => e.name !== SANAKHAT_EXPENSE && e.name !== RESANAKHAT_EXPENSE),
+  };
+};
+
+export const withSanakhatExpenses = (others, sanakhat, resanakhat) => [
+  ...others,
+  ...(Number(sanakhat) > 0 ? [{ name: SANAKHAT_EXPENSE, amount: Number(sanakhat) }] : []),
+  ...(Number(resanakhat) > 0 ? [{ name: RESANAKHAT_EXPENSE, amount: Number(resanakhat) }] : []),
+];
+
+// Confirm text for deleting a sale. A sale that took a vehicle in exchange also takes that vehicle's
+// Inventory entry back out (the server keeps it once it has been priced or worked on).
+export const deleteSaleConfirm = (sale) =>
+  "Delete this sale? The vehicle will be restored to available."
+  + (sale?.exchange_vehicle_id ? " The exchange vehicle added to Inventory is removed too, unless it has been priced or worked on." : "");
+
+// 20000 -> "Twenty Thousand". Nepali/Indian grouping (Lakh, Crore), whole rupees only.
+export const amountInWords = (amount) => {
+  let n = Math.floor(Math.abs(Number(amount) || 0));
+  if (n === 0) return "Zero";
+  const ones = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen"];
+  const tens = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
+  const below100 = (x) => (x < 20 ? ones[x] : `${tens[Math.floor(x / 10)]}${x % 10 ? ` ${ones[x % 10]}` : ""}`);
+  const below1000 = (x) => (x >= 100 ? `${ones[Math.floor(x / 100)]} Hundred${x % 100 ? ` ${below100(x % 100)}` : ""}` : below100(x));
+  const parts = [];
+  const crore = Math.floor(n / 10000000); n %= 10000000;
+  const lakh = Math.floor(n / 100000); n %= 100000;
+  const thousand = Math.floor(n / 1000); n %= 1000;
+  if (crore) parts.push(`${below1000(crore)} Crore`);
+  if (lakh) parts.push(`${below100(lakh)} Lakh`);
+  if (thousand) parts.push(`${below100(thousand)} Thousand`);
+  if (n) parts.push(below1000(n));
+  return parts.join(" ");
+};

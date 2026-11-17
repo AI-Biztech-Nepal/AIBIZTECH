@@ -13,3 +13,5 @@ supabase/.temp/
 .DS_Store
 next-env.d.ts
 *.tsbuildinfo
+
+supabase/consolidation/backups/
