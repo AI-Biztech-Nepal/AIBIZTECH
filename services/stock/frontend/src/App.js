@@ -1,5 +1,6 @@
 import "@/App.css";
 import { Suspense, lazy, useEffect } from "react";
+import "./utils/portalFlag";
 import { BrowserRouter, Routes, Route, Navigate, useParams, useLocation } from "react-router-dom";
 import { Toaster } from "sonner";
 import { AuthProvider, useAuth } from "./context/AuthContext";

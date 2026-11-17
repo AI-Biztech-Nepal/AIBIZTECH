@@ -6,10 +6,11 @@ import { useAuth } from "../context/AuthContext";
 import { canAccessPath, marketingTabsFor } from "../utils/permissions";
 import FinanceNavGroup from "./FinanceNavGroup";
 import NavGroup from "./NavGroup";
+import { PORTAL_URL, openedFromPortal } from "../utils/portalFlag";
 import { isSanakhatOverdue, sanakhatPendingDays } from "../utils/helpers";
 import {
   LayoutDashboard, Bike, Wrench, Sparkles, Settings, LogOut, Menu, X, Bell,
-  BookOpen, Wallet, Boxes, ShoppingBag, Building2, ImageOff, FileWarning, ShieldCheck, Megaphone, Inbox, ChevronDown, Share2, Gift, Eye, HeartHandshake, FileCheck2
+  BookOpen, Wallet, Boxes, ShoppingBag, Building2, ImageOff, FileWarning, ShieldCheck, Megaphone, Inbox, ChevronDown, Share2, Gift, Eye, HeartHandshake, FileCheck2, ArrowLeft
 } from "lucide-react";
 
 // A vehicle needs at least this many photos before it's considered adequately
@@ -182,6 +183,12 @@ export default function Layout() {
   // and the whole sidebar would remount (losing taps on its buttons) whenever the polled data refreshed.
   const renderSidebar = (mobile = false) => (
     <aside className={`${mobile ? "fixed inset-0 z-50 flex" : "hidden lg:flex"} flex-col bg-slate-900 text-white ${mobile ? "w-64" : "w-64"} h-app`}>
+      {/* Opened from the AIBIZTECH portal: a way back to it */}
+      {openedFromPortal() && (
+        <a href={PORTAL_URL} className="flex items-center gap-2 mx-3 mt-3 px-3 py-2 rounded-lg bg-slate-800 text-blue-300 hover:text-white text-sm font-semibold" data-testid="back-to-aibiztech">
+          <ArrowLeft size={15} /> Back to AIBIZTECH
+        </a>
+      )}
       {/* Logo */}
       <div className="flex items-center gap-3 px-6 py-5 border-b border-slate-700">
         {/* The company's own logo when it has one (on a white tile: logos are drawn for light backgrounds), else the initials tile. */}

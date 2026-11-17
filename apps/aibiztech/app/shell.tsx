@@ -4,6 +4,7 @@ import { createClient, type Org } from '@/lib/supabase';
 import { signOut, switchOrg } from './actions';
 import { Icon, serviceIcon } from './icons';
 import { ATTENDANCE_MENU, type MenuNode } from '@/lib/attendance-menu';
+import { STOCK_MENU } from '@/lib/stock-menu';
 
 type Page = 'home' | 'admin' | 'team' | 'apps';
 
@@ -50,7 +51,8 @@ export async function Shell({ org, orgs = [], page, children }: { org: Org | nul
             {services?.filter((s) => !org || org.services[s.key]).map((s) => {
               const on = !!org?.services[s.key];
               // Attendance Nepal opens its own menu here (live app, new tab); a bare address with no path keeps the link usable
-              if (on && s.key === 'attendance') return <AppMenu key={s.key} name={s.name} base={s.base_url} nodes={ATTENDANCE_MENU} isAdmin={org?.services.attendance === 'admin'} />;
+              if (on && s.key === 'attendance') return <AppMenu key={s.key} icon="attendance" name={s.name} base={s.base_url} nodes={ATTENDANCE_MENU} isAdmin={org?.services.attendance === 'admin'} />;
+              if (on && s.key === 'stock') return <AppMenu key={s.key} icon="stock" name={s.name} base={s.base_url} nodes={STOCK_MENU} isAdmin={org?.services.stock === 'admin'} />;
               // Finance runs inside AIBIZTECH (served at /finance); the other apps are still opened through single sign-on
               return on && s.key === 'finance'
                 ? item('/finance', serviceIcon(s.key, s.name), s.name)
@@ -81,28 +83,29 @@ export async function Shell({ org, orgs = [], page, children }: { org: Org | nul
   );
 }
 
-// An app's own menu as a dropdown under the app name; its pages are on the app itself, so they open in a new tab
-function AppMenu({ name, base, nodes, isAdmin }: { name: string; base: string; nodes: MenuNode[]; isAdmin: boolean }) {
+// An app's own menu as a dropdown under the app name; its pages are on the app itself, so they open in a new tab.
+// "from=aibiztech" lets the app show a way back to the portal (only for people who arrived from here).
+function AppMenu({ icon, name, base, nodes, isAdmin }: { icon: string; name: string; base: string; nodes: MenuNode[]; isAdmin: boolean }) {
   const root = base.replace(/\/$/, '');
   const visible = (list: MenuNode[]) => list.filter((n) => !n.adminOnly || isAdmin);
-  const leaf = (n: MenuNode) => (
-    <a key={n.label} className="nav-item sub-item" href={root + (n.path ?? '/')} target="_blank" rel="noopener">
-      <Icon name={n.icon} size={16} /><span>{n.label}</span>
-    </a>
-  );
+  const href = (path = '/') => `${root}${path}${path.includes('?') ? '&' : '?'}from=aibiztech`;
+  const render = (list: MenuNode[]): ReactNode =>
+    visible(list).map((n) =>
+      n.children ? (
+        <details key={n.label} className="sub-group">
+          <summary className="nav-item sub-item"><Icon name={n.icon} size={16} /><span>{n.label}</span></summary>
+          <div className="sub">{render(n.children)}</div>
+        </details>
+      ) : (
+        <a key={n.label} className="nav-item sub-item" href={href(n.path)} target="_blank" rel="noopener">
+          <Icon name={n.icon} size={16} /><span>{n.label}</span>
+        </a>
+      ),
+    );
   return (
     <details className="app-menu">
-      <summary className="nav-item"><Icon name="attendance" size={18} /><span>{name}</span></summary>
-      <div className="sub">
-        {visible(nodes).map((n) =>
-          n.children ? (
-            <details key={n.label} className="sub-group">
-              <summary className="nav-item sub-item"><Icon name={n.icon} size={16} /><span>{n.label}</span></summary>
-              <div className="sub">{visible(n.children).map(leaf)}</div>
-            </details>
-          ) : leaf(n),
-        )}
-      </div>
+      <summary className="nav-item"><Icon name={icon} size={18} /><span>{name}</span></summary>
+      <div className="sub">{render(nodes)}</div>
     </details>
   );
 }
