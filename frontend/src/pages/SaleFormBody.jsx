@@ -187,14 +187,14 @@ export default function SaleFormBody({ f, booking = null, sale = null, readOnly 
           Not offered on a recorded sale or when the sale completes a booking. */}
       {!existing && !booking && (
         <section id="sv-section-booking" className={SECTION} data-testid="booking-section">
-          <label htmlFor="sv-booking" className="flex items-start gap-3 cursor-pointer select-none">
+          <label htmlFor="sv-booking" className="flex items-start gap-2.5 cursor-pointer select-none">
             <input
               id="sv-booking" type="checkbox" checked={form.booking} onChange={e => set({ booking: e.target.checked })} data-testid="booking-checkbox"
-              className="mt-0.5 h-5 w-5 shrink-0 rounded border-slate-400 text-blue-600 focus:ring-2 focus:ring-blue-500"
+              className="h-4 w-4 shrink-0 rounded border-slate-400 text-blue-600 focus:ring-2 focus:ring-blue-500"
             />
             <span>
-              <span className="block text-base font-bold text-slate-900" style={{ fontFamily: "Manrope, sans-serif" }}>Booking</span>
-              <span className="block text-xs text-slate-500">Tick if the customer is only booking the vehicle: a deposit is taken and the vehicle is reserved, and no sale is recorded yet</span>
+              <span className="block text-xs font-semibold text-slate-600">Booking</span>
+              <span className="mt-1 block text-xs text-slate-500">Tick if the customer is only booking the vehicle: a deposit is taken and the vehicle is reserved, and no sale is recorded yet</span>
             </span>
           </label>
           {form.booking && (
