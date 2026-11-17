@@ -22,7 +22,7 @@ const EMPTY_FORM = {
   exchange_valuation: "", exchange_brand: "", exchange_model: "", exchange_reg_no: "", exchange_year: "",
   witness_name: "", witness_address: "", witness_phone: "", witness_id_number: "",
   // "Booking" tick (a new sale only): the form then records a booking instead of a sale - a deposit, the vehicle reserved.
-  booking: false, booking_amount: "", booking_method: "Cash", agreed_price: "", booking_date: "",
+  booking: false, booking_amount: "", booking_method: "Cash",
 };
 
 const EMPTY_BUYER = { name: "", contact_number: "", address: "", id_number: "" };
@@ -230,15 +230,15 @@ export default function useSaleForm({ booking = null, sale = null } = {}) {
     });
   };
 
-  // The body for POST /bookings (the "Booking" tick): the deposit, how it was paid, and the price agreed (the sale price, if that
-  // is what was filled in). Its date is the Booking Date, else the form's Date; blank means today.
+  // The body for POST /bookings (the "Booking" tick): the deposit and how it was paid. The agreed price is the Sale price (if
+  // filled in) and the booking date is the form's Date (blank means today).
   const bookingPayload = (customerId) => ({
     vehicle_id: form.vehicle_id,
     customer_id: customerId,
     booking_amount: Number(form.booking_amount),
     payment_method: form.booking_method,
-    booking_date: form.booking_date || form.sale_date || undefined,
-    agreed_price: Number(form.agreed_price) || Number(form.sale_price) || undefined,
+    booking_date: form.sale_date || undefined,
+    agreed_price: Number(form.sale_price) || undefined,
     notes: form.notes || undefined,
   });
 

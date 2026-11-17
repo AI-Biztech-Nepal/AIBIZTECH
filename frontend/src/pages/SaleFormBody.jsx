@@ -88,14 +88,16 @@ export default function SaleFormBody({ f, booking = null, sale = null, readOnly 
             {!readOnly && <p className="mt-1 text-xs text-slate-500">{existing || form.booking ? "Pick a customer, or press the person button to enter a new buyer" : "Pick a customer, or press the person button to enter a new buyer and the sale-deed witness"}</p>}
             {bad("sv-customer") && <p className="mt-1 text-xs font-semibold text-red-700">A booking needs a customer: pick one, or enter a new one</p>}
           </div>
-          <div>
+          <div className={form.booking ? "sm:col-span-2" : ""}>
             <span className={LBL}>Date (BS)</span>
             <BSDatePicker value={form.sale_date} onChange={val => set({ sale_date: val })} data-testid="sale-date-input" triggerClassName={`${DATE_BOX} ${OK}`} placeholder={readOnly ? "—" : "Today"} />
           </div>
-          <div>
-            <span className={LBL}>Vehicle pass date (BS)</span>
-            <BSDatePicker value={form.ownership_transfer_date} onChange={val => set({ ownership_transfer_date: val })} data-testid="vehicle-pass-date-input" triggerClassName={`${DATE_BOX} ${OK}`} placeholder={readOnly ? "—" : undefined} />
-          </div>
+          {!form.booking && (
+            <div>
+              <span className={LBL}>Vehicle pass date (BS)</span>
+              <BSDatePicker value={form.ownership_transfer_date} onChange={val => set({ ownership_transfer_date: val })} data-testid="vehicle-pass-date-input" triggerClassName={`${DATE_BOX} ${OK}`} placeholder={readOnly ? "—" : undefined} />
+            </div>
+          )}
 
           {showPanel && (
             <div className="sm:col-span-2 lg:col-span-4 rounded-xl border border-blue-100 bg-blue-50/60 p-4 space-y-4" data-testid="add-customer-form">
@@ -211,14 +213,6 @@ export default function SaleFormBody({ f, booking = null, sale = null, readOnly 
                   <option>Cash</option>
                   <option>Bank Transfer</option>
                 </select>
-              </div>
-              <div>
-                <label htmlFor="sv-agreed-price" className={LBL}>Agreed Sale Price (NPR)</label>
-                <Money id="sv-agreed-price" testid="booking-agreed-price-input" placeholder="Optional" value={form.agreed_price} onChange={v => set({ agreed_price: v })} />
-              </div>
-              <div>
-                <span className={LBL}>Booking Date</span>
-                <BSDatePicker value={form.booking_date} onChange={val => set({ booking_date: val })} data-testid="booking-date-input" triggerClassName={`${DATE_BOX} ${OK}`} />
               </div>
             </div>
           )}
