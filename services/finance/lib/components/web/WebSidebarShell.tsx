@@ -1,6 +1,6 @@
 // lib/components/web/WebSidebarShell.tsx
 import { useEffect, useState } from 'react';
-import { View, Text, Pressable, ScrollView, type StyleProp, type ViewStyle } from 'react-native';
+import { View, Text, Pressable, ScrollView, Platform, type StyleProp, type ViewStyle } from 'react-native';
 import { router, usePathname, useGlobalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '../../hooks/useAuth';
@@ -211,6 +211,21 @@ export function SidebarPanel({
         style,
       ]}
     >
+      {/* Inside AIBIZTECH: a way back to the portal, where every app lives */}
+      {Platform.OS === 'web' && (
+        <Pressable
+          onPress={() => {
+            window.location.href = '/';
+          }}
+          accessibilityRole="link"
+          accessibilityLabel="Back to AIBIZTECH"
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 8, paddingVertical: 6, marginBottom: 8, borderRadius: 8, backgroundColor: '#F3F4F6' }}
+        >
+          <Ionicons name="arrow-back" size={16} color="#2563EB" />
+          <Text style={{ fontSize: 13, fontWeight: '700', color: '#2563EB' }}>Back to AIBIZTECH</Text>
+        </Pressable>
+      )}
+
       {/* The brand mark: the app's own logo and name (DEEVA on Deeva Auto's account). Pressing it goes back to the
           first page of the side panel (the Dashboard). */}
       <Pressable
