@@ -213,3 +213,14 @@ export async function updateOrganization(form: FormData) {
   revalidatePath('/', 'layout');
   redirect('/admin?message=' + encodeURIComponent('Organization details saved.'));
 }
+
+// Owners can run several businesses; this picks the one the dashboard, Admin and Team pages work on
+export async function switchOrg(form: FormData) {
+  const { supabase, ctx } = await getContext();
+  const org_id = str(form, 'org_id');
+  if (!ctx || !ctx.orgs.some((o) => o.id === org_id)) fail('/', 'You are not a member of that organization.');
+  const { error } = await supabase.schema('core').from('profiles').update({ active_org_id: org_id }).eq('user_id', ctx!.user_id);
+  if (error) fail('/', error.message);
+  revalidatePath('/', 'layout');
+  redirect('/');
+}

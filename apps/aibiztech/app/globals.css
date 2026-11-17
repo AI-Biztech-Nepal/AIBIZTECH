@@ -172,3 +172,12 @@ h2.section { margin: 24px 0 12px; font-size: 1.2rem; }
 .panels { margin-top: 24px; }
 details.edit { margin-top: 16px; }
 details.edit summary { cursor: pointer; color: var(--cyan); margin-bottom: 12px; }
+
+.orgmenu { position: relative; margin-right: auto; }
+.orgmenu summary { cursor: pointer; list-style: none; padding: 6px 12px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); }
+.orgmenu summary::after { content: ' ▾'; color: var(--cyan); }
+.orgmenu .menu { position: absolute; z-index: 5; top: 110%; left: 0; min-width: 240px; display: grid; gap: 2px; padding: 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 12px 32px rgba(0,0,0,0.4); }
+.orgmenu .menu button { width: 100%; text-align: left; background: none; color: var(--text); padding: 8px 10px; border-radius: 8px; }
+.orgmenu .menu button:hover, .orgmenu .menu a:hover { background: rgba(34,211,238,0.1); }
+.orgmenu .menu button.current { color: var(--cyan); font-weight: 600; }
+.orgmenu .menu a { padding: 8px 10px; border-radius: 8px; text-decoration: none; border-top: 1px solid var(--border); margin-top: 4px; }

@@ -7,7 +7,6 @@ export default async function Onboarding({ searchParams }: { searchParams: Searc
   const { error } = await searchParams;
   const { ctx } = await getContext().catch(() => ({ ctx: undefined }));
   if (ctx === null) redirect('/login');
-  if (ctx?.orgs.length) redirect('/');
 
   // Sign-up already collected these, so the wizard does not ask again
   const { data } = await (await createClient()).auth.getUser();
@@ -16,8 +15,8 @@ export default async function Onboarding({ searchParams }: { searchParams: Searc
 
   return (
     <main className="card form">
-      <h1>Set up your organization</h1>
-      <p>Your business is the organization. We verify every organization, so we need its details and the owner's.</p>
+      <h1>{ctx?.orgs.length ? 'Add another business' : 'Set up your organization'}</h1>
+      <p>Each business is its own organization with its own apps, team and PAN.</p>
       <Notice error={error} />
       <Wizard key={error ?? ''} initial={mine} />
     </main>

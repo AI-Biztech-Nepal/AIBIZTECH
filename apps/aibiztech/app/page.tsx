@@ -63,7 +63,7 @@ export default async function Launcher({ searchParams }: { searchParams: Search 
 
   return (
     <main className="wide">
-      <Header org={org} page="home" />
+      <Header org={org} orgs={ctx.orgs} page="home" />
       <Notice error={error} message={deniedName ? `You don't have access to ${deniedName} in ${org.name}. Ask your organization admin.` : message} />
 
       <section className="hero">
