@@ -12,9 +12,15 @@ type Page = 'home' | 'admin' | 'team' | 'apps';
 // App shell: left navigation like the apps themselves. Apps come from core.services, so a new
 // service (or a feature turned on for a business) shows up here without touching this file.
 export async function Shell({ org, orgs = [], page, children }: { org: Org | null; orgs?: Org[]; page: Page; children: ReactNode }) {
-  const { data: services } = await (await createClient()).schema('core').from('services').select('key, name, base_url').eq('is_active', true).order('name');
+  const supabase = await createClient();
+  const [{ data: services }, { data: claims }] = await Promise.all([
+    supabase.schema('core').from('services').select('key, name, base_url').eq('is_active', true).order('name'),
+    supabase.auth.getClaims(),
+  ]);
+  const email = claims?.claims.email ?? '';
+  const person = (claims?.claims.user_metadata as { full_name?: string } | undefined)?.full_name || email.split('@')[0] || 'Account';
   const isAdmin = !!org && org.org_role !== 'member';
-  const initials = (org?.name ?? 'AIBIZTECH').split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
+  const initials = (org?.name ?? person).split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
   const item = (href: string, icon: string, label: string, active = false, extra?: ReactNode, newTab = href.startsWith('/go/')) => (
     <Link href={href} className={`nav-item${active ? ' active' : ''}`} aria-current={active ? 'page' : undefined} {...(newTab ? { target: '_blank', rel: 'noopener' } : {})}>
       <Icon name={icon} size={18} /><span>{label}</span>{extra}
@@ -24,25 +30,10 @@ export async function Shell({ org, orgs = [], page, children }: { org: Org | nul
   return (
     <div className="shell">
       <aside className="sidebar">
-        <div className="brand">
-          <span className="brand-mark">{initials}</span>
-          {org ? (
-            <details className="orgmenu">
-              <summary><strong>{org.name}</strong><small className="cap">{org.org_role}</small></summary>
-              <div className="menu">
-                {orgs.map((o) => (
-                  <form key={o.id} action={switchOrg}>
-                    <input type="hidden" name="org_id" value={o.id} />
-                    <button className={o.id === org.id ? 'current' : ''}>{o.id === org.id ? '✓ ' : ''}{o.name}</button>
-                  </form>
-                ))}
-                <Link href="/onboarding">+ Add another business</Link>
-              </div>
-            </details>
-          ) : (
-            <div className="brand-text"><strong>AIBIZTECH</strong><small>Business suite</small></div>
-          )}
-        </div>
+        <Link href="/" className="brand" aria-label="AIBIZTECH home">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo.png" alt="AIBIZTECH" className="brand-logo" width={900} height={529} />
+        </Link>
 
         <nav>
           {item('/', 'dashboard', 'Dashboard', page === 'home')}
@@ -75,11 +66,39 @@ export async function Shell({ org, orgs = [], page, children }: { org: Org | nul
           {item('/#account', 'settings', 'Settings')}
         </nav>
 
-        <form action={signOut} className="signout">
-          <button className="nav-item"><Icon name="signout" size={18} /><span>Sign out</span></button>
-        </form>
       </aside>
-      <main className="content">{children}</main>
+      <div className="main-col">
+        <div className="topbar">
+          <details className="usermenu">
+            <summary aria-label="Account menu">
+              <span className="avatar-sm">{initials}</span>
+              <span className="who-text"><strong>{org?.name ?? person}</strong><small className="cap">{org ? org.org_role : email}</small></span>
+            </summary>
+            <div className="panel">
+              <div className="me">
+                <span className="avatar-sm big">{initials}</span>
+                <div><strong>{person}</strong><small>{email}</small></div>
+              </div>
+              {org && <dl><dt>Business</dt><dd>{org.name}</dd><dt>Your role</dt><dd className="cap">{org.org_role}</dd></dl>}
+              {orgs.length > 0 && (
+                <div className="switch">
+                  <small>Switch business</small>
+                  {orgs.map((o) => (
+                    <form key={o.id} action={switchOrg}>
+                      <input type="hidden" name="org_id" value={o.id} />
+                      <button className={o.id === org?.id ? 'current' : ''}>{o.id === org?.id ? '✓ ' : ''}{o.name}</button>
+                    </form>
+                  ))}
+                </div>
+              )}
+              <Link href="/onboarding" className="menu-link">+ Add another business</Link>
+              {org && <Link href="/#account" className="menu-link">Edit profile</Link>}
+              <form action={signOut}><button className="signout-btn"><Icon name="signout" size={16} /> Sign out</button></form>
+            </div>
+          </details>
+        </div>
+        <main className="content">{children}</main>
+      </div>
     </div>
   );
 }

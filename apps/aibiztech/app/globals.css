@@ -288,3 +288,32 @@ select { font: inherit; padding: 8px 10px; border: 1px solid var(--border); bord
 .legend-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; flex: 1; min-width: 180px; }
 .legend-list li { display: flex; align-items: center; gap: 8px; } .legend-list span { flex: 1; }
 @media (max-width: 520px) { .dash-grid { grid-template-columns: 1fr; } }
+
+/* Logo top left, business menu top right */
+.brand { justify-content: center; padding: 6px 6px 14px; }
+.brand-logo { display: block; width: 100%; max-width: 190px; height: auto; }
+.main-col { min-width: 0; display: flex; flex-direction: column; }
+.topbar { display: flex; justify-content: flex-end; padding: 14px clamp(16px, 4vw, 48px) 0; position: relative; z-index: 6; }
+.main-col .content { padding-top: 12px; }
+.usermenu { position: relative; }
+.usermenu > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 10px; padding: 5px 12px 5px 6px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); }
+.usermenu > summary::-webkit-details-marker { display: none; }
+.usermenu > summary::after { content: '▾'; color: var(--cyan); font-size: 0.8rem; }
+.usermenu > summary:hover { border-color: var(--cyan); }
+.avatar-sm { flex: none; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; font-size: 0.8rem; font-weight: 700; color: #fff; background: linear-gradient(135deg, #0b79ee, #22d3ee); }
+.avatar-sm.big { width: 44px; height: 44px; font-size: 1rem; }
+.who-text { display: grid; line-height: 1.2; text-align: left; }
+.who-text strong { font-size: 0.9rem; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.who-text small { color: var(--muted); font-size: 0.75rem; }
+.usermenu .panel { position: absolute; right: 0; top: calc(100% + 8px); width: 290px; display: grid; gap: 10px; padding: 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 16px 40px rgba(0,0,0,0.5); }
+.usermenu .me { display: flex; align-items: center; gap: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+.usermenu .me div { display: grid; min-width: 0; } .usermenu .me small { color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
+.usermenu dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: 0.88rem; } .usermenu dt { color: var(--muted); }
+.usermenu .switch { display: grid; gap: 2px; border-top: 1px solid var(--border); padding-top: 8px; } .usermenu .switch small { color: var(--muted); margin-bottom: 2px; }
+.usermenu .switch button { width: 100%; text-align: left; background: none; color: var(--text); padding: 7px 10px; border-radius: 8px; }
+.usermenu .switch button:hover, .usermenu .menu-link:hover { background: rgba(34,211,238,0.1); }
+.usermenu .switch button.current { color: var(--cyan); font-weight: 600; }
+.usermenu .menu-link { padding: 7px 10px; border-radius: 8px; text-decoration: none; color: var(--text); }
+.usermenu .signout-btn { width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 10px; border-radius: 10px; background: rgba(239,68,68,0.14); color: #fca5a5; font-weight: 600; }
+.usermenu .signout-btn:hover { background: rgba(239,68,68,0.24); }
+@media (max-width: 860px) { .topbar { padding-top: 10px; } .who-text { display: none; } }
