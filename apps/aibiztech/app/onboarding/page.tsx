@@ -12,7 +12,7 @@ export default async function Onboarding({ searchParams }: { searchParams: Searc
   // Sign-up already collected these, so the wizard does not ask again
   const { data } = await (await createClient()).auth.getUser();
   const m = data.user?.user_metadata ?? {};
-  const mine = { name: m.company || m.full_name || '', address: m.address ?? '', phone: m.phone ?? '', email: data.user?.email ?? '' };
+  const mine = { name: m.full_name || '', address: m.address ?? '', phone: m.phone ?? '', email: data.user?.email ?? '' };
 
   return (
     <main className="card form">

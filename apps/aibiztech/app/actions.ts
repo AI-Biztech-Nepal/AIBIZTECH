@@ -31,7 +31,7 @@ export async function signUp(form: FormData) {
   const { data, error } = await supabase.auth.signUp({
     email: str(form, 'email'),
     password,
-    options: { emailRedirectTo: `${await origin()}/auth/callback?next=${encodeURIComponent(next)}`, data: { full_name: str(form, 'full_name'), company: str(form, 'company'), address: str(form, 'address'), phone: str(form, 'phone') } },
+    options: { emailRedirectTo: `${await origin()}/auth/callback?next=${encodeURIComponent(next)}`, data: { full_name: str(form, 'full_name'), address: str(form, 'address'), phone: str(form, 'phone') } },
   });
   if (error) fail('/signup', error.message);
   // Email confirmation on: no session until the link is clicked
