@@ -24,6 +24,40 @@ export function serviceIcon(key: string, name: string) {
   return s.includes('financ') ? 'finance' : s.includes('attend') ? 'attendance' : s.includes('stock') ? 'stock' : 'app';
 }
 
+// Attendance Nepal uses its real logo; Finance and Stock Manager have logos drawn for the portal
+function FinanceMark() {
+  return (
+    <svg viewBox="0 0 64 64" width="40" height="40" aria-hidden="true">
+      <defs>
+        <linearGradient id="fb" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#1e88ff" /><stop offset="1" stopColor="#0b3fa8" /></linearGradient>
+        <linearGradient id="fr" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stopColor="#ff3b30" /><stop offset="1" stopColor="#d3121b" /></linearGradient>
+      </defs>
+      <path d="M12 58V22C12 11 19 5 30 5h27c-2 5-7 8-14 8H30c-4 0-6 2-6 6v6h22c-2 5-6 8-12 8H24v25z" fill="url(#fb)" />
+      <rect x="27" y="25" width="5" height="12" rx="1.5" fill="#fbbf24" /><rect x="34" y="21" width="5" height="16" rx="1.5" fill="#84cc16" />
+      <rect x="41" y="17" width="5" height="20" rx="1.5" fill="#22c55e" />
+      <path d="M8 46c14-2 30-8 46-22-4 14-20 26-46 30z" fill="url(#fr)" />
+    </svg>
+  );
+}
+
+function StockMark() {
+  return (
+    <svg viewBox="0 0 64 64" width="40" height="40" aria-hidden="true">
+      <defs>
+        <linearGradient id="sb" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#38bdf8" /><stop offset="1" stopColor="#1d4ed8" /></linearGradient>
+      </defs>
+      <path d="M32 6 54 18v26L32 58 10 44V18z" fill="url(#sb)" />
+      <path d="M10 18 32 30l22-12M32 30v28" stroke="#fff" strokeOpacity=".85" strokeWidth="2.5" fill="none" strokeLinejoin="round" />
+      <path d="M32 3 24 11h5v8h6v-8h5z" fill="#22d3ee" stroke="#fff" strokeWidth="1.5" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 export function ServiceLogo({ svc }: { svc: { key: string; name: string } }) {
-  return <span className="svc-logo"><Icon name={serviceIcon(svc.key, svc.name)} size={30} /></span>;
+  const kind = serviceIcon(svc.key, svc.name);
+  return (
+    <span className="svc-logo">
+      {kind === 'attendance' ? <img src="/apps/attendance.png" alt="" width={44} height={44} /> : kind === 'finance' ? <FinanceMark /> : kind === 'stock' ? <StockMark /> : <Icon name="app" size={30} />}
+    </span>
+  );
 }

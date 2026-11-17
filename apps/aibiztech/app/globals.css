@@ -143,7 +143,8 @@ main.wide > .tile { margin-bottom: 16px; }
 .auth .ico { position: relative; display: block; }
 .auth .ico > svg { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--cyan); pointer-events: none; z-index: 1; }
 .auth .ico input { width: 100%; padding-left: 42px; }
-.svc-logo { display: inline-grid; place-items: center; width: 56px; height: 56px; border-radius: 14px; margin-bottom: 12px; color: #fff; background: linear-gradient(135deg, #0b79ee, #22d3ee); }
+.svc-logo { display: inline-grid; place-items: center; width: 60px; height: 60px; border-radius: 16px; margin-bottom: 12px; color: #fff; background: #f4f8ff; box-shadow: 0 4px 14px rgba(0,0,0,0.3); }
+.svc-logo img { object-fit: contain; }
 .tile.app { padding: 0; }
 .app-link { display: block; padding: 16px; color: inherit; text-decoration: none; border-radius: 10px; }
 .app-link:hover { background: rgba(34, 211, 238, 0.06); }
