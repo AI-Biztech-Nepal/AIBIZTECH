@@ -1,9 +1,0 @@
-{
-  "appId": "com.hamrognandg.autostockmanager",
-  "appName": "Auto Stock Manager",
-  "webDir": "build",
-  "server": {
-    "androidScheme": "https",
-    "url": "https://stock.hamroauto.com.np"
-  }
-}
