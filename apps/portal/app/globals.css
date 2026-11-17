@@ -133,3 +133,19 @@ input[readonly] { opacity: 0.7; }
 h2.spaced { margin-top: 24px; }
 main.wide > .tile { margin-bottom: 16px; }
 .cap { text-transform: capitalize; }
+
+/* Auth card (sign up) */
+.card.auth { max-width: 640px; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 24px; }
+.auth h1 { text-align: center; font-size: 1.5rem; }
+.auth form { gap: 16px; }
+.auth label { color: var(--text); font-weight: 600; font-size: 0.85rem; gap: 6px; }
+.auth label small { font-weight: 400; color: var(--muted); font-size: 0.8rem; }
+.auth .req { color: #e5322d; }
+.auth input { padding: 12px 14px; border-radius: 12px; font-weight: 400; }
+.auth input::placeholder { color: var(--muted); opacity: 0.7; }
+.auth button.primary { width: 100%; justify-self: stretch; padding: 14px; border-radius: 12px; font-weight: 600; background: #0b79ee; color: #fff; }
+.auth .center { text-align: center; font-size: 0.9rem; }
+.auth .center a { font-weight: 600; text-decoration: none; }
+.pw { position: relative; display: block; }
+.pw input { width: 100%; padding-right: 44px; }
+.pw .eye { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: none; padding: 4px; color: var(--muted); }
