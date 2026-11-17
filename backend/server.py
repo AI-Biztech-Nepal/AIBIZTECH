@@ -3389,6 +3389,7 @@ async def return_vehicle(vid: str, body: VehicleReturnRequest, cu: dict = Depend
         "user": cu["username"], "timestamp": datetime.now(timezone.utc).isoformat(),
         "details": f"Sale {sale['id']} returned with {refund_amount} refunded, vehicle set to {body.new_status}"})
 
+    await _sale_to_finance(sale["id"])  # the customer now owes only what the shop kept
     v = await db.vehicles.find_one({"id": vid}, {"_id": 0})
     return {"vehicle": v, "refund_amount": refund_amount, "retained_amount": retained_amount}
 
@@ -3423,6 +3424,7 @@ async def undo_sale_return(sid: str, cu: dict = Depends(admin_only)):
     await db.audit_logs.insert_one({"action": "vehicle_return_undone", "vehicle_id": s["vehicle_id"],
         "user": cu["username"], "timestamp": datetime.now(timezone.utc).isoformat(),
         "details": f"Return on sale {sid} reversed — vehicle back to Sold"})
+    await _sale_to_finance(sid)  # the bill goes back to the full amount
     return {"message": "Return reversed — vehicle back to Sold"}
 
 @api_router.delete("/vehicles/{vid}")
@@ -4047,6 +4049,26 @@ async def _plan_exchange_change(existing: dict, sale: SaleUpdate, sold: dict, sa
     plan["link"] = plan["insert"]["id"]
     return plan
 
+async def _sale_to_finance(sale_id: str) -> None:
+    """Keep the sale's Sale bill in the Finance books (and so on its customer's Finance Ledger) in step with the sale: made
+    when the sale is recorded, changed when it is edited or returned, removed when it is deleted. See
+    finance_books.sync_sale_bill. Never raises: the sale itself has already been saved."""
+    try:
+        s = await db.sales.find_one({"id": sale_id}, {"_id": 0})
+        if not s:
+            await finance_books.remove_sale_bill(db, sale_id)
+            return
+        c = await db.customers.find_one({"id": s["customer_id"]}, {"_id": 0}) if s.get("customer_id") else None
+        v = await db.vehicles.find_one({"id": s.get("vehicle_id")}, {"_id": 0, "brand": 1, "model": 1, "year": 1, "registration_number": 1}) if s.get("vehicle_id") else None
+        label = ""
+        if v:
+            label = f"{v.get('brand') or ''} {v.get('model') or ''} {v.get('year') or ''}".strip()
+            if v.get("registration_number"):
+                label += f" ({v['registration_number']})"
+        await finance_books.sync_sale_bill(db, s, c, label)
+    except Exception:  # noqa: BLE001
+        logger.warning("Could not update the Finance books for sale %s", sale_id, exc_info=True)
+
 @api_router.post("/sales")
 async def create_sale(sale: SaleCreate, cu: dict = Depends(require("sales", "create"))):
     v = await db.vehicles.find_one({"id": sale.vehicle_id}, {"_id": 0})
@@ -4143,6 +4165,7 @@ async def create_sale(sale: SaleCreate, cu: dict = Depends(require("sales", "cre
     # Update customer purchase history
     if sale.customer_id:
         await db.customers.update_one({"id": sale.customer_id}, {"$set": {"last_purchase_date": sale_date}})
+    await _sale_to_finance(doc["id"])  # the Sale bill on the customer's Finance Ledger
     return doc
 
 @api_router.get("/sales/summary")
@@ -4377,6 +4400,7 @@ async def update_sale(sid: str, sale: SaleUpdate, cu: dict = Depends(get_current
     await db.vehicles.update_one({"id": sale.vehicle_id}, {"$set": veh_set})
     if sale.customer_id:
         await db.customers.update_one({"id": sale.customer_id}, {"$set": {"last_purchase_date": sale_date}})
+    await _sale_to_finance(sid)  # price, date or customer may have changed
     updated = await db.sales.find_one({"id": sid}, {"_id": 0})
     if exchange_plan and exchange_plan["note"]:
         updated["exchange_note"] = exchange_plan["note"]  # not saved: just tells the form what happened to the Inventory entry
@@ -4406,6 +4430,7 @@ async def delete_sale(sid: str, cu: dict = Depends(get_current_user)):
     s = await db.sales.find_one({"id": sid}, {"_id": 0})
     if not s: raise HTTPException(404, "Not found")
     await db.sales.delete_one({"id": sid})
+    await _sale_to_finance(sid)  # takes its Sale bill out of the Finance books
     # Restore vehicle to available
     await db.vehicles.update_one({"id": s["vehicle_id"]}, {"$set": {
         "status": "available", "sold_date": None, "customer_id": None,
