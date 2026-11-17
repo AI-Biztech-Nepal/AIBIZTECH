@@ -64,7 +64,6 @@ export default async function Launcher({ searchParams }: { searchParams: Search 
   const raw = org.services.finance ? await loadRaw(supabase, org.id) : null;
   const dash = raw ? computeDashboard(raw) : null;
   const initials = (ctx.full_name || org.name).split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
-  const statusLabel = org.verification_status === 'verified' ? 'Verified' : org.verification_status === 'rejected' ? 'Rejected' : 'Awaiting verification';
 
   return (
     <Shell org={org} orgs={ctx.orgs} page="home">
@@ -77,7 +76,6 @@ export default async function Launcher({ searchParams }: { searchParams: Search 
           <h1>{ctx.full_name || 'Hello'}</h1>
           <p className="hero-sub">{org.name} · <span className="cap">{org.org_role}</span></p>
         </div>
-        <span className={`pill ${org.verification_status}`}>{statusLabel}</span>
       </section>
 
       {org.verification_status === 'pending' && (

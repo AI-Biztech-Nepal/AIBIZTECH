@@ -18,6 +18,8 @@ export async function Shell({ org, orgs = [], page, children }: { org: Org | nul
     supabase.auth.getClaims(),
   ]);
   const email = claims?.claims.email ?? '';
+  const status = org?.verification_status;
+  const statusLabel = status === 'verified' ? 'Verified' : status === 'rejected' ? 'Rejected' : 'Awaiting verification';
   const person = (claims?.claims.user_metadata as { full_name?: string } | undefined)?.full_name || email.split('@')[0] || 'Account';
   const isAdmin = !!org && org.org_role !== 'member';
   const initials = (org?.name ?? person).split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
@@ -71,15 +73,15 @@ export async function Shell({ org, orgs = [], page, children }: { org: Org | nul
         <div className="topbar">
           <details className="usermenu">
             <summary aria-label="Account menu">
-              <span className="avatar-sm">{initials}</span>
-              <span className="who-text"><strong>{org?.name ?? person}</strong><small className="cap">{org ? org.org_role : email}</small></span>
+              <span className="avatar-sm">{initials}{status && <i className={`status-dot ${status}`} title={statusLabel} />}</span>
+              <span className="who-text"><strong>{org?.name ?? person}</strong><small><span className="cap">{org ? org.org_role : email}</span>{status && <> · <em className={`status-text ${status}`}>{statusLabel}</em></>}</small></span>
             </summary>
             <div className="panel">
               <div className="me">
                 <span className="avatar-sm big">{initials}</span>
                 <div><strong>{person}</strong><small>{email}</small></div>
               </div>
-              {org && <dl><dt>Business</dt><dd>{org.name}</dd><dt>Your role</dt><dd className="cap">{org.org_role}</dd></dl>}
+              {org && <dl><dt>Business</dt><dd>{org.name}</dd><dt>Your role</dt><dd className="cap">{org.org_role}</dd><dt>Status</dt><dd><span className={`pill ${org.verification_status}`}>{statusLabel}</span></dd></dl>}
               {orgs.length > 0 && (
                 <div className="switch">
                   <small>Switch business</small>
