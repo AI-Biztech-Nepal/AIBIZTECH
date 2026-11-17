@@ -1,8 +1,9 @@
 /**
  * SaleVehicleModal.jsx — the Sale Vehicle form (opened from the Sales page, or from a booking).
  *
- * Built like Purchase Vehicle: one scrolling page of sections (Sale, Payment, Exchange, Extra expenses, Notes), chips for
- * phones to jump between them, and a footer that keeps the grand total, what has been paid and what is still due in view.
+ * Built like Purchase Vehicle: one scrolling page of sections (Sale, Notes; payment, exchange and extra expenses are left
+ * to the recorded sale), chips for phones to jump between them, and a footer that keeps the grand total, what has been
+ * paid and what is still due in view.
  * The fields are SaleFormBody's, their state is useSaleForm's; this window adds the header, footer and the posting.
  * onSaved lets the Sales page reload.
  */
@@ -55,9 +56,6 @@ export default function SaleVehicleModal({ booking = null, onClose, onSaved }) {
 
   const sections = [
     { id: "sale", label: "Sale", done: !!(form.vehicle_id && form.sale_price && form.customer_id) },
-    { id: "payment", label: "Payment", done: f.amountPaid > 0 },
-    { id: "exchange", label: "Exchange", done: f.exchangeValuation > 0 },
-    { id: "extras", label: "Extra expenses", done: f.extraExpenses.length > 0 },
     { id: "notes", label: "Notes", done: !!form.notes },
   ];
   const go = (id) => document.getElementById(`sv-section-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -103,10 +101,10 @@ export default function SaleVehicleModal({ booking = null, onClose, onSaved }) {
           <div onScroll={onScroll} className="flex-1 min-h-0 min-w-0 overflow-y-auto">
             {booking && (
               <div className="mx-4 sm:mx-7 mt-5 rounded-xl border border-yellow-200 bg-yellow-50 px-4 py-3 text-[13px] leading-relaxed text-yellow-900" data-testid="booking-banner">
-                Booking deposit of <strong>{formatNPR(booking.booking_amount)}</strong> is filled in as the advance payment. Enter what the customer pays now as cash / bank below.
+                Booking deposit of <strong>{formatNPR(booking.booking_amount)}</strong> is counted as the advance payment.
               </div>
             )}
-            <SaleFormBody f={f} booking={booking} attempted={attempted} />
+            <SaleFormBody f={f} booking={booking} attempted={attempted} compact />
           </div>
 
           {/* Footer: what this sale adds up to, and the actions */}
@@ -115,12 +113,6 @@ export default function SaleVehicleModal({ booking = null, onClose, onSaved }) {
               <div className="text-[11px] font-semibold text-slate-500">Sale price</div>
               <div className="text-lg font-extrabold text-slate-900" style={{ fontFamily: "Manrope, sans-serif" }}>{digits(form.sale_price) ? formatNPR(digits(form.sale_price)) : "Not set"}</div>
             </div>
-            {f.expensesTotal > 0 && (
-              <div className="hidden sm:block">
-                <div className="text-[11px] font-semibold text-slate-500">Extra expenses</div>
-                <div className="text-lg font-extrabold text-orange-700" style={{ fontFamily: "Manrope, sans-serif" }}>{formatNPR(f.expensesTotal)}</div>
-              </div>
-            )}
             <div>
               <div className="text-[11px] font-semibold text-slate-500">Grand total</div>
               <div className="text-lg font-extrabold text-slate-900" style={{ fontFamily: "Manrope, sans-serif" }} data-testid="grand-total-value">{formatNPR(f.grandTotal)}</div>

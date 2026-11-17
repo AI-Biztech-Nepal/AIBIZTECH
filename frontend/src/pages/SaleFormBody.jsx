@@ -35,8 +35,9 @@ const Static = ({ label, value }) => (
 // f: what useSaleForm returns. booking: the booking being turned into this sale. sale: the recorded sale this is the form
 // of (then everything can be edited: the buyer's details change the customer's record, the witness and the exchange change
 // the sale and, for the exchange, the old vehicle's Inventory entry). readOnly: nothing can be changed. attempted: Save was
-// pressed, so the fields still missing are marked.
-export default function SaleFormBody({ f, booking = null, sale = null, readOnly = false, attempted = false }) {
+// pressed, so the fields still missing are marked. compact: leave out the Payment, Exchange and Extra expenses sections
+// (the new Sale Vehicle form; a recorded sale still shows them).
+export default function SaleFormBody({ f, booking = null, sale = null, readOnly = false, attempted = false, compact = false }) {
   const { form, set } = f;
   const existing = !!sale;
   const bad = (id) => attempted && f.missing.some(m => m[0] === id);
@@ -182,7 +183,7 @@ export default function SaleFormBody({ f, booking = null, sale = null, readOnly 
       </section>
 
       {/* 2 Payment */}
-      <section id="sv-section-payment" className={SECTION}>
+      {!compact && <section id="sv-section-payment" className={SECTION}>
         <h3 className={H2} style={{ fontFamily: "Manrope, sans-serif" }}>Payment</h3>
         <div className={GRID}>
           <div>
@@ -209,11 +210,11 @@ export default function SaleFormBody({ f, booking = null, sale = null, readOnly 
             </div>
           )}
         </div>
-      </section>
+      </section>}
 
       {/* 3 Exchange: the customer's old vehicle; its valuation is deducted from what they owe. On a recorded sale it can be
           edited too: its Inventory entry follows while that is still unlisted and untouched. */}
-      {(!existing || hasExchange || !readOnly) && (
+      {!compact && (!existing || hasExchange || !readOnly) && (
         <section id="sv-section-exchange" className={SECTION} data-testid="exchange-section">
           <h3 className={H2} style={{ fontFamily: "Manrope, sans-serif" }}>
             Exchange{" "}
@@ -249,7 +250,7 @@ export default function SaleFormBody({ f, booking = null, sale = null, readOnly 
       )}
 
       {/* 4 Extra expenses */}
-      <section id="sv-section-extras" className={SECTION}>
+      {!compact && <section id="sv-section-extras" className={SECTION}>
         <h3 className={H2} style={{ fontFamily: "Manrope, sans-serif" }}>
           Extra expenses
           {f.extraExpenses.length > 0 && <span className="ml-2 align-middle text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full font-semibold" style={{ fontFamily: "Inter, sans-serif" }}>{f.extraExpenses.length} added · {formatNPR(f.expensesTotal)}</span>}
@@ -315,7 +316,7 @@ export default function SaleFormBody({ f, booking = null, sale = null, readOnly 
             </div>
           )}
         </div>
-      </section>
+      </section>}
 
       {/* 5 Notes */}
       <section id="sv-section-notes" className={SECTION}>
