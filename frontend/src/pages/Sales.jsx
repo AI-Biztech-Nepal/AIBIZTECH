@@ -12,7 +12,7 @@ import { useAuth } from "../context/AuthContext";
 import HoverADDate from "../components/HoverADDate";
 import { BOOK_CARD, BookTableStyle } from "../components/BookTable";
 import WarrantyBadge from "../components/WarrantyBadge";
-import { BookedTableRow, BookedCard } from "../components/BookedRows";
+import { BookedTableRow, BookedCard, CancelledTableRow, CancelledCard, cancelledOn } from "../components/BookedRows";
 import BookingReceipt from "../components/BookingReceipt";
 import BookingDetailModal from "../components/BookingDetailModal";
 import { EditBookingModal, WithdrawBookingModal } from "../components/BookingModals";
@@ -110,7 +110,7 @@ export default function Sales() {
   // Set via the Today/This Week/This Month toggle in the header — "all" (default) shows
   // every sale; otherwise restricts the list below to sale_date falling in that range.
   const [dateRange, setDateRange] = useState({ key: "all", custom: null }); // key "all" = off
-  const [statusFilter, setStatusFilter] = useState("all"); // "all" | "sold" | "returned"
+  const [statusFilter, setStatusFilter] = useState("all"); // "all" | "sold" | "returned" | "booked" | "cancelled"
   const [showModal, setShowModal] = useState(false);
 
   // "Sale Vehicle" on a booked row opens this same sale form pre-filled, with the booking kept in activeBooking.
@@ -146,8 +146,10 @@ export default function Sales() {
   }, [isAdmin, sales]);
 
   const openBookings = useMemo(() => bookings.filter(b => b.status === "active"), [bookings]);
-  // Read from the live list, so the details close by themselves once the booking is sold, withdrawn or deleted.
-  const viewingBooking = openBookings.find(b => b.id === viewingBookingId) ?? null;
+  // Bookings the customer cancelled: rows of the table too (the amount the shop kept is their profit).
+  const cancelledBookings = useMemo(() => bookings.filter(b => b.status === "cancelled"), [bookings]);
+  // Read from the live list, so the details close by themselves once the booking is sold or deleted.
+  const viewingBooking = [...openBookings, ...cancelledBookings].find(b => b.id === viewingBookingId) ?? null;
   const bookingBySaleId = useMemo(() => Object.fromEntries(bookings.filter(b => b.sale_id).map(b => [b.sale_id, b])), [bookings]);
   const vehicleById = useMemo(() => Object.fromEntries(soldVehicles.map(v => [v.id, v])), [soldVehicles]);
   const reservedById = useMemo(() => Object.fromEntries(reservedVehicles.map(v => [v.id, v])), [reservedVehicles]);
@@ -179,7 +181,10 @@ export default function Sales() {
   const closeModal = () => { setShowModal(false); setActiveBooking(null); };
 
   const deleteBooking = async (b) => {
-    if (!window.confirm("Delete this booking record? Use Withdraw instead if the customer is cancelling.")) return;
+    const warning = b.status === "cancelled"
+      ? "Delete this cancelled booking? The amount the shop kept from it will no longer be on record."
+      : "Delete this booking record? Use Cancel instead if the customer is cancelling.";
+    if (!window.confirm(warning)) return;
     try {
       await api.delete(`/bookings/${b.id}`);
       toast.success("Booking deleted");
@@ -250,8 +255,20 @@ export default function Sales() {
       (b.payment_method || "").toLowerCase().includes(q);
   }) : [];
 
+  // The cancelled bookings, dated by the day they were cancelled, filtered the same way.
+  const filteredCancelled = (statusFilter === "all" || statusFilter === "cancelled") ? cancelledBookings.filter(b => {
+    const d = cancelledOn(b);
+    if (periodRange && !(d >= periodRange.start && d <= periodRange.end)) return false;
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return (b.vehicle_info || "").toLowerCase().includes(q) ||
+      (b.customer_name || "").toLowerCase().includes(q) ||
+      (b.customer_contact || "").toLowerCase().includes(q) ||
+      (b.cancel_notes || "").toLowerCase().includes(q);
+  }) : [];
+
   const filtered = sales.filter(s => {
-    if (statusFilter === "booked") return false;
+    if (statusFilter === "booked" || statusFilter === "cancelled") return false;
     if (statusFilter === "sold" && s.returned) return false;
     if (statusFilter === "returned" && !s.returned) return false;
     if (periodRange && !(s.sale_date >= periodRange.start && s.sale_date <= periodRange.end)) return false;
@@ -264,8 +281,14 @@ export default function Sales() {
   });
   const anyFilter = dateRange.key !== "all" || search || statusFilter !== "all";
 
-  // The line under the title: how many sales, returned and booked.
-  const countsText = `${periodRange ? `${filtered.length} sales · ${periodRange.label}` : `${sales.length} sales recorded`}${returnedCount > 0 ? ` · ${returnedCount} returned` : ""}${openBookings.length > 0 ? ` · ${openBookings.length} booked` : ""}`;
+  // The rows under the booked ones: the sales and the cancelled bookings together, newest first (a sale by when it was recorded,
+  // a cancelled booking by when it was cancelled).
+  const stamp = (r) => (r.type === "sale" ? r.s.created_at || r.s.sale_date || "" : r.b.cancelled_at || "");
+  const tableRows = [...filtered.map(s => ({ type: "sale", s })), ...filteredCancelled.map(b => ({ type: "cancelled", b }))]
+    .sort((a, b) => stamp(b).localeCompare(stamp(a)));
+
+  // The line under the title: how many sales, returned, booked and cancelled.
+  const countsText = `${periodRange ? `${filtered.length} sales · ${periodRange.label}` : `${sales.length} sales recorded`}${returnedCount > 0 ? ` · ${returnedCount} returned` : ""}${openBookings.length > 0 ? ` · ${openBookings.length} booked` : ""}${cancelledBookings.length > 0 ? ` · ${cancelledBookings.length} cancelled` : ""}`;
   const headerButtons = (
     <>
       <DateRangeFilter value={dateRange.key} custom={dateRange.custom} onChange={(key, custom) => setDateRange({ key, custom })} testid="sales-date-filter" />
@@ -383,6 +406,7 @@ export default function Sales() {
           <option value="sold">Sold only</option>
           <option value="returned">Returned only{returnedCount ? ` (${returnedCount})` : ""}</option>
           <option value="booked">Booked only{openBookings.length ? ` (${openBookings.length})` : ""}</option>
+          <option value="cancelled">Cancelled only{cancelledBookings.length ? ` (${cancelledBookings.length})` : ""}</option>
         </select>
         <button onClick={() => openModal()} data-testid="new-sale-btn" className="ml-auto flex items-center gap-2 h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-all active:scale-95 shadow-sm whitespace-nowrap">
           <Plus size={16} /> Sale Vehicle
@@ -392,7 +416,7 @@ export default function Sales() {
       {/* Sales Table: the open bookings come first, each with the status "Booked"; a sale has no status here */}
       <div className={BOOK_CARD}>
         <BookTableStyle />
-        {filtered.length === 0 && filteredBookings.length === 0 ? (
+        {tableRows.length === 0 && filteredBookings.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-40 text-slate-500">
             <ShoppingBag size={32} className="mb-2 opacity-30" />
             <p className="font-medium">{anyFilter ? "No sales match this filter" : "No sales recorded yet"}</p>
@@ -403,7 +427,9 @@ export default function Sales() {
             {/* Card list — phones only, avoids squeezing a wide table into a narrow viewport */}
             <div className="sm:hidden divide-y divide-slate-100">
               {filteredBookings.map(b => <BookedCard key={b.id} b={b} cost={costOf(b.vehicle_id)} onOpen={openBooking} />)}
-              {filtered.map(s => {
+              {tableRows.map(row => {
+                if (row.type === "cancelled") return <CancelledCard key={row.b.id} b={row.b} onOpen={openBooking} />;
+                const s = row.s;
                 const v = vehicleById[s.vehicle_id];
                 const cost = costOf(s.vehicle_id);
                 return (
@@ -469,7 +495,9 @@ export default function Sales() {
                 </thead>
                 <tbody>
                   {filteredBookings.map((b, i) => <BookedTableRow key={b.id} b={b} index={i + 1} cost={costOf(b.vehicle_id)} onOpen={openBooking} />)}
-                  {filtered.map((s, i) => {
+                  {tableRows.map((row, i) => {
+                    if (row.type === "cancelled") return <CancelledTableRow key={row.b.id} b={row.b} index={filteredBookings.length + i + 1} onOpen={openBooking} />;
+                    const s = row.s;
                     const v = vehicleById[s.vehicle_id];
                     const cost = costOf(s.vehicle_id);
                     return (

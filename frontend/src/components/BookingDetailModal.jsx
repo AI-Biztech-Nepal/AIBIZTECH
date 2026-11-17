@@ -2,7 +2,8 @@
  * BookingDetailModal.jsx — a booked vehicle's details as a pop-up over the Sales list, the way a sale's open
  * (pages/SaleDetailModal.jsx). The booking comes first (the deposit, how it was paid, when, the receipt, the price agreed),
  * then the vehicle and the customer. The booking's actions are here: Sale Vehicle (it becomes a sale), Receipt, Edit and,
- * for admins, Cancel (the customer withdraws) and Delete.
+ * for admins, Cancel (the customer withdraws) and Delete. A booking the customer already cancelled opens with a Cancellation
+ * section first (the amount the shop kept, what was refunded, when and why) and keeps only Receipt and Delete.
  *
  * booking: as GET /bookings returns it. actions: { onSell, onReceipt, onEdit, onWithdraw, onDelete }, each called with the
  * booking. onClose: leave the pop-up.
@@ -14,7 +15,7 @@ import api from "../utils/api";
 import { formatNPR, formatOwnership } from "../utils/helpers";
 import HoverADDate from "./HoverADDate";
 import useBackdropClose from "../hooks/useBackdropClose";
-import { agreedOf, BookedStatus } from "./BookedRows";
+import { agreedOf, BookedStatus, CancelledStatus, cancelledOn } from "./BookedRows";
 
 const actionBtn = "flex items-center gap-1.5 px-3 py-3 rounded-lg text-sm font-medium transition-colors";
 
@@ -43,6 +44,8 @@ export default function BookingDetailModal({ booking: b, isAdmin, actions, onClo
   }, [b.vehicle_id]);
 
   const agreed = agreedOf(b);
+  const cancelled = b.status === "cancelled"; // the customer cancelled: what was kept is shown first, and there is nothing left to sell or edit
+  const kept = b.retained_amount || 0;
   const dash = <span className="text-slate-400">—</span>;
 
   return (
@@ -60,17 +63,27 @@ export default function BookingDetailModal({ booking: b, isAdmin, actions, onClo
           </div>
 
           <div className="flex items-center gap-2 flex-wrap px-4 sm:px-5 pb-4 sm:pb-5">
-            <BookedStatus />
+            {cancelled ? <CancelledStatus /> : <BookedStatus />}
             <div className="flex-1" />
-            <button onClick={() => actions.onSell(b)} data-testid="booking-record-sale-btn" className={`${actionBtn} bg-green-600 hover:bg-green-700 text-white font-semibold active:scale-95`}>Sale Vehicle</button>
+            {!cancelled && <button onClick={() => actions.onSell(b)} data-testid="booking-record-sale-btn" className={`${actionBtn} bg-green-600 hover:bg-green-700 text-white font-semibold active:scale-95`}>Sale Vehicle</button>}
             <button onClick={() => actions.onReceipt(b)} data-testid="booking-receipt-btn" className={`${actionBtn} border border-slate-200 text-slate-700 hover:bg-slate-50`}><Printer size={14} /> Receipt</button>
-            <button onClick={() => actions.onEdit(b)} data-testid="booking-edit-btn" className={`${actionBtn} border border-slate-200 text-slate-700 hover:bg-slate-50`}><Pencil size={14} /> Edit</button>
-            {isAdmin && <button onClick={() => actions.onWithdraw(b)} data-testid="booking-withdraw-btn" className={`${actionBtn} border border-amber-200 text-amber-700 hover:bg-amber-50`}><Undo2 size={14} /> Cancel</button>}
+            {!cancelled && <button onClick={() => actions.onEdit(b)} data-testid="booking-edit-btn" className={`${actionBtn} border border-slate-200 text-slate-700 hover:bg-slate-50`}><Pencil size={14} /> Edit</button>}
+            {isAdmin && !cancelled && <button onClick={() => actions.onWithdraw(b)} data-testid="booking-withdraw-btn" className={`${actionBtn} border border-amber-200 text-amber-700 hover:bg-amber-50`}><Undo2 size={14} /> Cancel</button>}
             {isAdmin && <button onClick={() => actions.onDelete(b)} data-testid="booking-delete-btn" className={`${actionBtn} border border-red-200 text-red-600 hover:bg-red-50`}><Trash2 size={14} /> Delete</button>}
           </div>
         </div>
 
         <div className="p-4 sm:p-5 space-y-4">
+          {/* A cancelled booking: what the shop kept (its profit) and what was refunded come first */}
+          {cancelled && (
+            <Card title="Cancellation" testid="cancellation-details">
+              <Row label="Amount Kept (profit)"><span className={`text-base font-bold ${kept > 0 ? "text-green-700" : "text-slate-500"}`} style={{ fontFamily: "Manrope, sans-serif" }}>{formatNPR(kept)}</span></Row>
+              <Row label="Refunded to Customer">{formatNPR(b.refund_amount || 0)}</Row>
+              <Row label="Cancelled On">{b.cancelled_at ? <HoverADDate date={cancelledOn(b)} /> : dash}</Row>
+              {b.cancel_notes && <Row label="Reason">{b.cancel_notes}</Row>}
+            </Card>
+          )}
+
           {/* The booking first */}
           <Card title="Booking" testid="booking-details">
             <Row label="Booking Amount (deposit)"><span className="text-base font-bold text-green-700" style={{ fontFamily: "Manrope, sans-serif" }}>{formatNPR(b.booking_amount)}</span></Row>
