@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation';
 import { getContext } from '@/lib/supabase';
 import { markNotificationsRead, startTrial, updateProfile } from './actions';
 import { Header } from './header';
+import { ServiceLogo } from './icons';
 import { Notice, type Search } from './notice';
 
 export default async function Launcher({ searchParams }: { searchParams: Search }) {
@@ -23,9 +24,12 @@ export default async function Launcher({ searchParams }: { searchParams: Search 
         </p>
         <ul className="tiles">
           {all?.map((s) => (
-            <li key={s.key} className="tile">
-              <h2>{s.name}</h2>
-              <p>Available once your organization is set up and verified.</p>
+            <li key={s.key} className="tile app">
+              <Link href="/onboarding" className="app-link">
+                <ServiceLogo svc={s} />
+                <h2>{s.name}</h2>
+                <p>Tap to set up your organization and unlock this app.</p>
+              </Link>
             </li>
           ))}
         </ul>
