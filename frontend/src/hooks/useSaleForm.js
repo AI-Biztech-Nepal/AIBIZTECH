@@ -21,8 +21,9 @@ const EMPTY_FORM = {
   sanakhat_cost: "", resanakhat_cost: "",
   exchange_valuation: "", exchange_brand: "", exchange_model: "", exchange_reg_no: "", exchange_year: "",
   witness_name: "", witness_address: "", witness_phone: "", witness_id_number: "",
-  // "Booking" tick (a new sale only): the form then records a booking instead of a sale - the vehicle reserved. The deposit is
-  // not asked for here (it starts at Rs 0 and is filled in from the booking's details).
+  // "Booking" tick (a new sale only): it only marks the vehicle as booked, the form stays the same. Save then records a booking
+  // instead of a sale - the vehicle reserved. The deposit is not asked for here (it starts at Rs 0 and is filled in from the
+  // booking's details).
   booking: false,
 };
 
@@ -199,7 +200,7 @@ export default function useSaleForm({ booking = null, sale = null } = {}) {
   // existing customer picked from the list covers the buyer half itself), and on a new sale the witness is mandatory
   // too (sale deed). Lead and Referred by are optional, except that a new buyer must be tagged with one or the other.
   const enteringNewBuyer = showAddCust && !form.customer_id;
-  // A booking needs a customer on record (the Bookings page never takes one without), and no witness or sale price.
+  // The Booking tick changes none of this, except that a booking needs a customer on record (it can't be made for a walk-in).
   const missing = [
     form.booking && !form.customer_id && !enteringNewBuyer && ["sv-customer", "customer"],
     enteringNewBuyer && !buyer.name.trim() && ["sv-buyer-name", "buyer's name"],
@@ -207,11 +208,11 @@ export default function useSaleForm({ booking = null, sale = null } = {}) {
     enteringNewBuyer && !buyer.contact_number.trim() && ["sv-buyer-phone", "buyer's phone"],
     buyerChanged && !buyerInfo.name.trim() && ["sv-buyer-name", "buyer's name"],
     buyerChanged && !buyerInfo.contact_number.trim() && ["sv-buyer-phone", "buyer's phone"],
-    !existing && showAddCust && !form.booking && !form.witness_name.trim() && ["sv-witness-name", "witness's name"],
-    !existing && showAddCust && !form.booking && !form.witness_address.trim() && ["sv-witness-address", "witness's address"],
-    !existing && showAddCust && !form.booking && !form.witness_phone.trim() && ["sv-witness-phone", "witness's phone"],
+    !existing && showAddCust && !form.witness_name.trim() && ["sv-witness-name", "witness's name"],
+    !existing && showAddCust && !form.witness_address.trim() && ["sv-witness-address", "witness's address"],
+    !existing && showAddCust && !form.witness_phone.trim() && ["sv-witness-phone", "witness's phone"],
     !form.vehicle_id && ["sv-vehicle", "vehicle"],
-    !form.booking && !form.sale_price && ["sv-sale_price", "sale price"],
+    !form.sale_price && ["sv-sale_price", "sale price"],
     enteringNewBuyer && !isSourceComplete(buyerSource) && ["sv-lead", "lead, or who referred the buyer"],
   ].filter(Boolean);
 

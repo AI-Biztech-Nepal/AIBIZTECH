@@ -85,7 +85,7 @@ export default function SaleFormBody({ f, booking = null, sale = null, readOnly 
                 </button>
               )}
             </div>
-            {!readOnly && <p className="mt-1 text-xs text-slate-500">{existing || form.booking ? "Pick a customer, or press the person button to enter a new buyer" : "Pick a customer, or press the person button to enter a new buyer and the sale-deed witness"}</p>}
+            {!readOnly && <p className="mt-1 text-xs text-slate-500">{existing ? "Pick a customer, or press the person button to enter a new buyer" : "Pick a customer, or press the person button to enter a new buyer and the sale-deed witness"}</p>}
             {bad("sv-customer") && <p className="mt-1 text-xs font-semibold text-red-700">A booking needs a customer: pick one, or enter a new one</p>}
           </div>
           <div className={compact ? "sm:col-span-2" : ""}>
@@ -122,7 +122,7 @@ export default function SaleFormBody({ f, booking = null, sale = null, readOnly 
                     {existing && buyerInfo && !readOnly && <p className="text-xs text-slate-500" data-testid="buyer-edit-hint">Changing these updates the customer's record, wherever it is used.</p>}
                   </div>
                 )}
-                {!form.booking && (!existing || hasWitness || !readOnly) && (
+                {(!existing || hasWitness || !readOnly) && (
                   <div className="min-w-0 space-y-3">
                     <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide" data-testid="witness-details-panel">Witness details <span className="normal-case font-medium text-blue-600/80">· for the sale deed</span></p>
                     {DEED_ROWS.map(({ label, ph: hint, wkey, wid }) => (
@@ -166,7 +166,7 @@ export default function SaleFormBody({ f, booking = null, sale = null, readOnly 
             {bad("sv-vehicle") && <p className="mt-1.5 text-xs font-semibold text-red-700">Pick the vehicle being sold</p>}
           </div>
           <div>
-            <label htmlFor="sv-sale_price" className={LBL}>Sale price {!form.booking && <span className="text-red-600">*</span>}</label>
+            <label htmlFor="sv-sale_price" className={LBL}>Sale price <span className="text-red-600">*</span></label>
             <Money id="sv-sale_price" testid="sale-price-input" value={form.sale_price} onChange={v => set({ sale_price: v })} error={bad("sv-sale_price")} />
             {bad("sv-sale_price") && <p className="mt-1 text-xs font-semibold text-red-700">Enter the price it is sold for</p>}
           </div>
@@ -185,9 +185,9 @@ export default function SaleFormBody({ f, booking = null, sale = null, readOnly 
         </div>
       </section>
 
-      {/* Booking: just the tick. Ticked, the form saves a booking (the vehicle reserved, a receipt) instead of a sale; the deposit
-          and how it was paid are filled in afterwards from the booking's details (Edit). Not offered on a recorded sale or when
-          the sale completes a booking. */}
+      {/* Booking: just the tick, to say the vehicle is booked. It changes nothing else in the form. Ticked, Save books the vehicle
+          (reserved, shown as Booked on the Sales page) instead of recording a sale; the deposit and how it was paid are filled
+          in afterwards from the booking's details (Edit). Not offered on a recorded sale or when the sale completes a booking. */}
       {!existing && !booking && (
         <section id="sv-section-booking" className={SECTION} data-testid="booking-section">
           {/* The title is a heading like "Sale" and "Notes" (same size and weight as H2), with the tick in front of it. */}
