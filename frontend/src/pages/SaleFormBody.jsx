@@ -88,7 +88,7 @@ export default function SaleFormBody({ f, booking = null, sale = null, readOnly 
             {!readOnly && <p className="mt-1 text-xs text-slate-500">{existing ? "Pick a customer, or press the person button to enter a new buyer" : "Pick a customer, or press the person button to enter a new buyer and the sale-deed witness"}</p>}
           </div>
           <div>
-            <span className={LBL}>Sale date (BS)</span>
+            <span className={LBL}>Date</span>
             <BSDatePicker value={form.sale_date} onChange={val => set({ sale_date: val })} data-testid="sale-date-input" triggerClassName={`${DATE_BOX} ${OK}`} placeholder={readOnly ? "—" : "Today"} />
           </div>
           <div>
