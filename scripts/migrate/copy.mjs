@@ -145,6 +145,8 @@ while (left.size) {
   if (!ready.length) throw new Error(`foreign-key cycle among: ${[...left].join(', ')}`)
   ready.forEach((t) => { order.push(t); left.delete(t) })
 }
+// --replace: the source is the truth, so empty the copied tables first (same transaction: rolls back with everything else)
+if (flags.includes('--replace')) await tgt.query(`truncate ${order.map((t) => `${svc}.${Q(t)}`).join(', ')}`)
 for (const t of order) {
   await tgt.query(`alter table ${svc}.${Q(t)} disable trigger user`) // legacy triggers must not rewrite copied rows
   const have = await insertable(svc, t), map = mapFor(t); let n = 0
