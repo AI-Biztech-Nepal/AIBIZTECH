@@ -5,6 +5,7 @@ import { signOut, switchOrg } from './actions';
 import { Icon, serviceIcon } from './icons';
 import { ATTENDANCE_MENU, type MenuNode } from '@/lib/attendance-menu';
 import { STOCK_MENU } from '@/lib/stock-menu';
+import { FINANCE_MENU } from '@/lib/finance-menu';
 
 type Page = 'home' | 'admin' | 'team' | 'apps';
 
@@ -55,7 +56,7 @@ export async function Shell({ org, orgs = [], page, children }: { org: Org | nul
               if (on && s.key === 'stock') return <AppMenu key={s.key} service="stock" icon="stock" name={s.name} base={s.base_url} nodes={STOCK_MENU} isAdmin={org?.services.stock === 'admin'} />;
               // Finance runs inside AIBIZTECH (served at /finance); the other apps are still opened through single sign-on
               return on && s.key === 'finance'
-                ? item('/finance', serviceIcon(s.key, s.name), s.name)
+                ? <AppMenu key={s.key} service="finance" icon="finance" name={s.name} base="/finance" internal nodes={FINANCE_MENU} isAdmin />
                 : on
                 ? item(`/go/${s.key}`, serviceIcon(s.key, s.name), s.name)
                 : item(org ? '/' : '/onboarding', serviceIcon(s.key, s.name), s.name, false, <Icon name="lockmini" size={14} />);
@@ -85,12 +86,12 @@ export async function Shell({ org, orgs = [], page, children }: { org: Org | nul
 
 // An app's own menu as a dropdown under the app name; its pages are on the app itself, so they open in a new tab.
 // "from=aibiztech" lets the app show a way back to the portal (only for people who arrived from here).
-function AppMenu({ service, icon, name, base, nodes, isAdmin }: { service: string; icon: string; name: string; base: string; nodes: MenuNode[]; isAdmin: boolean }) {
+function AppMenu({ service, icon, name, base, nodes, isAdmin, internal = false }: { service: string; icon: string; name: string; base: string; nodes: MenuNode[]; isAdmin: boolean; internal?: boolean }) {
   const root = base.replace(/\/$/, '');
   const visible = (list: MenuNode[]) => list.filter((n) => !n.adminOnly || isAdmin);
   // Apps with single sign-on go through the portal's /go, which hands over a signed pass and lands on the page
   const sso = !!process.env.SSO_SECRET && (process.env.SSO_SERVICES ?? '').split(',').map((s) => s.trim()).includes(service);
-  const href = (path = '/') => (sso ? `/go/${service}?to=${encodeURIComponent(path)}` : `${root}${path}${path.includes('?') ? '&' : '?'}from=aibiztech`);
+  const href = (path = '/') => (internal ? `${root}${path}` : sso ? `/go/${service}?to=${encodeURIComponent(path)}` : `${root}${path}${path.includes('?') ? '&' : '?'}from=aibiztech`);
   const render = (list: MenuNode[]): ReactNode =>
     visible(list).map((n) =>
       n.children ? (
@@ -99,7 +100,7 @@ function AppMenu({ service, icon, name, base, nodes, isAdmin }: { service: strin
           <div className="sub">{render(n.children)}</div>
         </details>
       ) : (
-        <a key={n.label} className="nav-item sub-item" href={href(n.path)} target="_blank" rel="noopener">
+        <a key={n.label} className="nav-item sub-item" href={href(n.path)} {...(internal ? {} : { target: '_blank', rel: 'noopener' })}>
           <Icon name={n.icon} size={16} /><span>{n.label}</span>
         </a>
       ),

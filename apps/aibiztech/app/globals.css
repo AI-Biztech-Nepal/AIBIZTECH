@@ -202,9 +202,9 @@ body:has(.shell) main { margin: 0; padding: 0; max-width: none; }
 .nav-item:hover { color: var(--text); background: rgba(34, 211, 238, 0.08); }
 .nav-item.active { color: #fff; background: var(--accent); }
 .group { display: grid; gap: 2px; margin-top: 8px; }
-.group summary { cursor: pointer; list-style: none; padding: 8px 14px; font-size: 0.72rem; letter-spacing: 0.09em; text-transform: uppercase; color: var(--muted); }
-.group summary::after { content: '▾'; float: right; }
-.group:not([open]) summary::after { content: '▸'; }
+.group > summary { cursor: pointer; list-style: none; padding: 8px 14px; font-size: 0.72rem; letter-spacing: 0.09em; text-transform: uppercase; color: var(--muted); }
+.group > summary::after { content: '▾'; float: right; }
+.group:not([open]) > summary::after { content: '▸'; }
 .signout { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--border); }
 @media (max-width: 860px) {
   .shell { grid-template-columns: 1fr; }
