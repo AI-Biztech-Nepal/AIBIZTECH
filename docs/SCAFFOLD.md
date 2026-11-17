@@ -453,7 +453,7 @@ Cut-over rule: the old app goes **read-only** on the cut-over date and stays rea
 - [ ] Inventory each service's roles and map them to `core.services.roles`
 
 ### Phase 1 — Portal + core
-- [x] `apps/portal`: sign in, sign up (email code), forgot/reset password
+- [x] `apps/aibiztech`: sign in, sign up (email code), forgot/reset password
 - [x] Create organization on first sign-in (org switcher dropped: not needed)
 - [x] Service launcher (tiles from `my_context()`), "no access" state
 - [x] Org admin: members, invitations, enable/disable services, assign service roles

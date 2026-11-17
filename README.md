@@ -7,7 +7,7 @@ Status: **Phase 1 (portal + core)**. Start with [docs/SCAFFOLD.md](docs/SCAFFOLD
 
 | Folder | What goes here |
 |---|---|
-| `apps/portal` | Next.js portal: sign in, org switcher, service launcher, org admin |
+| `apps/aibiztech` | Next.js app: sign in, org switcher, service launcher, org admin |
 | `packages/` | Shared JS packages (`auth`, `ui`, `types`) used by every service |
 | `python/aibiz_auth` | FastAPI auth dependency for Stock Manager |
 | `supabase/migrations` | The only place database migrations live, for every schema |
