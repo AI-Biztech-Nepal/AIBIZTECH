@@ -345,7 +345,7 @@ export default function Layout() {
   );
 
   return (
-    <div className="flex h-app overflow-hidden bg-slate-50 pl-safe pr-safe">
+    <div className="app-shell flex h-app overflow-hidden bg-slate-50 pl-safe pr-safe">
       {/* Desktop Sidebar */}
       {renderSidebar()}
 
