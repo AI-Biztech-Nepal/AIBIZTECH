@@ -128,6 +128,11 @@ class SaleBillTests(unittest.TestCase):
         self.assertEqual(sorted(b["amount"] for b in self.bills()), [50000, 100000])
         self.assertEqual(len(self.db.fin_parties.rows), 1)
 
+    def test_a_very_long_address_is_cut_to_what_the_bill_can_hold(self):
+        self.post(customer={**RAMJI, "address": "H" * 500})
+        self.assertEqual(len(self.bills()[0]["party_address"]), 300)
+        self.assertEqual(len(self.db.fin_parties.rows[0]["address"]), 300)
+
     def test_a_problem_in_the_finance_books_never_stops_the_sale(self):
         class Broken:
             def __getattr__(self, name):

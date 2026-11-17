@@ -609,7 +609,7 @@ async def sync_sale_bill(db, sale: dict, customer: Optional[dict], vehicle_label
         note = "Vehicle sale" + (f" · {vehicle_label}" if vehicle_label else "") + (" (returned)" if returned else "")
         fields = {
             "type": "sale", "amount": amount, "note": note, "party_name": party.get("name"), "customer_id": party["id"],
-            "bill_date": (sale.get("sale_date") or "")[:10] or None, "party_address": _clean(customer.get("address")),
+            "bill_date": (sale.get("sale_date") or "")[:10] or None, "party_address": (_clean(customer.get("address")) or "")[:300] or None,
             "items": [{"description": vehicle_label or "Vehicle", "qty": 1, "rate": amount, "amount": amount}],
             "discount_amount": 0, "vat_amount": 0, "payment_mode": "credit", "bank_account_id": None, "expense_category_id": None,
         }
