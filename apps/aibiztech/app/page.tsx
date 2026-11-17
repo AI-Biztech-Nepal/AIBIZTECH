@@ -58,39 +58,64 @@ export default async function Launcher({ searchParams }: { searchParams: Search 
   const daysLeft = (key: string) => Math.max(0, Math.ceil(((trialEnd.get(key) ?? 0) - Date.now()) / 864e5));
   const deniedName = services?.find((s) => s.key === denied)?.name;
 
+  const initials = (ctx.full_name || org.name).split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
+  const statusLabel = org.verification_status === 'verified' ? 'Verified' : org.verification_status === 'rejected' ? 'Rejected' : 'Awaiting verification';
+
   return (
     <main className="wide">
       <Header org={org} page="home" />
-
-      <h1>Hello{ctx.full_name ? `, ${ctx.full_name}` : ''}</h1>
       <Notice error={error} message={deniedName ? `You don't have access to ${deniedName} in ${org.name}. Ask your organization admin.` : message} />
 
+      <section className="hero">
+        <span className="avatar" aria-hidden="true">{initials}</span>
+        <div>
+          <p className="eyebrow">Welcome back</p>
+          <h1>{ctx.full_name || 'Hello'}</h1>
+          <p className="hero-sub">{org.name} · <span className="cap">{org.org_role}</span></p>
+        </div>
+        <span className={`pill ${org.verification_status}`}>{statusLabel}</span>
+      </section>
+
       {org.verification_status === 'pending' && (
-        <p role="status" className="banner">Your organization is awaiting verification. Services unlock once it is verified.</p>
+        <p role="status" className="banner">Your organization is awaiting verification. Apps unlock once it is verified.</p>
       )}
       {org.verification_status === 'rejected' && (
         <p role="alert" className="banner error">Verification was rejected{org.verification_note ? `: ${org.verification_note}` : '.'} Contact support.</p>
       )}
 
-      <div className="panels">
-        <section className="tile">
-          <h2>Profile</h2>
-          <form action={updateProfile}>
-            <label>Full name<input name="full_name" defaultValue={ctx.full_name ?? ''} maxLength={120} autoComplete="off" required /></label>
-            <label>Phone<input name="phone" type="tel" defaultValue={profile?.phone ?? ''} pattern="+?[0-9][0-9 -]{6,19}" title="Digits, optionally starting with +" autoComplete="off" /></label>
-            <button>Save</button>
-          </form>
-          <dl>
-            <dt>Email</dt><dd>{claims?.claims.email ?? '—'}</dd>
-            <dt>Organization</dt><dd>{org.name}</dd>
-            <dt>Your role</dt><dd className="cap">{org.org_role}</dd>
-            {services?.filter((s) => org.services[s.key]).map((s) => (
-              <Fragment key={s.key}><dt>{s.name} role</dt><dd className="cap">{org.services[s.key]}</dd></Fragment>
-            ))}
-            <dt>Status</dt><dd>{org.verification_status}</dd>
-          </dl>
-        </section>
+      <h2 className="section">Your apps</h2>
+      <ul className="tiles apps">
+        {services?.map((s) => {
+          const role = org.services[s.key];
+          const status = statusOf.get(s.key);
+          const expired = status === 'trial' && (trialEnd.get(s.key) ?? 0) <= Date.now();
+          const chip = role ? (status === 'trial' ? `Trial · ${daysLeft(s.key)} ${daysLeft(s.key) === 1 ? 'day' : 'days'} left` : 'Active') : !verified ? 'Locked' : expired ? 'Trial ended' : status === 'suspended' ? 'Suspended' : 'Not started';
+          return (
+            <li key={s.key} className={`tile app-card${role ? ' on' : ''}`}>
+              <div className="app-top"><ServiceLogo svc={s} /><span className="chip">{chip}</span></div>
+              <h2>{s.name}</h2>
+              {role ? (
+                <>
+                  <p className="cap">Your role: {role}</p>
+                  <a href={s.base_url} className="button">Open app</a>
+                </>
+              ) : isAdmin && verified && !expired && status !== 'suspended' ? (
+                <form action={startTrial}>
+                  <input type="hidden" name="org_id" value={org.id} />
+                  <input type="hidden" name="service_key" value={s.key} />
+                  <input type="hidden" name="enabled" value={status ? '1' : ''} />
+                  <p>{status ? 'Enabled, but you have no role yet.' : 'Not enabled for your organization yet.'}</p>
+                  <button>{status ? 'Give me access' : 'Start free trial'}</button>
+                </form>
+              ) : (
+                <p>{!verified ? 'Unlocks once your organization is verified.' : expired ? 'Trial ended. Contact us to subscribe.' : status === 'suspended' ? 'Suspended.' : 'No access. Ask your organization admin.'}</p>
+              )}
+            </li>
+          );
+        })}
+      </ul>
 
+      <div className="panels">
         <section className="tile">
           <h2>Notifications{unread > 0 && <span className="badge">{unread}</span>}</h2>
           {!isAdmin ? (
@@ -117,36 +142,27 @@ export default async function Launcher({ searchParams }: { searchParams: Search 
             </>
           )}
         </section>
-      </div>
 
-      <ul className="tiles">
-        {services?.map((s) => {
-          const role = org.services[s.key];
-          const status = statusOf.get(s.key);
-          const expired = status === 'trial' && (trialEnd.get(s.key) ?? 0) <= Date.now();
-          return (
-            <li key={s.key} className="tile">
-              <h2>{s.name}</h2>
-              {role ? (
-                <>
-                  <p>{role}{status === 'trial' ? ` · trial, ${daysLeft(s.key)} ${daysLeft(s.key) === 1 ? 'day' : 'days'} left` : ''}</p>
-                  <a href={s.base_url} className="button">Open</a>
-                </>
-              ) : isAdmin && verified && !expired && status !== 'suspended' ? (
-                <form action={startTrial}>
-                  <input type="hidden" name="org_id" value={org.id} />
-                  <input type="hidden" name="service_key" value={s.key} />
-                  <input type="hidden" name="enabled" value={status ? '1' : ''} />
-                  <p>{status ? 'Enabled, but you have no role yet.' : 'Not enabled for your organization.'}</p>
-                  <button>{status ? 'Give me access' : 'Start free trial'}</button>
-                </form>
-              ) : (
-                <p>{!verified ? 'Available once your organization is verified.' : expired ? 'Trial ended. Contact us to subscribe.' : status === 'suspended' ? 'Suspended.' : 'No access. Ask your organization admin.'}</p>
-              )}
-            </li>
-          );
-        })}
-      </ul>
+        <section className="tile">
+          <h2>Account</h2>
+          <dl>
+            <dt>Email</dt><dd>{claims?.claims.email ?? '—'}</dd>
+            <dt>Organization</dt><dd>{org.name}</dd>
+            <dt>Your role</dt><dd className="cap">{org.org_role}</dd>
+            {services?.filter((s) => org.services[s.key]).map((s) => (
+              <Fragment key={s.key}><dt>{s.name} role</dt><dd className="cap">{org.services[s.key]}</dd></Fragment>
+            ))}
+          </dl>
+          <details className="edit">
+            <summary>Edit profile</summary>
+            <form action={updateProfile}>
+              <label>Full name<input name="full_name" defaultValue={ctx.full_name ?? ''} maxLength={120} autoComplete="off" required /></label>
+              <label>Phone<input name="phone" type="tel" defaultValue={profile?.phone ?? ''} pattern="+?[0-9][0-9 -]{6,19}" title="Digits, optionally starting with +" autoComplete="off" /></label>
+              <button>Save</button>
+            </form>
+          </details>
+        </section>
+      </div>
     </main>
   );
 }
