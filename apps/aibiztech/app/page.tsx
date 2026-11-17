@@ -4,6 +4,9 @@ import { redirect } from 'next/navigation';
 import { getContext } from '@/lib/supabase';
 import { markNotificationsRead, startTrial, updateProfile } from './actions';
 import { Shell } from './shell';
+import { MoneyDashboard } from './dashboard-view';
+import { loadRaw } from './dashboard-data';
+import { computeDashboard } from '@/lib/books';
 import { ServiceLogo } from './icons';
 import { Notice, type Search } from './notice';
 
@@ -57,6 +60,9 @@ export default async function Launcher({ searchParams }: { searchParams: Search 
   const daysLeft = (key: string) => Math.max(0, Math.ceil(((trialEnd.get(key) ?? 0) - Date.now()) / 864e5));
   const deniedName = services?.find((s) => s.key === denied)?.name;
 
+  // The business's money dashboard, from its Finance books (only when the business has Finance)
+  const raw = org.services.finance ? await loadRaw(supabase, org.id) : null;
+  const dash = raw ? computeDashboard(raw) : null;
   const initials = (ctx.full_name || org.name).split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
   const statusLabel = org.verification_status === 'verified' ? 'Verified' : org.verification_status === 'rejected' ? 'Rejected' : 'Awaiting verification';
 
@@ -79,6 +85,17 @@ export default async function Launcher({ searchParams }: { searchParams: Search 
       )}
       {org.verification_status === 'rejected' && (
         <p role="alert" className="banner error">Verification was rejected{org.verification_note ? `: ${org.verification_note}` : '.'} Contact support.</p>
+      )}
+
+      {dash && (
+        <>
+          <div className="chips">
+            <span className="chip big-chip">{dash.counts.customers} customers</span>
+            <span className="chip big-chip">{dash.counts.accounts} bank accounts</span>
+            <span className="chip big-chip">{dash.counts.entries} bills and expenses</span>
+          </div>
+          <MoneyDashboard d={dash} />
+        </>
       )}
 
       <h2 className="section">Your apps</h2>
