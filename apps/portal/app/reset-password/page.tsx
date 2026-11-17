@@ -1,3 +1,4 @@
+import { AuthLogo } from '../auth-logo';
 import { resetPassword } from '../actions';
 import { Notice, type Search } from '../notice';
 
@@ -5,6 +6,7 @@ export default async function ResetPassword({ searchParams }: { searchParams: Se
   const { error } = await searchParams;
   return (
     <main className="card">
+      <AuthLogo />
       <h1>Choose a new password</h1>
       <Notice error={error} />
       <form action={resetPassword}>

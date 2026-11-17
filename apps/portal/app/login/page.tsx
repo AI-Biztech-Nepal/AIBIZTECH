@@ -1,3 +1,4 @@
+import { AuthLogo } from '../auth-logo';
 import Link from 'next/link';
 import { signIn } from '../actions';
 import { Notice, type Search } from '../notice';
@@ -5,14 +6,15 @@ import { Notice, type Search } from '../notice';
 export default async function Login({ searchParams }: { searchParams: Search }) {
   const { error, message, next } = await searchParams;
   return (
-    <main className="card">
+    <main className="card auth">
+      <AuthLogo />
       <h1>Sign in</h1>
       <Notice error={error} message={message} />
       <form action={signIn}>
         <input type="hidden" name="next" value={next ?? ''} />
         <label>Email<input name="email" type="email" autoComplete="off" required /></label>
         <label>Password<input name="password" type="password" autoComplete="new-password" required /></label>
-        <button>Sign in</button>
+        <button className="primary">Sign in</button>
       </form>
       <p><Link href="/forgot-password">Forgot password?</Link> · <Link href={next ? `/signup?next=${encodeURIComponent(next)}` : '/signup'}>Create an account</Link></p>
     </main>

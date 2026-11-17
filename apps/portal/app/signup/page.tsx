@@ -1,3 +1,4 @@
+import { AuthLogo } from '../auth-logo';
 import Link from 'next/link';
 import { signUp } from '../actions';
 import { Notice, type Search } from '../notice';
@@ -7,6 +8,7 @@ export default async function SignUp({ searchParams }: { searchParams: Search })
   const { error, next } = await searchParams;
   return (
     <main className="card auth">
+      <AuthLogo />
       <h1>Create Your Account</h1>
       <Notice error={error} />
       <form action={signUp}>
