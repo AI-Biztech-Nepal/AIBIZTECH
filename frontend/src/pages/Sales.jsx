@@ -475,7 +475,7 @@ export default function Sales() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredBookings.map((b, i) => <BookedTableRow key={b.id} b={b} index={i + 1} cost={costOf(b.vehicle_id)} isAdmin={isAdmin} actions={bookingActions} />)}
+                  {filteredBookings.map((b, i) => <BookedTableRow key={b.id} b={b} index={i + 1} cost={costOf(b.vehicle_id)} />)}
                   {filtered.map((s, i) => {
                     const v = vehicleById[s.vehicle_id];
                     const cost = costOf(s.vehicle_id);

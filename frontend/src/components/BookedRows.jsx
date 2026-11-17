@@ -36,17 +36,16 @@ function BookedActions({ b, isAdmin, actions }) {
 }
 
 // The cells line up with the Sales table's columns: SN, Date, Vehicle, Customer, Transfer, Sale Price, Cost Price, Profit,
-// Payment, Status ("Booked"; a sale has none). The table has no actions column, so the buttons are in the Vehicle cell.
-export function BookedTableRow({ b, index, cost, isAdmin, actions }) {
+// Payment, Status ("Booked"). The table row has no buttons; the phone card (BookedCard) still has them.
+export function BookedTableRow({ b, index, cost }) {
   const agreed = agreedOf(b);
   return (
     <tr data-testid="booking-row">
       <td className="text-gray-500">{index}</td>
       <td className="text-gray-500 whitespace-nowrap"><HoverADDate date={b.booking_date} /></td>
-      <td className="min-w-[16rem]">
+      <td className="min-w-[12rem]">
         <div className="font-semibold text-gray-900">{b.vehicle_info || "—"}</div>
         {b.notes && <div className="text-xs text-gray-400 truncate max-w-[16rem] mt-1">{b.notes}</div>}
-        <div className="mt-2"><BookedActions b={b} isAdmin={isAdmin} actions={actions} /></div>
       </td>
       <td>
         <div className="text-gray-700">{b.customer_name}</div>
