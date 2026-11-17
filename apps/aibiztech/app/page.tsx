@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getContext } from '@/lib/supabase';
 import { markNotificationsRead, startTrial, updateProfile } from './actions';
-import { Header } from './header';
+import { Shell } from './shell';
 import { ServiceLogo } from './icons';
 import { Notice, type Search } from './notice';
 
@@ -15,8 +15,7 @@ export default async function Launcher({ searchParams }: { searchParams: Search 
     // New account: show every app right away; they unlock once an organization is set up and verified
     const { data: all } = await supabase.schema('core').from('services').select('key, name').eq('is_active', true).order('name');
     return (
-      <main className="wide">
-        <Header org={null} page="home" />
+      <Shell org={null} page="home">
         <h1>Hello{ctx.full_name ? `, ${ctx.full_name}` : ''}</h1>
         <Notice error={error} message={message} />
         <p role="status" className="banner">
@@ -33,7 +32,7 @@ export default async function Launcher({ searchParams }: { searchParams: Search 
             </li>
           ))}
         </ul>
-      </main>
+      </Shell>
     );
   }
 
@@ -62,8 +61,7 @@ export default async function Launcher({ searchParams }: { searchParams: Search 
   const statusLabel = org.verification_status === 'verified' ? 'Verified' : org.verification_status === 'rejected' ? 'Rejected' : 'Awaiting verification';
 
   return (
-    <main className="wide">
-      <Header org={org} orgs={ctx.orgs} page="home" />
+    <Shell org={org} orgs={ctx.orgs} page="home">
       <Notice error={error} message={deniedName ? `You don't have access to ${deniedName} in ${org.name}. Ask your organization admin.` : message} />
 
       <section className="hero">
@@ -143,7 +141,7 @@ export default async function Launcher({ searchParams }: { searchParams: Search 
           )}
         </section>
 
-        <section className="tile">
+        <section className="tile" id="account">
           <h2>Account</h2>
           <dl>
             <dt>Email</dt><dd>{claims?.claims.email ?? '—'}</dd>
@@ -163,6 +161,6 @@ export default async function Launcher({ searchParams }: { searchParams: Search 
           </details>
         </section>
       </div>
-    </main>
+    </Shell>
   );
 }

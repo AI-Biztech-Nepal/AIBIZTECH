@@ -182,3 +182,31 @@ details.edit summary { cursor: pointer; color: var(--cyan); margin-bottom: 12px;
 .orgmenu .menu button:hover, .orgmenu .menu a:hover { background: rgba(34,211,238,0.1); }
 .orgmenu .menu button.current { color: var(--cyan); font-weight: 600; }
 .orgmenu .menu a { padding: 8px 10px; border-radius: 8px; text-decoration: none; border-top: 1px solid var(--border); margin-top: 4px; }
+
+/* App shell: sidebar like the apps' own navigation */
+body:has(.shell) main { margin: 0; padding: 0; max-width: none; }
+.shell { display: grid; grid-template-columns: 260px 1fr; min-height: 100vh; }
+.sidebar { position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; gap: 8px; padding: 16px 12px; background: #0b1533; border-right: 1px solid var(--border); overflow-y: auto; }
+.content { padding: 32px clamp(16px, 4vw, 48px) 64px; max-width: 1100px; width: 100%; }
+.brand { display: flex; align-items: center; gap: 12px; padding: 4px 6px 16px; margin-bottom: 4px; border-bottom: 1px solid var(--border); }
+.brand-mark { flex: none; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 12px; font-weight: 700; color: #fff; background: linear-gradient(135deg, #0b79ee, #22d3ee); }
+.brand-text strong, .brand summary strong { display: block; line-height: 1.2; }
+.brand small { display: block; color: var(--muted); font-size: 0.8rem; }
+.brand .orgmenu { margin: 0; flex: 1; min-width: 0; }
+.brand .orgmenu summary { padding: 2px 0; border: 0; background: none; border-radius: 0; }
+.brand .orgmenu summary::after { content: ' ▾'; color: var(--cyan); }
+.brand .orgmenu .menu { min-width: 210px; }
+.sidebar nav { display: grid; gap: 4px; }
+.nav-item { display: flex; align-items: center; gap: 12px; width: 100%; padding: 11px 14px; border-radius: 10px; color: var(--muted); text-decoration: none; background: none; font-weight: 500; justify-self: stretch; }
+.nav-item span { flex: 1; text-align: left; }
+.nav-item:hover { color: var(--text); background: rgba(34, 211, 238, 0.08); }
+.nav-item.active { color: #fff; background: var(--accent); }
+.group { display: grid; gap: 2px; margin-top: 8px; }
+.group summary { cursor: pointer; list-style: none; padding: 8px 14px; font-size: 0.72rem; letter-spacing: 0.09em; text-transform: uppercase; color: var(--muted); }
+.group summary::after { content: '▾'; float: right; }
+.group:not([open]) summary::after { content: '▸'; }
+.signout { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--border); }
+@media (max-width: 860px) {
+  .shell { grid-template-columns: 1fr; }
+  .sidebar { position: static; height: auto; }
+}

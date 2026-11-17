@@ -2,7 +2,7 @@ import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { getContext, type Member } from '@/lib/supabase';
 import { createInvite, revokeInvite, saveMember } from '../actions';
-import { Header } from '../header';
+import { Shell } from '../shell';
 import { CopyLink } from './copy-link';
 import { Notice, type Search } from '../notice';
 
@@ -28,8 +28,7 @@ export default async function Team({ searchParams }: { searchParams: Search }) {
   const offered = (services ?? []).filter((s) => enabledKeys.has(s.key));
 
   return (
-    <main className="wide">
-      <Header org={org} orgs={ctx.orgs} page="team" />
+    <Shell org={org} orgs={ctx.orgs} page="team">
 
       <h1>Team</h1>
       <p>Choose each person's role in your organization and in each service you have enabled.</p>
@@ -121,6 +120,6 @@ export default async function Team({ searchParams }: { searchParams: Search }) {
         })}
       </ul>
       {!offered.length && <p>No services are enabled yet. Start a trial from the home page, then assign roles here.</p>}
-    </main>
+    </Shell>
   );
 }

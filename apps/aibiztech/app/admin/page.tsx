@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getContext, type Member } from '@/lib/supabase';
 import { updateOrganization } from '../actions';
-import { Header } from '../header';
+import { Shell } from '../shell';
 import { Notice, type Search } from '../notice';
 
 const date = (d: string) => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kathmandu' });
@@ -49,8 +49,7 @@ export default async function Admin({ searchParams }: { searchParams: Search }) 
   if (disabled) alerts.push({ text: `${plural(disabled, 'member')} disabled. They cannot sign in to services.` });
 
   return (
-    <main className="wide">
-      <Header org={org} orgs={ctx.orgs} page="admin" />
+    <Shell org={org} orgs={ctx.orgs} page="admin">
       <h1>Admin</h1>
       <p>Everything about {org.name} in one place.</p>
       <Notice error={error} message={message} />
@@ -115,6 +114,6 @@ export default async function Admin({ searchParams }: { searchParams: Search }) 
           );
         })}
       </ul>
-    </main>
+    </Shell>
   );
 }
