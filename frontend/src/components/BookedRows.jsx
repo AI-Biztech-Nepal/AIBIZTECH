@@ -1,12 +1,11 @@
 /**
  * BookedRows.jsx — a booked vehicle as a row of the Sales page's table (BookedTableRow, sm and up) or as a card on phones
- * (BookedCard). It sits in the same list as the sales, with a "Booked" status; a sale has no status there.
+ * (BookedCard). It sits in the same list as the sales, with a "Booked" status, and is clickable like a sale: it opens the
+ * booking's details (components/BookingDetailModal.jsx), which is also where its actions are.
  *
- * b: the booking as GET /bookings returns it. index: its SN. cost: the vehicle's overall cost price, or null. isAdmin:
- * withdrawing and deleting are for admins. actions: { onSell, onReceipt, onEdit, onWithdraw, onDelete }, each called with
- * the booking.
+ * b: the booking as GET /bookings returns it. index: its SN. cost: the vehicle's overall cost price, or null. onOpen: called
+ * with the booking when the row is clicked.
  */
-import { Pencil, Printer, Trash2, Undo2, ArrowRight } from "lucide-react";
 import { formatNPR } from "../utils/helpers";
 import HoverADDate from "./HoverADDate";
 
@@ -19,28 +18,12 @@ export const BookedStatus = () => (
 
 const Dash = () => <span className="text-gray-300">—</span>;
 
-const ICON_BTN = "max-md:min-w-11 max-md:min-h-11 max-md:inline-flex max-md:items-center max-md:justify-center p-1.5 rounded-lg transition-colors";
-
-function BookedActions({ b, isAdmin, actions }) {
-  return (
-    <div className="flex items-center gap-1 flex-wrap">
-      <button onClick={() => actions.onSell(b)} data-testid="booking-record-sale-btn" className="flex items-center gap-1.5 h-9 px-3 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-semibold active:scale-95 transition-all whitespace-nowrap">
-        Sale Vehicle <ArrowRight size={13} />
-      </button>
-      <button onClick={() => actions.onReceipt(b)} title="Print receipt" data-testid="booking-receipt-btn" className={`${ICON_BTN} hover:bg-slate-100`}><Printer size={14} className="text-slate-500" /></button>
-      <button onClick={() => actions.onEdit(b)} title="Edit booking" data-testid="booking-edit-btn" className={`${ICON_BTN} hover:bg-slate-100`}><Pencil size={14} className="text-slate-500" /></button>
-      {isAdmin && <button onClick={() => actions.onWithdraw(b)} title="Customer withdraws" data-testid="booking-withdraw-btn" className={`${ICON_BTN} hover:bg-amber-50`}><Undo2 size={14} className="text-amber-700" /></button>}
-      {isAdmin && <button onClick={() => actions.onDelete(b)} title="Delete booking" data-testid="booking-delete-btn" className={`${ICON_BTN} hover:bg-red-50`}><Trash2 size={14} className="text-red-400" /></button>}
-    </div>
-  );
-}
-
 // The cells line up with the Sales table's columns: SN, Date, Vehicle, Customer, Transfer, Sale Price, Cost Price, Profit,
-// Payment, Status ("Booked"). The table row has no buttons; the phone card (BookedCard) still has them.
-export function BookedTableRow({ b, index, cost }) {
+// Payment, Status ("Booked").
+export function BookedTableRow({ b, index, cost, onOpen }) {
   const agreed = agreedOf(b);
   return (
-    <tr data-testid="booking-row">
+    <tr data-testid="booking-row" onClick={() => onOpen(b)} className="cursor-pointer">
       <td className="text-gray-500">{index}</td>
       <td className="text-gray-500 whitespace-nowrap"><HoverADDate date={b.booking_date} /></td>
       <td className="min-w-[12rem]">
@@ -64,9 +47,9 @@ export function BookedTableRow({ b, index, cost }) {
   );
 }
 
-export function BookedCard({ b, cost, isAdmin, actions }) {
+export function BookedCard({ b, cost, onOpen }) {
   return (
-    <div data-testid="booking-row-mobile" className="p-4 space-y-2">
+    <div data-testid="booking-row-mobile" onClick={() => onOpen(b)} className="p-4 space-y-2 cursor-pointer active:bg-slate-50">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="font-semibold text-slate-900 text-sm truncate">{b.vehicle_info || "—"}</div>
@@ -79,7 +62,6 @@ export function BookedCard({ b, cost, isAdmin, actions }) {
       </div>
       {cost != null && <div className="text-xs text-slate-500">Cost price <span className="font-semibold text-slate-700">{formatNPR(cost)}</span></div>}
       <div className="text-xs text-slate-400"><HoverADDate date={b.booking_date} /></div>
-      <BookedActions b={b} isAdmin={isAdmin} actions={actions} />
     </div>
   );
 }

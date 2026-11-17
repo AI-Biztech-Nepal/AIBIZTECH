@@ -12,6 +12,7 @@ import { BOOK_CARD, BookTableStyle } from "../components/BookTable";
 import WarrantyBadge from "../components/WarrantyBadge";
 import { BookedTableRow, BookedCard } from "../components/BookedRows";
 import BookingReceipt from "../components/BookingReceipt";
+import BookingDetailModal from "../components/BookingDetailModal";
 import { EditBookingModal, WithdrawBookingModal } from "../components/BookingModals";
 import SaleVehicleModal from "./SaleVehicleModal";
 import SaleDetailModal from "./SaleDetailModal";
@@ -97,6 +98,7 @@ export default function Sales() {
   // sale are tagged on their sale row.
   const [bookings, setBookings] = useState([]);
   const [reservedVehicles, setReservedVehicles] = useState([]); // the booked vehicles: their cost price shows on the booked rows
+  const [viewingBookingId, setViewingBookingId] = useState(null); // the booked row that was clicked: its details are open
   const [receipt, setReceipt] = useState(null);                   // the booking whose receipt is open for printing
   const [editingBooking, setEditingBooking] = useState(null);     // the booking being edited
   const [withdrawingBooking, setWithdrawingBooking] = useState(null); // the booking whose customer is backing out
@@ -147,6 +149,8 @@ export default function Sales() {
   }, [isAdmin, sales]);
 
   const openBookings = useMemo(() => bookings.filter(b => b.status === "active"), [bookings]);
+  // Read from the live list, so the details close by themselves once the booking is sold, withdrawn or deleted.
+  const viewingBooking = openBookings.find(b => b.id === viewingBookingId) ?? null;
   const bookingBySaleId = useMemo(() => Object.fromEntries(bookings.filter(b => b.sale_id).map(b => [b.sale_id, b])), [bookings]);
   const vehicleById = useMemo(() => Object.fromEntries(soldVehicles.map(v => [v.id, v])), [soldVehicles]);
   const reservedById = useMemo(() => Object.fromEntries(reservedVehicles.map(v => [v.id, v])), [reservedVehicles]);
@@ -172,6 +176,7 @@ export default function Sales() {
   // sold vehicle, and Edit, Return and Delete.
   const [detailId, setDetailId] = useState(null);
   const openSale = (s) => setDetailId(s.id);
+  const openBooking = (b) => setViewingBookingId(b.id);
 
   const openModal = (booking = null) => { setActiveBooking(booking); setShowModal(true); };
   const closeModal = () => { setShowModal(false); setActiveBooking(null); };
@@ -181,12 +186,20 @@ export default function Sales() {
     try {
       await api.delete(`/bookings/${b.id}`);
       toast.success("Booking deleted");
+      setViewingBookingId(null);
       fetchAll();
     } catch (err) { toast.error(getErrMsg(err, "Failed to delete booking")); }
   };
 
-  // What the buttons of a booked row do (see components/BookedRows.jsx).
-  const bookingActions = { onSell: openModal, onReceipt: setReceipt, onEdit: setEditingBooking, onWithdraw: setWithdrawingBooking, onDelete: deleteBooking };
+  // What the buttons in a booking's details do (components/BookingDetailModal.jsx): Sale Vehicle, Edit and Withdraw leave the
+  // details and open their own form; Receipt opens over them.
+  const bookingActions = {
+    onSell: (b) => { setViewingBookingId(null); openModal(b); },
+    onReceipt: setReceipt,
+    onEdit: (b) => { setViewingBookingId(null); setEditingBooking(b); },
+    onWithdraw: (b) => { setViewingBookingId(null); setWithdrawingBooking(b); },
+    onDelete: deleteBooking,
+  };
 
   const runImport = async (confirm) => {
     if (!importFile) { toast.error("Choose the spreadsheet first"); return; }
@@ -409,7 +422,7 @@ export default function Sales() {
           <>
             {/* Card list — phones only, avoids squeezing a wide table into a narrow viewport */}
             <div className="sm:hidden divide-y divide-slate-100">
-              {filteredBookings.map(b => <BookedCard key={b.id} b={b} cost={costOf(b.vehicle_id)} isAdmin={isAdmin} actions={bookingActions} />)}
+              {filteredBookings.map(b => <BookedCard key={b.id} b={b} cost={costOf(b.vehicle_id)} onOpen={openBooking} />)}
               {filtered.map(s => {
                 const v = vehicleById[s.vehicle_id];
                 const cost = costOf(s.vehicle_id);
@@ -475,7 +488,7 @@ export default function Sales() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredBookings.map((b, i) => <BookedTableRow key={b.id} b={b} index={i + 1} cost={costOf(b.vehicle_id)} />)}
+                  {filteredBookings.map((b, i) => <BookedTableRow key={b.id} b={b} index={i + 1} cost={costOf(b.vehicle_id)} onOpen={openBooking} />)}
                   {filtered.map((s, i) => {
                     const v = vehicleById[s.vehicle_id];
                     const cost = costOf(s.vehicle_id);
@@ -528,7 +541,8 @@ export default function Sales() {
       {/* Sale Vehicle form */}
       {showModal && <SaleVehicleModal booking={activeBooking} onClose={closeModal} onSaved={fetchAll} />}
 
-      {/* A booked row's receipt, edit and withdraw */}
+      {/* A booked row's details, and its receipt, edit and withdraw (these open over the details or in place of them) */}
+      {viewingBooking && <BookingDetailModal booking={viewingBooking} isAdmin={isAdmin} actions={bookingActions} onClose={() => setViewingBookingId(null)} />}
       <BookingReceipt booking={receipt} onClose={() => setReceipt(null)} />
       {editingBooking && <EditBookingModal booking={editingBooking} onClose={() => setEditingBooking(null)} onSaved={fetchAll} />}
       {withdrawingBooking && <WithdrawBookingModal booking={withdrawingBooking} onClose={() => setWithdrawingBooking(null)} onSaved={fetchAll} />}
