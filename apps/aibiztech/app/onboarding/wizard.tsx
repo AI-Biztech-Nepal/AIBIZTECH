@@ -5,7 +5,7 @@ import { useFormStatus } from 'react-dom';
 import { createOrganization } from '../actions';
 import { FIELDS, MAX_PHOTO_BYTES, validatePhoto, type Details } from '@/lib/org-details';
 
-const STEPS = ['Owner', 'PAN', 'Confirm'];
+const STEPS = ['Company', 'PAN', 'Confirm'];
 const LAST = STEPS.length - 1;
 const PHONE_PATTERN = '\+?[0-9][0-9 \-]{6,19}';
 const blank = Object.fromEntries(FIELDS.map((f) => [f, ''])) as Details;
@@ -22,7 +22,8 @@ export function Wizard({ initial }: { initial: { name: string; address: string; 
   const [v, setV] = useState<Details>({
     ...blank,
     ...initial,
-    owner_name: '', owner_address: initial.address, owner_phone: initial.phone, owner_email: initial.email,
+    name: '', // company name is asked here; the signed-up person's name is the owner's
+    owner_name: initial.name, owner_address: initial.address, owner_phone: initial.phone, owner_email: initial.email,
   });
   const [photoName, setPhotoName] = useState('');
   const form = useRef<HTMLFormElement>(null);
@@ -66,7 +67,8 @@ export function Wizard({ initial }: { initial: { name: string; address: string; 
         {(['address', 'phone', 'email'] as const).map((f) => <input key={f} type="hidden" name={f} value={v[f]} />)}
 
         <fieldset hidden={step !== 0}>
-          <legend>Owner details</legend>
+          <legend>Company and owner details</legend>
+          {text('name', 'Company name', { autoComplete: 'organization', placeholder: 'Your company or business name' })}
           {text('owner_name', 'Owner full name')}
           {text('owner_address', 'Owner address')}
           {text('owner_phone', 'Owner phone number', { type: 'tel', pattern: PHONE_PATTERN, title: 'Digits, optionally starting with +' })}
@@ -84,8 +86,8 @@ export function Wizard({ initial }: { initial: { name: string; address: string; 
 
         <fieldset hidden={step !== 2}>
           <legend>Review</legend>
-          {text('name', 'Organization name', { autoComplete: 'organization' })}
           <dl>
+            {row('Company', v.name)}
             {row('Owner', v.owner_name)}{row('Owner address', v.owner_address)}{row('Owner phone', v.owner_phone)}{row('Owner email', v.owner_email)}
             {row('PAN', v.pan_no)}{row('PAN photo', photoName)}
           </dl>
