@@ -270,8 +270,8 @@ export default function Sales() {
     <>
       <DateRangeFilter value={dateRange.key} custom={dateRange.custom} onChange={(key, custom) => setDateRange({ key, custom })} testid="sales-date-filter" />
       {isAdmin && (
-        <button onClick={() => setShowImport(true)} data-testid="import-sales-btn" className="flex items-center gap-2 border border-slate-200 text-slate-700 text-sm font-medium px-4 py-3 rounded-lg hover:bg-slate-50 transition-all active:scale-95 whitespace-nowrap">
-          <UploadCloud size={16} /> Import Sheet
+        <button onClick={() => setShowImport(true)} data-testid="import-sales-btn" className="flex items-center gap-1.5 h-9 px-3 border border-slate-200 text-slate-700 text-sm font-medium rounded-lg hover:bg-slate-50 transition-all active:scale-95 whitespace-nowrap">
+          <UploadCloud size={15} /> Import Sheet
         </button>
       )}
     </>
