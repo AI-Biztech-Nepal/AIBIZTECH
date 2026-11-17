@@ -26,6 +26,17 @@ function getErrMsg(err, fallback) {
   return fallback || `Server error (${err.response.status})`;
 }
 
+// The Status column: a sale is "Sold" (or "Returned" once the customer has given the vehicle back); a booked vehicle is
+// "Booked" (see components/BookedRows.jsx).
+function SaleStatus({ sale }) {
+  const returned = !!sale.returned;
+  return (
+    <span className={`px-2 py-0.5 rounded-full text-xs font-semibold uppercase tracking-wide whitespace-nowrap ${returned ? "bg-amber-100 text-amber-700" : "bg-green-100 text-green-700"}`} data-testid="sale-status-tag">
+      {returned ? "Returned" : "Sold"}
+    </span>
+  );
+}
+
 // Status tags from the sold vehicle's own record (what the old Sold Stock tab showed):
 // returned marker and warranty. The name-transfer status has its own column (and line on phones).
 function SaleTags({ sale, vehicle, booking }) {
@@ -415,7 +426,7 @@ export default function Sales() {
                           {s.needs_review && <span className="ml-1.5 inline-flex items-center gap-0.5 align-middle text-xs font-semibold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded-full"><AlertTriangle size={9} /> Review</span>}
                         </div>
                         <div className="text-xs text-slate-500 mt-0.5 truncate">{s.customer_name}{s.customer_contact ? ` · ${s.customer_contact}` : ""}</div>
-                        <div className="flex items-center gap-1 flex-wrap mt-1.5"><SaleTags sale={s} vehicle={v} booking={bookingBySaleId[s.id]} /></div>
+                        <div className="flex items-center gap-1 flex-wrap mt-1.5"><SaleStatus sale={s} /><SaleTags sale={s} vehicle={v} booking={bookingBySaleId[s.id]} /></div>
                       </div>
                       {isAdmin && (
                         <button onClick={e => { e.stopPropagation(); handleDelete(s.id); }} className="w-11 h-11 -mr-2.5 -mt-2.5 shrink-0 flex items-center justify-center hover:bg-red-50 rounded-lg transition-colors" data-testid="delete-sale-btn-mobile">
@@ -503,7 +514,7 @@ export default function Sales() {
                             <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700">{s.payment_method}</span>
                           )}
                         </td>
-                        <td />
+                        <td><SaleStatus sale={s} /></td>
                       </tr>
                     );
                   })}
