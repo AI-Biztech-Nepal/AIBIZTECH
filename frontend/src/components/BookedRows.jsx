@@ -36,7 +36,7 @@ function BookedActions({ b, isAdmin, actions }) {
 }
 
 // The cells line up with the Sales table's columns: SN, Date, Vehicle, Customer, Transfer, Sale Price, Cost Price, Profit,
-// Payment. The table has no Status or actions column, so the "Booked" status and the buttons are in the Vehicle cell.
+// Payment, Status ("Booked"; a sale has none). The table has no actions column, so the buttons are in the Vehicle cell.
 export function BookedTableRow({ b, index, cost, isAdmin, actions }) {
   const agreed = agreedOf(b);
   return (
@@ -45,7 +45,6 @@ export function BookedTableRow({ b, index, cost, isAdmin, actions }) {
       <td className="text-gray-500 whitespace-nowrap"><HoverADDate date={b.booking_date} /></td>
       <td className="min-w-[16rem]">
         <div className="font-semibold text-gray-900">{b.vehicle_info || "—"}</div>
-        <div className="flex items-center gap-1 flex-wrap mt-1"><BookedStatus /></div>
         {b.notes && <div className="text-xs text-gray-400 truncate max-w-[16rem] mt-1">{b.notes}</div>}
         <div className="mt-2"><BookedActions b={b} isAdmin={isAdmin} actions={actions} /></div>
       </td>
@@ -61,6 +60,7 @@ export function BookedTableRow({ b, index, cost, isAdmin, actions }) {
         <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700">{b.payment_method}</span>
         <div className="mt-1 text-xs font-semibold text-amber-700 whitespace-nowrap">Deposit: {formatNPR(b.booking_amount)}</div>
       </td>
+      <td><BookedStatus /></td>
     </tr>
   );
 }

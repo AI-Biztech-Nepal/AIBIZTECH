@@ -460,6 +460,7 @@ export default function Sales() {
                     <th className="text-right" title="The vehicle's overall cost: purchase price + expenses + accessories">Cost Price</th>
                     <th className="text-right" title="What the sale earned: the sale price less the vehicle's overall cost (what was kept, for a returned sale)">Profit</th>
                     <th>Payment</th>
+                    <th>Status</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -502,6 +503,7 @@ export default function Sales() {
                             <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700">{s.payment_method}</span>
                           )}
                         </td>
+                        <td />
                       </tr>
                     );
                   })}
