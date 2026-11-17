@@ -11,9 +11,7 @@ const config: NextConfig = {
   ],
   // Finance is a single-page app: any address under /finance that is not a real file opens its index.html
   rewrites: async () => ({
-    // Attendance is its own app that the portal serves under /attendance, so the sign-in cookie is shared. Before the files, so it wins
-    // over the "being connected" page, which shows only while ATTENDANCE_URL is not set.
-    beforeFiles: process.env.ATTENDANCE_URL ? [{ source: '/attendance/:path*', destination: `${process.env.ATTENDANCE_URL.replace(/\/$/, '')}/attendance/:path*` }] : [],
+    beforeFiles: [],
     afterFiles: [],
     fallback: [{ source: '/finance/:path*', destination: '/finance/index.html' }],
   }),
