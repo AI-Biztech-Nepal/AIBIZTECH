@@ -187,18 +187,19 @@ export default function SaleFormBody({ f, booking = null, sale = null, readOnly 
           Not offered on a recorded sale or when the sale completes a booking. */}
       {!existing && !booking && (
         <section id="sv-section-booking" className={SECTION} data-testid="booking-section">
-          <label htmlFor="sv-booking" className="flex items-start gap-2.5 cursor-pointer select-none">
+          {/* The title is a heading like "Sale" and "Notes" (same size and weight as H2), with the tick in front of it. */}
+          <div className="flex items-center gap-3">
             <input
               id="sv-booking" type="checkbox" checked={form.booking} onChange={e => set({ booking: e.target.checked })} data-testid="booking-checkbox"
-              className="h-4 w-4 shrink-0 rounded border-slate-400 text-blue-600 focus:ring-2 focus:ring-blue-500"
+              className="h-5 w-5 shrink-0 cursor-pointer rounded border-slate-400 text-blue-600 focus:ring-2 focus:ring-blue-500"
             />
-            <span>
-              <span className="block text-xs font-semibold text-slate-600">Booking</span>
-              <span className="mt-1 block text-xs text-slate-500">Tick if the customer is only booking the vehicle: a deposit is taken and the vehicle is reserved, and no sale is recorded yet</span>
-            </span>
-          </label>
+            <h3 className="text-base font-bold text-slate-900" style={{ fontFamily: "Manrope, sans-serif" }}>
+              <label htmlFor="sv-booking" className="cursor-pointer select-none">Booking</label>
+            </h3>
+          </div>
+          <p className="mt-1 pl-8 text-xs text-slate-500">Tick if the customer is only booking the vehicle: a deposit is taken and the vehicle is reserved, and no sale is recorded yet</p>
           {form.booking && (
-            <div className={`${GRID} mt-5`} data-testid="booking-fields">
+            <div className={`${GRID} mt-4`} data-testid="booking-fields">
               <div>
                 <label htmlFor="sv-booking-amount" className={LBL}>Booking Amount (NPR) <span className="text-red-600">*</span></label>
                 <Money id="sv-booking-amount" testid="booking-amount-input" placeholder="e.g. 20000" value={form.booking_amount} onChange={v => set({ booking_amount: v })} error={bad("sv-booking-amount")} />
