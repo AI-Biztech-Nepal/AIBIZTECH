@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
 
-const files = ['20261027000000_core_init', '20261028000000_org_verification', '20261028000200_notifications', '20261028000300_trials', '20261028000400_members', '20261028000500_invitations', '20261118000000_finance_schema'];
+const files = ['20261027000000_core_init', '20261028000000_org_verification', '20261028000200_notifications', '20261028000300_trials', '20261028000400_members', '20261028000500_invitations', '20261118000000_finance_schema', '20261118000200_finance_full'];
 const migration = files.map((f) => readFileSync(new URL(`../migrations/${f}.sql`, import.meta.url), 'utf8')).join('\n');
 const authStub = `
   create role anon; create role authenticated; create role service_role bypassrls;
@@ -67,4 +67,29 @@ test('hand-entered payments are allowed, booking rows cannot be forged', async (
   const { rows: [p] } = await as(A, `insert into finance.customers (name) values ('Sita') returning id`, [], true);
   await as(A, `insert into finance.customer_ledger_entries (customer_id, entry_type, amount) values ($1, 'credit', 100)`, [p.id], true);
   await assert.rejects(as(A, `insert into finance.customer_ledger_entries (customer_id, entry_type, amount, source) values ($1, 'debit', 5, 'booking')`, [p.id]));
+});
+
+test('profile is created for the active business, stock follows bills, rent writes daily lines', async () => {
+  const { rows: [p] } = await as(A, `select (finance.ensure_profile()).business_name as n, (select count(*) from finance.profiles) as c`, [], true);
+  assert.equal(p.n, 'Alpha');
+  await as(A, `insert into finance.products (name, stock_level) values ('Widget', 10)`, [], true);
+  const { rows: [bill] } = await as(A, `insert into finance.business_transactions (type, amount, items) values ('sale', 300, '[{"description":"widget","qty":3,"rate":100,"amount":300}]') returning id`, [], true);
+  let r = await as(A, `select stock_level from finance.products where name = 'Widget'`);
+  assert.equal(Number(r.rows[0].stock_level), 7);
+  await as(A, `delete from finance.business_transactions where id = $1`, [bill.id], true);
+  r = await as(A, `select stock_level from finance.products where name = 'Widget'`);
+  assert.equal(Number(r.rows[0].stock_level), 10);
+
+  const { rows: [c] } = await as(A, `insert into finance.customers (name) values ('Renter') returning id`, [], true);
+  await as(A, `insert into finance.rentals (car, customer_id, start_date, rate_per_day, returned_on) values ('Car 1', $1, current_date - 2, 1000, current_date)`, [c.id], true);
+  r = await as(A, `select count(*) as n, sum(amount) as s from finance.customer_ledger_entries where customer_id = $1 and source_type = 'rental_wage'`, [c.id]);
+  assert.equal(Number(r.rows[0].n), 3);
+  assert.equal(Number(r.rows[0].s), 3000);
+});
+
+test('the other business cannot see profile, products, rentals or EMI', async () => {
+  for (const t of ['profiles', 'products', 'rentals', 'emi_plans', 'party_types']) {
+    const r = await as(B, `select count(*) as n from finance.${t}`);
+    assert.equal(Number(r.rows[0].n), 0, t);
+  }
 });
