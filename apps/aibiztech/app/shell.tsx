@@ -48,7 +48,10 @@ export async function Shell({ org, orgs = [], page, children }: { org: Org | nul
             <summary>Apps</summary>
             {services?.filter((s) => !org || org.services[s.key]).map((s) => {
               const on = !!org?.services[s.key];
-              return on
+              // Finance runs inside AIBIZTECH (served at /finance); the other apps are still opened through single sign-on
+              return on && s.key === 'finance'
+                ? item('/finance', serviceIcon(s.key, s.name), s.name)
+                : on
                 ? item(`/go/${s.key}`, serviceIcon(s.key, s.name), s.name)
                 : item(org ? '/' : '/onboarding', serviceIcon(s.key, s.name), s.name, false, <Icon name="lockmini" size={14} />);
             })}

@@ -69,14 +69,14 @@
     "web": {
       "favicon": "./assets/favicon.png"
     },
-    "experiments": {
-      "baseUrl": "/finance"
-    },
     "extra": {
       "router": {},
       "eas": {
         "projectId": "3aeab32c-ecf0-417c-9da8-4b8e5b86c308"
       }
+    },
+    "experiments": {
+      "baseUrl": "/finance"
     }
   }
 }

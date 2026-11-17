@@ -16,7 +16,8 @@ import { useReportActions } from './PrintButton';
 import type { FeedItem } from './TransactionsScreen';
 import { tidyName } from '../../utils/nameCaps';
 import { useSupabaseQuery } from '../../hooks/useSupabase';
-import { itemNamesOf, sellsVehicles } from '../../utils/accountFeatures';
+import { itemNamesOf } from '../../utils/accountFeatures';
+import { useFeature } from '../../features/useFeatures';
 import { vehicleCosts, vehicleKey } from '../../utils/vehicleCost';
 import type { AccountTransfer, BusinessTransaction, BusinessTransactionType } from '../../../types/database.types';
 
@@ -192,10 +193,11 @@ export function TransactionsBook({
   );
 
   // A vehicle account's sale and purchase bills read with the item (car) on them in place of the remark.
-  const showItems = sellsVehicles(profile?.business_name?.trim() || profile?.full_name);
-  const owner: Record<string, string> = profile?.id ? { owner_id: profile.id } : {};
-  const { data: products } = useSupabaseQuery('products', { filters: owner, enabled: !!profile?.id && showItems });
-  const { data: allBills } = useSupabaseQuery('business_transactions', { filters: owner, all: true, enabled: !!profile?.id && showItems });
+  const showItems = useFeature('finance.vehicles');
+  const ownerId = useAuthStore((state) => state.ownerId);
+  const owner: Record<string, string> = ownerId ? { owner_id: ownerId } : {};
+  const { data: products } = useSupabaseQuery('products', { filters: owner, enabled: !!ownerId && showItems });
+  const { data: allBills } = useSupabaseQuery('business_transactions', { filters: owner, all: true, enabled: !!ownerId && showItems });
   const rows = useMemo<Row[]>(() => {
     const costByVehicle = showItems ? vehicleCosts(products ?? [], allBills ?? []) : new Map<string, number>();
     const costOf = (name: string | null | undefined) => (showItems ? costByVehicle.get(vehicleKey(name)) ?? null : null);

@@ -5,6 +5,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '../../hooks/useAuth';
 import { useRentalWageSync } from '../../hooks/useRentalWageSync';
+import { useFeature } from '../../features/useFeatures';
 import { useSupabaseQuery } from '../../hooks/useSupabase';
 import { useCalendarMode } from '../../hooks/useCalendarMode';
 import { usePartyDestination } from '../../hooks/usePartyDestination';
@@ -24,13 +25,17 @@ import type { PrintReport } from '../../utils/printReport';
 export function RentScreen({ basePath }: { basePath: string }) {
   useCalendarMode(); // draws its dates again when the AD / BS toggle changes
   const layout = useBookLayout();
-  const userId = useAuthStore((state) => state.session?.user.id);
+  const userId = useAuthStore((state) => state.ownerId ?? undefined);
   // The renters' daily rent lines up to today (see useRentalWageSync).
   useRentalWageSync(userId);
   const profile = useAuthStore((state) => state.profile);
   // Rent & EMI: vehicles sold on installments, and vehicles given on rent. The side panel picks one (`?tab=rent` is Rent, else EMI).
   const { tab: tabParam } = useLocalSearchParams<{ tab?: string }>();
-  const tab: 'emi' | 'rent' = tabParam === 'rent' ? 'rent' : 'emi';
+  // The side panel only offers the tabs that are on; an address for the other one falls to the one that is.
+  const rentOn = useFeature('finance.rent');
+  const emiOn = useFeature('finance.emi');
+  const wanted: 'emi' | 'rent' = tabParam === 'rent' ? 'rent' : 'emi';
+  const tab: 'emi' | 'rent' = (wanted === 'rent' ? rentOn : emiOn) ? wanted : wanted === 'rent' ? 'emi' : 'rent';
   const today = localTodayIso();
   const owner: Record<string, string> = userId ? { owner_id: userId } : {};
   const { data: rentals, isLoading, error } = useSupabaseQuery('rentals', {

@@ -31,7 +31,8 @@ import { Field, FieldRow, FormActions, PopupCard } from './FormKit';
 import { journalOf } from '../../utils/journalVoucher';
 import { supabase } from '../../supabase';
 import { tidyName } from '../../utils/nameCaps';
-import { itemNamesOf, sellsVehicles } from '../../utils/accountFeatures';
+import { itemNamesOf } from '../../utils/accountFeatures';
+import { useFeature } from '../../features/useFeatures';
 import type { BusinessTransaction } from '../../../types/database.types';
 import { decimalInput } from '../../utils/number';
 
@@ -379,7 +380,7 @@ function EditInput(props: ComponentProps<typeof TextInput>) {
  * trigger. */
 function EditEntryModal({ target, onClose }: { target: EditTarget | null; onClose: () => void }) {
   const queryClient = useQueryClient();
-  const userId = useAuthStore((state) => state.session?.user.id);
+  const userId = useAuthStore((state) => state.ownerId ?? undefined);
   const bankAccounts = useBankAccounts(userId);
   const [showAccountPicker, setShowAccountPicker] = useState(false);
   const [showPartyPicker, setShowPartyPicker] = useState(false);
@@ -815,7 +816,7 @@ function AccountPicker({ options, selected, onSelect, userId }: {
  * is every cash movement dated before this day, the same formula as the
  * Available Balance (useAccountBalances), so the two always agree. */
 export function DayBookScreen({ basePath }: { basePath: string }) {
-  const userId = useAuthStore((state) => state.session?.user.id);
+  const userId = useAuthStore((state) => state.ownerId ?? undefined);
   const profile = useAuthStore((state) => state.profile);
   const wide = useWideDetail();
   const { width: windowWidth } = useWindowDimensions();
@@ -853,7 +854,7 @@ export function DayBookScreen({ basePath }: { basePath: string }) {
   const { data: categories } = useSupabaseQuery('expense_categories', { filters: owner, orderBy: { column: 'name' }, enabled: !!userId });
 
   // A vehicle account's sale and purchase bills read with the car on them (the item) in place of the remark.
-  const showItems = sellsVehicles(profile?.business_name?.trim() || profile?.full_name);
+  const showItems = useFeature('finance.vehicles');
   const { data: products } = useSupabaseQuery('products', { filters: owner, enabled: !!userId && showItems });
 
   const book = useMemo(() => {
