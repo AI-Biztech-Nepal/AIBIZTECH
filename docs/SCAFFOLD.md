@@ -215,7 +215,7 @@ create table core.audit_log (
 
 insert into core.services (key, name, base_url, roles) values
   ('finance',    'Finance',              'https://finance.TBD',    array['admin','accountant','viewer']),
-  ('stock',      'Auto Stock Manager',   'https://stock.TBD',      array['admin','stock_supervisor','parts_supervisor','social_media']),
+  ('stock',      'Stock Manager',        'https://stock.TBD',      array['admin','stock_supervisor','parts_supervisor','social_media']),
   ('attendance', 'Attendance Nepal',     'https://attendance.TBD', array['admin','hr','employee']);
 ```
 
