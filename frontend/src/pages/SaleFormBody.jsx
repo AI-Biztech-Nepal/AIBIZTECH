@@ -185,8 +185,9 @@ export default function SaleFormBody({ f, booking = null, sale = null, readOnly 
         </div>
       </section>
 
-      {/* Booking: the tick turns a new sale into a booking (a deposit, the vehicle reserved, a receipt); it opens the deposit fields.
-          Not offered on a recorded sale or when the sale completes a booking. */}
+      {/* Booking: just the tick. Ticked, the form saves a booking (the vehicle reserved, a receipt) instead of a sale; the deposit
+          and how it was paid are filled in afterwards from the booking's details (Edit). Not offered on a recorded sale or when
+          the sale completes a booking. */}
       {!existing && !booking && (
         <section id="sv-section-booking" className={SECTION} data-testid="booking-section">
           {/* The title is a heading like "Sale" and "Notes" (same size and weight as H2), with the tick in front of it. */}
@@ -199,23 +200,6 @@ export default function SaleFormBody({ f, booking = null, sale = null, readOnly 
               <label htmlFor="sv-booking" className="cursor-pointer select-none">Booking</label>
             </h3>
           </div>
-          <p className="mt-1 pl-8 text-xs text-slate-500">Tick if the customer is only booking the vehicle: a deposit is taken and the vehicle is reserved, and no sale is recorded yet</p>
-          {form.booking && (
-            <div className={`${GRID} mt-4`} data-testid="booking-fields">
-              <div>
-                <label htmlFor="sv-booking-amount" className={LBL}>Booking Amount (NPR) <span className="text-red-600">*</span></label>
-                <Money id="sv-booking-amount" testid="booking-amount-input" placeholder="e.g. 20000" value={form.booking_amount} onChange={v => set({ booking_amount: v })} error={bad("sv-booking-amount")} />
-                {bad("sv-booking-amount") && <p className="mt-1 text-xs font-semibold text-red-700">Enter the deposit taken</p>}
-              </div>
-              <div>
-                <label htmlFor="sv-booking-method" className={LBL}>Paid By</label>
-                <select id="sv-booking-method" value={form.booking_method} onChange={e => set({ booking_method: e.target.value })} className={`${BOX} ${OK}`} data-testid="booking-method-select">
-                  <option>Cash</option>
-                  <option>Bank Transfer</option>
-                </select>
-              </div>
-            </div>
-          )}
         </section>
       )}
 

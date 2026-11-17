@@ -1686,7 +1686,7 @@ class PartStockOut(BaseModel):
 class BookingCreate(BaseModel):
     vehicle_id: str
     customer_id: str
-    booking_amount: float  # deposit taken now; counted as the sale's advance payment on conversion
+    booking_amount: float = 0  # deposit taken now (0 until it is entered); counted as the sale's advance payment on conversion
     payment_method: str = "Cash"
     booking_date: Optional[str] = None
     expected_sale_date: Optional[str] = None
@@ -4508,7 +4508,7 @@ async def create_booking(body: BookingCreate, cu: dict = Depends(require("sales"
     if not v: raise HTTPException(404, "Vehicle not found")
     if v.get("status") != "available": raise HTTPException(400, f"Vehicle is {v.get('status')} — only available vehicles can be booked")
     if not await db.customers.find_one({"id": body.customer_id}, {"_id": 0, "id": 1}): raise HTTPException(404, "Customer not found")
-    if body.booking_amount <= 0: raise HTTPException(400, "Booking amount must be greater than 0")
+    if body.booking_amount < 0: raise HTTPException(400, "Booking amount can't be negative")
     now = datetime.now(timezone.utc).isoformat()
     # The receipt number is the next one in this company's own series (1, 2, 3 ...). Reading the last number and saving
     # the booking happen under one lock so two bookings made at the same moment can never get the same number.
@@ -4537,7 +4537,7 @@ async def update_booking(bid: str, body: BookingUpdate, cu: dict = Depends(requi
     if b.get("status") != "active": raise HTTPException(400, f"Booking is already {b.get('status')}")
     upd = {k: val for k, val in body.model_dump().items() if val is not None}
     if "booking_amount" in upd:
-        if upd["booking_amount"] <= 0: raise HTTPException(400, "Booking amount must be greater than 0")
+        if upd["booking_amount"] < 0: raise HTTPException(400, "Booking amount can't be negative")
         upd["booking_amount"] = round(upd["booking_amount"], 2)
     if "customer_id" in upd and not await db.customers.find_one({"id": upd["customer_id"]}, {"_id": 0, "id": 1}):
         raise HTTPException(404, "Customer not found")

@@ -69,7 +69,7 @@ export default function SaleVehicleModal({ booking = null, onClose, onSaved }) {
 
   const sections = [
     { id: "sale", label: "Sale", done: !!(form.vehicle_id && form.sale_price && form.customer_id) },
-    ...(booking ? [] : [{ id: "booking", label: "Booking", done: isBooking && Number(form.booking_amount) > 0 }]),
+    ...(booking ? [] : [{ id: "booking", label: "Booking", done: isBooking }]),
     { id: "notes", label: "Notes", done: !!form.notes },
   ];
   const go = (id) => document.getElementById(`sv-section-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -93,7 +93,7 @@ export default function SaleVehicleModal({ booking = null, onClose, onSaved }) {
         <div className="flex items-center gap-3 pl-4 sm:pl-7 pr-2 sm:pr-4 py-3 border-b border-slate-200">
           <div className="flex-1 min-w-0">
             <h2 className="text-xl font-extrabold text-slate-900 truncate" style={{ fontFamily: "Manrope, sans-serif" }}>{booking ? "Sale Vehicle from Booking" : isBooking ? "Book Vehicle" : "Sale Vehicle"}</h2>
-            <p className="hidden sm:block text-[13px] text-slate-500">{isBooking ? "Reserve a vehicle from your stock with a deposit" : "Sell a vehicle from your stock"} <span className="text-slate-400">· <span className="text-red-600">*</span> needed to save</span></p>
+            <p className="hidden sm:block text-[13px] text-slate-500">{isBooking ? "Reserve a vehicle from your stock" : "Sell a vehicle from your stock"} <span className="text-slate-400">· <span className="text-red-600">*</span> needed to save</span></p>
           </div>
           <button type="button" onClick={onClose} aria-label="Close" className="w-11 h-11 flex items-center justify-center rounded-[10px] text-slate-600 hover:bg-slate-100 shrink-0">
             <X size={20} />
@@ -125,12 +125,7 @@ export default function SaleVehicleModal({ booking = null, onClose, onSaved }) {
 
           {/* Footer: what this sale adds up to, and the actions */}
           <div className="shrink-0 flex flex-wrap items-center gap-x-7 gap-y-3 px-4 sm:px-7 py-3 border-t border-slate-200 bg-slate-50" data-testid="grand-total-section">
-            {isBooking ? (
-              <div>
-                <div className="text-[11px] font-semibold text-slate-500">Booking amount</div>
-                <div className={`text-lg font-extrabold ${digits(form.booking_amount) ? "text-emerald-700" : "text-slate-400"}`} style={{ fontFamily: "Manrope, sans-serif" }} data-testid="booking-total-value">{digits(form.booking_amount) ? formatNPR(digits(form.booking_amount)) : "Not set"}</div>
-              </div>
-            ) : (
+            {isBooking ? null : (
               <>
                 <div className="hidden sm:block">
                   <div className="text-[11px] font-semibold text-slate-500">Sale price</div>

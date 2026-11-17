@@ -21,8 +21,9 @@ const EMPTY_FORM = {
   sanakhat_cost: "", resanakhat_cost: "",
   exchange_valuation: "", exchange_brand: "", exchange_model: "", exchange_reg_no: "", exchange_year: "",
   witness_name: "", witness_address: "", witness_phone: "", witness_id_number: "",
-  // "Booking" tick (a new sale only): the form then records a booking instead of a sale - a deposit, the vehicle reserved.
-  booking: false, booking_amount: "", booking_method: "Cash",
+  // "Booking" tick (a new sale only): the form then records a booking instead of a sale - the vehicle reserved. The deposit is
+  // not asked for here (it starts at Rs 0 and is filled in from the booking's details).
+  booking: false,
 };
 
 const EMPTY_BUYER = { name: "", contact_number: "", address: "", id_number: "" };
@@ -198,7 +199,7 @@ export default function useSaleForm({ booking = null, sale = null } = {}) {
   // existing customer picked from the list covers the buyer half itself), and on a new sale the witness is mandatory
   // too (sale deed). Lead and Referred by are optional, except that a new buyer must be tagged with one or the other.
   const enteringNewBuyer = showAddCust && !form.customer_id;
-  // A booking needs a customer on record (the Bookings page never takes one without), no witness, no sale price, and a deposit.
+  // A booking needs a customer on record (the Bookings page never takes one without), and no witness or sale price.
   const missing = [
     form.booking && !form.customer_id && !enteringNewBuyer && ["sv-customer", "customer"],
     enteringNewBuyer && !buyer.name.trim() && ["sv-buyer-name", "buyer's name"],
@@ -212,7 +213,6 @@ export default function useSaleForm({ booking = null, sale = null } = {}) {
     !form.vehicle_id && ["sv-vehicle", "vehicle"],
     !form.booking && !form.sale_price && ["sv-sale_price", "sale price"],
     enteringNewBuyer && !isSourceComplete(buyerSource) && ["sv-lead", "lead, or who referred the buyer"],
-    form.booking && !(Number(form.booking_amount) > 0) && ["sv-booking-amount", "booking amount"],
   ].filter(Boolean);
 
   // The buyer's customer id: the one picked, or a new customer created from the panel.
@@ -230,13 +230,13 @@ export default function useSaleForm({ booking = null, sale = null } = {}) {
     });
   };
 
-  // The body for POST /bookings (the "Booking" tick): the deposit and how it was paid. The agreed price is the Sale price (if
-  // filled in) and the booking date is the form's Date (blank means today).
+  // The body for POST /bookings (the "Booking" tick): no deposit yet (Rs 0, paid in cash until it is edited). The agreed price
+  // is the Sale price (if filled in) and the booking date is the form's Date (blank means today).
   const bookingPayload = (customerId) => ({
     vehicle_id: form.vehicle_id,
     customer_id: customerId,
-    booking_amount: Number(form.booking_amount),
-    payment_method: form.booking_method,
+    booking_amount: 0,
+    payment_method: "Cash",
     booking_date: form.sale_date || undefined,
     agreed_price: Number(form.sale_price) || undefined,
     notes: form.notes || undefined,

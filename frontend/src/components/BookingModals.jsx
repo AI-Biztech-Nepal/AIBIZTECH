@@ -48,9 +48,9 @@ export function EditBookingModal({ booking, onClose, onSaved }) {
 
   const save = async (e) => {
     e.preventDefault();
-    const amount = Number(form.booking_amount);
+    const amount = Number(form.booking_amount || 0); // a booking made from the Sale Vehicle form starts with no deposit (0)
     if (!form.vehicle_id) { toast.error("Select a vehicle"); return; }
-    if (!(amount > 0)) { toast.error("Enter the booking amount"); return; }
+    if (!(amount >= 0)) { toast.error("Enter a valid booking amount"); return; }
     setSaving(true);
     try {
       await api.put(`/bookings/${booking.id}`, { vehicle_id: form.vehicle_id, booking_amount: amount, payment_method: form.payment_method, notes: form.notes });
@@ -76,7 +76,7 @@ export function EditBookingModal({ booking, onClose, onSaved }) {
             <VehicleComboBox vehicles={vehicles} value={form.vehicle_id} onChange={id => setForm(f => ({ ...f, vehicle_id: id }))} placeholder="Search or select available vehicle..." testId="booking-vehicle" showPrice />
           </Field>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Field label="Booking Amount (NPR)" required>
+            <Field label="Booking Amount (NPR)">
               <input type="text" inputMode="numeric" value={form.booking_amount} onChange={e => setForm({ ...form, booking_amount: e.target.value })} placeholder="e.g. 20000" className={inp} data-testid="booking-amount-input" />
             </Field>
             <Field label="Paid By">
