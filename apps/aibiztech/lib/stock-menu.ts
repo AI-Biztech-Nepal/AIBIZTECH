@@ -4,11 +4,13 @@ import type { MenuNode } from './attendance-menu';
 export const STOCK_MENU: MenuNode[] = [
   { label: 'Dashboard', icon: 'dashboard', path: '/' },
   { label: 'Sales', icon: 'task', path: '/sales' },
+  { label: 'Customers', icon: 'team', path: '/customers' },
+  { label: 'Vendors', icon: 'card', path: '/vendors' },
   {
     label: 'Inventory', icon: 'stock',
     children: [
       { label: 'Product', icon: 'stock', path: '/inventory' },
-      { label: 'Spare Parts', icon: 'structure', path: '/inventory?tab=spare-parts' },
+      { label: 'Spare Parts', icon: 'structure', path: '/spare-parts' },
     ],
   },
   {
