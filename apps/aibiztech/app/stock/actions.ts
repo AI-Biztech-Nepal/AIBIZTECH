@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { getStock } from '@/lib/stock';
+import { DEFAULT_WARRANTY_DAYS, emiPlan, warrantyInfo } from '@/lib/stock-calc';
 
 const text = (f: FormData, k: string) => { const v = String(f.get(k) ?? '').trim(); return v || null; };
 const num = (f: FormData, k: string) => { const v = text(f, k); const n = v === null ? NaN : Number(v); return Number.isFinite(n) ? n : null; };
@@ -150,4 +151,127 @@ export async function deleteSale(form: FormData) {
   if (error) go('/stock/sales', 'error', error.message);
   revalidatePath('/stock');
   go('/stock/sales', 'message', 'Sale deleted. The vehicle is back in stock.');
+}
+
+// ---- EMI ----
+export async function createEmi(form: FormData) {
+  const { stock, org } = await getStock();
+  if (org.services.stock !== 'admin') go('/stock/emi', 'error', 'Only a Stock Manager admin can use EMI.');
+  const loan = num(form, 'loan_amount'); const months = num(form, 'tenure_months'); const rate = num(form, 'interest_rate') ?? 0;
+  if (!loan || loan <= 0 || !months || months < 1) go('/stock/emi', 'error', 'Enter the loan amount and the number of months.');
+  const plan = emiPlan(loan!, rate, months!);
+  const customerId = text(form, 'customer_id'); const vehicleId = text(form, 'vehicle_id');
+  const [{ data: c }, { data: v }] = await Promise.all([
+    customerId ? stock.from('customers').select('name, contact_number').eq('id', customerId).maybeSingle() : Promise.resolve({ data: null }),
+    vehicleId ? stock.from('vehicles').select('brand, model, year').eq('id', vehicleId).maybeSingle() : Promise.resolve({ data: null }),
+  ]);
+  const { error } = await stock.from('emi_records').insert({
+    id: randomUUID(), company_id: org.id, customer_id: customerId, vehicle_id: vehicleId, loan_amount: loan, down_payment: num(form, 'down_payment') ?? 0,
+    interest_rate: rate, tenure_months: Math.trunc(months!), start_date: text(form, 'start_date'), financer_name: text(form, 'financer_name'), notes: text(form, 'notes'),
+    monthly_installment: plan.monthly, total_payable: plan.totalPayable, total_interest: plan.totalInterest, status: 'active', created_at: new Date().toISOString(),
+    customer_name: c?.name ?? null, customer_phone: c?.contact_number ?? null, vehicle_name: v ? [v.brand, v.model, v.year].filter(Boolean).join(' ') : null,
+  });
+  if (error) go('/stock/emi', 'error', error.message);
+  go('/stock/emi', 'message', 'EMI plan created.');
+}
+
+export async function addEmiPayment(form: FormData) {
+  const { stock, org, ctx } = await getStock();
+  if (org.services.stock !== 'admin') go('/stock/emi', 'error', 'Only a Stock Manager admin can use EMI.');
+  const amount = num(form, 'amount');
+  if (!amount || amount <= 0) go('/stock/emi', 'error', 'Enter the amount paid.');
+  const { error } = await stock.from('emi_payments').insert({
+    id: randomUUID(), company_id: org.id, emi_id: text(form, 'emi_id'), amount, payment_date: text(form, 'payment_date') ?? new Date().toISOString().slice(0, 10),
+    notes: text(form, 'notes'), recorded_by: ctx.full_name, created_at: new Date().toISOString(),
+  });
+  if (error) go('/stock/emi', 'error', error.message);
+  go('/stock/emi', 'message', 'Payment recorded.');
+}
+
+// ---- job cards ----
+export async function createJob(form: FormData) {
+  const { stock, org } = await getStock();
+  const external = text(form, 'kind') === 'external';
+  const vehicleId = external ? null : text(form, 'vehicle_id');
+  if (!external && !vehicleId) go('/stock/jobs', 'error', 'Choose a vehicle.');
+  let isWarranty = false; let afterSale = false; let brand = text(form, 'vehicle_brand'); let model = text(form, 'vehicle_model');
+  let year = num(form, 'vehicle_year'); let reg = text(form, 'registration_number');
+  if (vehicleId) {
+    const { data: v } = await stock.from('vehicles').select('brand, model, year, registration_number, status, sold_date, warranty_days, warranty_void').eq('id', vehicleId).eq('company_id', org.id).maybeSingle();
+    if (!v) go('/stock/jobs', 'error', 'Vehicle not found.');
+    ({ brand, model, registration_number: reg } = { brand: v!.brand, model: v!.model, registration_number: v!.registration_number });
+    year = v!.year;
+    if (v!.status === 'sold') {
+      const [{ data: jobs }, { data: s }] = await Promise.all([
+        stock.from('job_cards').select('is_warranty, after_sale, job_date, created_at').eq('vehicle_id', vehicleId!),
+        stock.from('settings').select('warranty_days_default').eq('company_id', org.id).maybeSingle(),
+      ]);
+      afterSale = true;
+      const w = warrantyInfo(v!, s?.warranty_days_default || DEFAULT_WARRANTY_DAYS, jobs ?? []);
+      isWarranty = w.status === 'awaiting' || w.status === 'active';
+    }
+  }
+  const parts: { part_id: string; part_name: string; quantity: number; unit_price: number | null }[] = [];
+  for (const i of [1, 2, 3]) {
+    const id = text(form, `part_${i}`); const qty = Math.trunc(num(form, `qty_${i}`) ?? 0);
+    if (!id || qty <= 0) continue;
+    const { data: p } = await stock.from('spare_parts').select('name, selling_price').eq('id', id).eq('company_id', org.id).maybeSingle();
+    if (p) parts.push({ part_id: id, part_name: p.name ?? '', quantity: qty, unit_price: p.selling_price });
+  }
+  const { error } = await stock.rpc('create_job_card', {
+    p_company: org.id, p_vehicle: vehicleId ?? '', p_brand: brand, p_model: model, p_year: year, p_reg: reg, p_customer: text(form, 'customer_name'),
+    p_contact: text(form, 'customer_contact'), p_work: text(form, 'work_description'), p_mechanic: text(form, 'mechanic_name'),
+    p_estimated: num(form, 'estimated_cost'), p_labour: num(form, 'labour_charge') ?? 0, p_date: text(form, 'job_date') ?? '', p_notes: text(form, 'notes'),
+    p_parts: parts, p_is_warranty: isWarranty, p_after_sale: afterSale,
+  });
+  if (error) go('/stock/jobs', 'error', error.message);
+  revalidatePath('/stock');
+  go('/stock/jobs', 'message', isWarranty ? 'Job card opened as a warranty service (labour is free).' : 'Job card opened.');
+}
+
+export async function setJobStatus(form: FormData) {
+  const { stock } = await getStock();
+  const { error } = await stock.rpc('set_job_status', { p_job: text(form, 'id') ?? '', p_status: text(form, 'status') ?? '', p_actual: num(form, 'actual_cost') });
+  if (error) go('/stock/jobs', 'error', error.message);
+  revalidatePath('/stock');
+  go('/stock/jobs', 'message', 'Job card updated.');
+}
+
+export async function deleteJob(form: FormData) {
+  const { stock, org } = await getStock();
+  if (org.services.stock !== 'admin') go('/stock/jobs', 'error', 'Only a Stock Manager admin can delete a job card.');
+  const { error } = await stock.from('job_cards').delete().eq('id', text(form, 'id') ?? '').eq('company_id', org.id);
+  if (error) go('/stock/jobs', 'error', error.message);
+  go('/stock/jobs', 'message', 'Job card deleted.');
+}
+
+// ---- warranty ----
+export async function voidWarranty(form: FormData) {
+  const { stock, org, ctx } = await getStock();
+  const reason = text(form, 'reason');
+  if (!reason) go('/stock/warranty', 'error', 'Write the reason (for example: serviced outside the shop).');
+  const now = new Date().toISOString();
+  const { error } = await stock.from('vehicles').update({ warranty_void: true, warranty_void_reason: reason, warranty_voided_at: now, warranty_voided_by: ctx.full_name, updated_at: now })
+    .eq('id', text(form, 'id') ?? '').eq('company_id', org.id).eq('status', 'sold');
+  if (error) go('/stock/warranty', 'error', error.message);
+  go('/stock/warranty', 'message', 'Warranty voided.');
+}
+
+export async function restoreWarranty(form: FormData) {
+  const { stock, org } = await getStock();
+  if (org.services.stock !== 'admin') go('/stock/warranty', 'error', 'Only a Stock Manager admin can restore a warranty.');
+  const { error } = await stock.from('vehicles').update({ warranty_void: false, warranty_void_reason: null, warranty_voided_at: null, warranty_voided_by: null, updated_at: new Date().toISOString() })
+    .eq('id', text(form, 'id') ?? '').eq('company_id', org.id).eq('status', 'sold');
+  if (error) go('/stock/warranty', 'error', error.message);
+  go('/stock/warranty', 'message', 'Warranty restored.');
+}
+
+export async function setWarrantyLength(form: FormData) {
+  const { stock, org } = await getStock();
+  if (org.services.stock !== 'admin') go('/stock/warranty', 'error', 'Only a Stock Manager admin can change the warranty length.');
+  const days = num(form, 'days');
+  const { error } = await stock.from('vehicles').update({ warranty_days: days && days > 0 ? Math.trunc(days) : null, updated_at: new Date().toISOString() })
+    .eq('id', text(form, 'id') ?? '').eq('company_id', org.id).eq('status', 'sold');
+  if (error) go('/stock/warranty', 'error', error.message);
+  go('/stock/warranty', 'message', 'Warranty length updated.');
 }

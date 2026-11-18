@@ -4,6 +4,7 @@ import type { MenuNode } from './attendance-menu';
 export const STOCK_MENU: MenuNode[] = [
   { label: 'Dashboard', icon: 'dashboard', path: '/' },
   { label: 'Sales', icon: 'task', path: '/sales' },
+  { label: 'EMI', icon: 'card', path: '/emi', adminOnly: true },
   { label: 'Customers', icon: 'team', path: '/customers' },
   { label: 'Vendors', icon: 'card', path: '/vendors' },
   {
