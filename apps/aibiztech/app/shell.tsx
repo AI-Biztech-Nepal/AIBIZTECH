@@ -44,7 +44,7 @@ export async function Shell({ org, orgs = [], page, bleed = false, children }: {
 
           <details className="group" open data-menu="group:apps">
             <summary>Apps</summary>
-            {services?.filter((s) => !org || org.services[s.key]).map((s) => {
+            {appsInOrder(services, org).map((s) => {
               const on = !!org?.services[s.key];
               // Attendance Nepal opens its own menu here (live app, new tab); a bare address with no path keeps the link usable
               if (on && s.key === 'attendance') return <AppMenu key={s.key} service="attendance" icon="attendance" name={s.name} base={s.base_url} home="/" nodes={ATTENDANCE_MENU} isAdmin={org?.services.attendance === 'admin'} />;
@@ -108,6 +108,17 @@ export async function Shell({ org, orgs = [], page, bleed = false, children }: {
       </div>
     </div>
   );
+}
+
+// The apps in the sidebar, in this order, with Attendance Nepal shown as HRIS
+const APP_ORDER = ['attendance', 'finance', 'marketing', 'stock'];
+const SHOWN_AS: Record<string, string> = { attendance: 'HRIS' };
+function appsInOrder<T extends { key: string; name: string }>(services: T[] | null, org: Org | null): T[] {
+  const rank = (key: string) => { const i = APP_ORDER.indexOf(key); return i < 0 ? APP_ORDER.length : i; };
+  return (services ?? [])
+    .filter((s) => !org || org.services[s.key])
+    .sort((a, b) => rank(a.key) - rank(b.key))
+    .map((s) => ({ ...s, name: SHOWN_AS[s.key] ?? s.name }));
 }
 
 // An app's own menu as a dropdown under the app name; its pages are on the app itself and open in this same tab.
