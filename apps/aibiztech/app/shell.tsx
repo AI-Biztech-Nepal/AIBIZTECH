@@ -70,36 +70,38 @@ export async function Shell({ org, orgs = [], page, children }: { org: Org | nul
 
       </aside>
       <div className="main-col">
-        <div className="topbar">
-          <details className="usermenu">
-            <summary aria-label="Account menu">
-              <span className="avatar-sm">{initials}{status && <i className={`status-dot ${status}`} title={statusLabel} />}</span>
-              <span className="who-text"><strong>{org?.name ?? person}</strong><small><span className="cap">{org ? org.org_role : email}</span>{status && <> · <em className={`status-text ${status}`}>{statusLabel}</em></>}</small></span>
-            </summary>
-            <div className="panel">
-              <div className="me">
-                <span className="avatar-sm big">{initials}</span>
-                <div><strong>{person}</strong><small>{email}</small></div>
-              </div>
-              {org && <dl><dt>Business</dt><dd>{org.name}</dd><dt>Your role</dt><dd className="cap">{org.org_role}</dd><dt>Status</dt><dd><span className={`pill ${org.verification_status}`}>{statusLabel}</span></dd></dl>}
-              {orgs.length > 0 && (
-                <div className="switch">
-                  <small>Switch business</small>
-                  {orgs.map((o) => (
-                    <form key={o.id} action={switchOrg}>
-                      <input type="hidden" name="org_id" value={o.id} />
-                      <button className={o.id === org?.id ? 'current' : ''}>{o.id === org?.id ? '✓ ' : ''}{o.name}</button>
-                    </form>
-                  ))}
+        <main className="content">
+          <div className="topbar">
+            <details className="usermenu">
+              <summary aria-label="Account menu">
+                <span className="avatar-sm">{initials}{status && <i className={`status-dot ${status}`} title={statusLabel} />}</span>
+                <span className="who-text"><strong>{org?.name ?? person}</strong><small><span className="cap">{org ? org.org_role : email}</span>{status && <> · <em className={`status-text ${status}`}>{statusLabel}</em></>}</small></span>
+              </summary>
+              <div className="panel">
+                <div className="me">
+                  <span className="avatar-sm big">{initials}</span>
+                  <div><strong>{person}</strong><small>{email}</small></div>
                 </div>
-              )}
-              <Link href="/onboarding" className="menu-link">+ Add another business</Link>
-              {org && <Link href="/#account" className="menu-link">Edit profile</Link>}
-              <form action={signOut}><button className="signout-btn"><Icon name="signout" size={16} /> Sign out</button></form>
-            </div>
-          </details>
-        </div>
-        <main className="content">{children}</main>
+                {org && <dl><dt>Business</dt><dd>{org.name}</dd><dt>Your role</dt><dd className="cap">{org.org_role}</dd><dt>Status</dt><dd><span className={`pill ${org.verification_status}`}>{statusLabel}</span></dd></dl>}
+                {orgs.length > 0 && (
+                  <div className="switch">
+                    <small>Switch business</small>
+                    {orgs.map((o) => (
+                      <form key={o.id} action={switchOrg}>
+                        <input type="hidden" name="org_id" value={o.id} />
+                        <button className={o.id === org?.id ? 'current' : ''}>{o.id === org?.id ? '✓ ' : ''}{o.name}</button>
+                      </form>
+                    ))}
+                  </div>
+                )}
+                <Link href="/onboarding" className="menu-link">+ Add another business</Link>
+                {org && <Link href="/#account" className="menu-link">Edit profile</Link>}
+                <form action={signOut}><button className="signout-btn"><Icon name="signout" size={16} /> Sign out</button></form>
+              </div>
+            </details>
+          </div>
+          {children}
+        </main>
       </div>
     </div>
   );
