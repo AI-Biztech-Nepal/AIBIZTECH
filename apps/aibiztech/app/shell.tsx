@@ -23,7 +23,7 @@ export async function Shell({ org, orgs = [], page, children }: { org: Org | nul
   const person = (claims?.claims.user_metadata as { full_name?: string } | undefined)?.full_name || email.split('@')[0] || 'Account';
   const isAdmin = !!org && org.org_role !== 'member';
   const initials = (org?.name ?? person).split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
-  const item = (href: string, icon: string, label: string, active = false, extra?: ReactNode, newTab = href.startsWith('/go/')) => (
+  const item = (href: string, icon: string, label: string, active = false, extra?: ReactNode, newTab = false) => (
     <Link href={href} className={`nav-item${active ? ' active' : ''}`} aria-current={active ? 'page' : undefined} {...(newTab ? { target: '_blank', rel: 'noopener' } : {})}>
       <Icon name={icon} size={18} /><span>{label}</span>{extra}
     </Link>
@@ -107,7 +107,7 @@ export async function Shell({ org, orgs = [], page, children }: { org: Org | nul
   );
 }
 
-// An app's own menu as a dropdown under the app name; its pages are on the app itself, so they open in a new tab.
+// An app's own menu as a dropdown under the app name; its pages are on the app itself and open in this same tab.
 // "from=aibiztech" lets the app show a way back to the portal (only for people who arrived from here).
 function AppMenu({ service, icon, name, base, nodes, isAdmin, internal = false }: { service: string; icon: string; name: string; base: string; nodes: MenuNode[]; isAdmin: boolean; internal?: boolean }) {
   const root = base.replace(/\/$/, '');
@@ -123,7 +123,7 @@ function AppMenu({ service, icon, name, base, nodes, isAdmin, internal = false }
           <div className="sub">{render(n.children)}</div>
         </details>
       ) : (
-        <a key={n.label} className="nav-item sub-item" href={href(n.path)} {...(internal ? {} : { target: '_blank', rel: 'noopener' })}>
+        <a key={n.label} className="nav-item sub-item" href={href(n.path)}>
           <Icon name={n.icon} size={16} /><span>{n.label}</span>
         </a>
       ),
