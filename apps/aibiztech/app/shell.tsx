@@ -1,11 +1,11 @@
 import Link from 'next/link';
-import type { ReactNode } from 'react';
+import { Fragment, type ReactNode } from 'react';
 import { createClient, type Org } from '@/lib/supabase';
 import { signOut, switchOrg } from './actions';
 import { Icon, serviceIcon } from './icons';
 import { SidebarMemory } from './sidebar-memory';
 import { ATTENDANCE_MENU, type MenuNode } from '@/lib/attendance-menu';
-import { STOCK_MENU } from '@/lib/stock-menu';
+import { STOCK_MENU, STOCK_SERVICE_MENU } from '@/lib/stock-menu';
 import { MARKETING_MENU } from '@/lib/marketing-menu';
 import { FINANCE_MENU } from '@/lib/finance-menu';
 
@@ -49,7 +49,19 @@ export async function Shell({ org, orgs = [], page, bleed = false, children }: {
               // Attendance Nepal opens its own menu here (live app, new tab); a bare address with no path keeps the link usable
               if (on && s.key === 'attendance') return <AppMenu key={s.key} service="attendance" icon="attendance" name={s.name} base={s.base_url} home="/" nodes={ATTENDANCE_MENU} isAdmin={org?.services.attendance === 'admin'} />;
               if (on && s.key === 'marketing') return <AppMenu key={s.key} service="marketing" icon="megaphone" name={s.name} base={s.base_url} home="/" nodes={MARKETING_MENU} isAdmin={org?.services.marketing === 'admin'} />;
-              if (on && s.key === 'stock') return <AppMenu key={s.key} service="stock" icon="stock" name={s.name} base={s.base_url} home="/" nodes={STOCK_MENU} isAdmin={org?.services.stock === 'admin'} />;
+              if (on && s.key === 'stock') {
+                const stockAdmin = org?.services.stock === 'admin';
+                // Sales, EMI, Service and Sanakhat sit beside Stock Manager in the sidebar, not inside it
+                return (
+                  <Fragment key={s.key}>
+                    <AppMenu service="stock" icon="stock" name={s.name} base={s.base_url} home="/" nodes={STOCK_MENU} isAdmin={stockAdmin} />
+                    {item('/stock/sales', 'task', 'Sales')}
+                    {stockAdmin && item('/stock/emi', 'card', 'EMI')}
+                    <AppMenu service="stock" icon="wrench" name="Service" base={s.base_url} home="/jobs" nodes={STOCK_SERVICE_MENU} isAdmin={stockAdmin} />
+                    {stockAdmin && item('/stock/sanakhat', 'doc', 'Sanakhat')}
+                  </Fragment>
+                );
+              }
               // Finance runs inside AIBIZTECH (served at /finance); the other apps are still opened through single sign-on
               return on && s.key === 'finance'
                 ? <AppMenu key={s.key} service="finance" icon="finance" name={s.name} base="/finance" internal home="/company-dashboard" nodes={FINANCE_MENU} isAdmin />
@@ -141,7 +153,7 @@ function AppMenu({ service, icon, name, base, nodes, isAdmin, home = '/', intern
       ),
     );
   return (
-    <details className="app-menu" data-menu={`app:${service}`}>
+    <details className="app-menu" data-menu={`app:${service}:${name}`}>
       {/* Clicking the name opens the app's dashboard; the arrow opens and closes the list */}
       <summary className="nav-item"><a href={href(home)} className="app-title"><Icon name={icon} size={18} /><span>{name}</span></a></summary>
       <div className="sub">{render(nodes)}</div>

@@ -1,22 +1,13 @@
 import type { MenuNode } from './attendance-menu';
 
-// Stock Manager's own menu (from its sidebar), shown under Stock Manager in the portal sidebar.
+// Stock Manager's own menu in the portal sidebar: its inventory, flat under the heading (the heading opens the dashboard)
 export const STOCK_MENU: MenuNode[] = [
-  { label: 'Sales', icon: 'task', path: '/sales' },
-  { label: 'EMI', icon: 'card', path: '/emi', adminOnly: true },
-  {
-    label: 'Inventory', icon: 'stock',
-    children: [
-      { label: 'Product', icon: 'stock', path: '/inventory' },
-      { label: 'Spare Parts', icon: 'structure', path: '/spare-parts' },
-    ],
-  },
-  {
-    label: 'Service', icon: 'wrench',
-    children: [
-      { label: 'Job Cards', icon: 'wrench', path: '/jobs' },
-      { label: 'Warranty', icon: 'admin', path: '/warranty' },
-    ],
-  },
-  { label: 'Sanakhat', icon: 'doc', path: '/sanakhat', adminOnly: true },
+  { label: 'Product', icon: 'stock', path: '/inventory' },
+  { label: 'Spare Parts', icon: 'structure', path: '/spare-parts' },
+];
+
+// Service is its own entry in the sidebar, next to Stock Manager (its heading opens Job Cards)
+export const STOCK_SERVICE_MENU: MenuNode[] = [
+  { label: 'Job Cards', icon: 'wrench', path: '/jobs' },
+  { label: 'Warranty', icon: 'admin', path: '/warranty' },
 ];
