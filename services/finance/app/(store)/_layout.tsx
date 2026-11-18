@@ -180,6 +180,8 @@ export default function StoreLayout() {
   // Shown inside the AIBIZTECH portal (a frame): the portal supplies the menu, so this app's own side panel is left out
   const framed = Platform.OS === 'web' && typeof window !== 'undefined' && window.self !== window.top;
   const isWideWeb = Platform.OS === 'web' && width >= WEB_SIDEBAR_MIN_WIDTH && !framed;
+  // In the portal there is no menu button, bottom tabs or slide-out panel either: every page is reached from the portal's menu
+  const bare = isWideWeb || framed;
   const vehicles = useFeature('finance.vehicles');
   const rent = useFeature('finance.rent');
   const emi = useFeature('finance.emi');
@@ -201,14 +203,14 @@ export default function StoreLayout() {
         header: ({ options }) => (
           <PortalHeaderBar
             title={options.title}
-            onMenu={isWideWeb ? undefined : () => setMenuOpen(true)}
-            hideAccount={isWideWeb}
+            onMenu={bare ? undefined : () => setMenuOpen(true)}
+            hideAccount={bare}
             left={options.headerLeft?.({ canGoBack: false })}
             right={options.headerRight?.({ canGoBack: false })}
           />
         ),
         tabBarActiveTintColor: ROLE_ACCENT.store,
-        ...(isWideWeb ? { tabBarStyle: { display: 'none' } } : null),
+        ...(bare ? { tabBarStyle: { display: 'none' } } : null),
       }}
     >
       <Tabs.Screen
@@ -237,6 +239,8 @@ export default function StoreLayout() {
         <WebSidebarShell items={navItems} roleLabel="Company" profileHref="/(store)/profile">
           {tabs}
         </WebSidebarShell>
+      ) : framed ? (
+        tabs
       ) : (
         <>
           {tabs}

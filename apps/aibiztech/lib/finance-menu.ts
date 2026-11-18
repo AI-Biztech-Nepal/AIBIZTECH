@@ -9,8 +9,11 @@ export const FINANCE_MENU: MenuNode[] = [
     label: 'Finance', icon: 'finance',
     children: [
       { label: 'Day Book', icon: 'doc', path: '/daybook' },
-      { label: 'Ledger', icon: 'team', path: '/customers' },
       { label: 'Statement', icon: 'doc', path: '/transactions' },
+      { label: 'Ledger', icon: 'team', path: '/customers' },
+      { label: 'Received', icon: 'plus', path: '/quick-payment?type=in' },
+      { label: 'Paid', icon: 'card', path: '/quick-payment?type=out' },
+      { label: 'Expenses', icon: 'task', path: '/transactions?type=expense&add=1' },
       { label: 'Bank Accounts', icon: 'card', path: '/bank-accounts' },
       {
         label: 'Report', icon: 'finance',
