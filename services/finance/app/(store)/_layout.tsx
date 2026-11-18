@@ -177,7 +177,9 @@ const HIDDEN: [string, string][] = [
 
 export default function StoreLayout() {
   const { width } = useWindowDimensions();
-  const isWideWeb = Platform.OS === 'web' && width >= WEB_SIDEBAR_MIN_WIDTH;
+  // Shown inside the AIBIZTECH portal (a frame): the portal supplies the menu, so this app's own side panel is left out
+  const framed = Platform.OS === 'web' && typeof window !== 'undefined' && window.self !== window.top;
+  const isWideWeb = Platform.OS === 'web' && width >= WEB_SIDEBAR_MIN_WIDTH && !framed;
   const vehicles = useFeature('finance.vehicles');
   const rent = useFeature('finance.rent');
   const emi = useFeature('finance.emi');

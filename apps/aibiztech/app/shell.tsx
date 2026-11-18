@@ -7,11 +7,11 @@ import { ATTENDANCE_MENU, type MenuNode } from '@/lib/attendance-menu';
 import { STOCK_MENU } from '@/lib/stock-menu';
 import { FINANCE_MENU } from '@/lib/finance-menu';
 
-type Page = 'home' | 'admin' | 'team' | 'apps';
+type Page = 'home' | 'admin' | 'team' | 'apps' | 'frame';
 
 // App shell: left navigation like the apps themselves. Apps come from core.services, so a new
 // service (or a feature turned on for a business) shows up here without touching this file.
-export async function Shell({ org, orgs = [], page, children }: { org: Org | null; orgs?: Org[]; page: Page; children: ReactNode }) {
+export async function Shell({ org, orgs = [], page, bleed = false, children }: { org: Org | null; orgs?: Org[]; page: Page; bleed?: boolean; children: ReactNode }) {
   const supabase = await createClient();
   const [{ data: services }, { data: claims }] = await Promise.all([
     supabase.schema('core').from('services').select('key, name, base_url').eq('is_active', true).order('name'),
@@ -51,7 +51,7 @@ export async function Shell({ org, orgs = [], page, children }: { org: Org | nul
               return on && s.key === 'finance'
                 ? <AppMenu key={s.key} service="finance" icon="finance" name={s.name} base="/finance" internal nodes={FINANCE_MENU} isAdmin />
                 : on
-                ? item(`/go/${s.key}`, serviceIcon(s.key, s.name), s.name)
+                ? item(`/app/${s.key}`, serviceIcon(s.key, s.name), s.name)
                 : item(org ? '/' : '/onboarding', serviceIcon(s.key, s.name), s.name, false, <Icon name="lockmini" size={14} />);
             })}
             {isAdmin && item('/apps', 'plus', 'Add apps', page === 'apps')}
@@ -70,7 +70,7 @@ export async function Shell({ org, orgs = [], page, children }: { org: Org | nul
 
       </aside>
       <div className="main-col">
-        <main className="content">
+        <main className={`content${bleed ? ' bleed' : ''}`}>
           <div className="topbar">
             <details className="usermenu">
               <summary aria-label="Account menu">
@@ -110,11 +110,9 @@ export async function Shell({ org, orgs = [], page, children }: { org: Org | nul
 // An app's own menu as a dropdown under the app name; its pages are on the app itself and open in this same tab.
 // "from=aibiztech" lets the app show a way back to the portal (only for people who arrived from here).
 function AppMenu({ service, icon, name, base, nodes, isAdmin, internal = false }: { service: string; icon: string; name: string; base: string; nodes: MenuNode[]; isAdmin: boolean; internal?: boolean }) {
-  const root = base.replace(/\/$/, '');
   const visible = (list: MenuNode[]) => list.filter((n) => !n.adminOnly || isAdmin);
-  // Apps with single sign-on go through the portal's /go, which hands over a signed pass and lands on the page
-  const sso = !!process.env.SSO_SECRET && (process.env.SSO_SERVICES ?? '').split(',').map((s) => s.trim()).includes(service);
-  const href = (path = '/') => (internal ? `${root}${path}` : sso ? `/go/${service}?to=${encodeURIComponent(path)}` : `${root}${path}${path.includes('?') ? '&' : '?'}from=aibiztech`);
+  // Every page opens inside the portal (/app/<app>/<page>), in this same tab, with the sidebar and top bar around it
+  const href = (path = '/') => `/app/${service}${path === '/' ? '' : path}`;
   const render = (list: MenuNode[]): ReactNode =>
     visible(list).map((n) =>
       n.children ? (

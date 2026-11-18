@@ -10,6 +10,11 @@ const config: NextConfig = {
     { source: '/finance/_expo/:path*', headers: [{ key: 'Cache-Control', value: 'public, max-age=31536000, immutable' }] },
   ],
   // Finance is a single-page app: any address under /finance that is not a real file opens its index.html
+  // Old addresses of the apps now live under /app
+  redirects: async () => [
+    { source: '/attendance/:path*', destination: '/app/attendance/:path*', permanent: false },
+    { source: '/stock/:path*', destination: '/app/stock/:path*', permanent: false },
+  ],
   rewrites: async () => ({
     beforeFiles: [],
     afterFiles: [],

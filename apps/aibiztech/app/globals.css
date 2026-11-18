@@ -335,3 +335,8 @@ select { font: inherit; padding: 8px 10px; border: 1px solid var(--border); bord
   .topbar { position: static; display: flex; justify-content: flex-end; margin-bottom: 12px; }
   .hero { padding-right: 24px; }
 }
+
+/* An app shown inside the portal */
+.main-col .content.bleed { padding: 0; max-width: none; }
+.content.bleed .topbar { position: static; display: flex; justify-content: flex-end; padding: 8px clamp(12px, 2vw, 24px); }
+.app-frame { display: block; width: 100%; height: calc(100vh - 62px); border: 0; background: #fff; }
