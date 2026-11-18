@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { createClient, type Org } from '@/lib/supabase';
 import { signOut, switchOrg } from './actions';
 import { Icon, serviceIcon } from './icons';
+import { SidebarMemory } from './sidebar-memory';
 import { ATTENDANCE_MENU, type MenuNode } from '@/lib/attendance-menu';
 import { STOCK_MENU } from '@/lib/stock-menu';
 import { MARKETING_MENU } from '@/lib/marketing-menu';
@@ -41,7 +42,7 @@ export async function Shell({ org, orgs = [], page, bleed = false, children }: {
         <nav>
           {item('/', 'dashboard', 'Dashboard', page === 'home')}
 
-          <details className="group" open>
+          <details className="group" open data-menu="group:apps">
             <summary>Apps</summary>
             {services?.filter((s) => !org || org.services[s.key]).map((s) => {
               const on = !!org?.services[s.key];
@@ -60,7 +61,7 @@ export async function Shell({ org, orgs = [], page, bleed = false, children }: {
           </details>
 
           {isAdmin && (
-            <details className="group" open>
+            <details className="group" open data-menu="group:org">
               <summary>Organization</summary>
               {item('/team', 'team', 'Team', page === 'team')}
               {item('/admin', 'admin', 'Admin', page === 'admin')}
@@ -69,7 +70,7 @@ export async function Shell({ org, orgs = [], page, bleed = false, children }: {
 
           {item('/#account', 'settings', 'Settings')}
         </nav>
-
+        <SidebarMemory />
       </aside>
       <div className="main-col">
         <main className={`content${bleed ? ' bleed' : ''}`}>
@@ -118,7 +119,7 @@ function AppMenu({ service, icon, name, base, nodes, isAdmin, internal = false }
   const render = (list: MenuNode[]): ReactNode =>
     visible(list).map((n) =>
       n.children ? (
-        <details key={n.label} className="sub-group">
+        <details key={n.label} className="sub-group" data-menu={`${service}:${n.label}`}>
           <summary className="nav-item sub-item"><Icon name={n.icon} size={16} /><span>{n.label}</span></summary>
           <div className="sub">{render(n.children)}</div>
         </details>
@@ -129,7 +130,7 @@ function AppMenu({ service, icon, name, base, nodes, isAdmin, internal = false }
       ),
     );
   return (
-    <details className="app-menu">
+    <details className="app-menu" data-menu={`app:${service}`}>
       <summary className="nav-item"><Icon name={icon} size={18} /><span>{name}</span></summary>
       <div className="sub">{render(nodes)}</div>
     </details>
