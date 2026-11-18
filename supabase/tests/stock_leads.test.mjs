@@ -8,7 +8,7 @@ test('accepting a lead reuses a customer with the same phone, otherwise makes on
   await db.exec(`
     create schema auth; create schema core; create schema stock; create role authenticated;
     create function auth.uid() returns uuid language sql as $$ select '00000000-0000-0000-0000-0000000000aa'::uuid $$;
-    create table core.profiles (id uuid primary key, full_name text); insert into core.profiles values ('00000000-0000-0000-0000-0000000000aa', 'Owner');
+    create table core.profiles (user_id uuid primary key, full_name text); insert into core.profiles values ('00000000-0000-0000-0000-0000000000aa', 'Owner');
     create table core.services (key text primary key, name text, base_url text, roles text[]);
     create table core.organizations (id uuid primary key, name text); create table core.memberships (org_id uuid, user_id uuid, org_role text, status text);
     create table core.org_services (org_id uuid, service_key text, primary key (org_id, service_key)); create table core.service_roles (org_id uuid, user_id uuid, service_key text, role text, primary key (org_id, user_id, service_key));

@@ -18,7 +18,7 @@ begin
   if not exists (select 1 from attendance.profiles where id = uid) then
     select name into nm from core.organizations where id = p_org;
     r := case core.service_role(p_org, 'attendance') when 'admin' then 'admin' when 'hr' then 'hr' else 'employee' end;
-    select full_name into fn from core.profiles where id = uid;
+    select full_name into fn from core.profiles where user_id = uid;
     insert into attendance.profiles (id, role, full_name, company_name, company_id) values (uid, r, fn, nm, cid) on conflict (id) do nothing;
   end if;
   return cid;

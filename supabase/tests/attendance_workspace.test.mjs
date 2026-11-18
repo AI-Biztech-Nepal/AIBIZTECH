@@ -9,7 +9,7 @@ test('first open creates the company, the link and the profile once; repeat open
     create schema core; create schema attendance; create schema auth; create role authenticated;
     create function auth.uid() returns uuid language sql as $$ select '00000000-0000-0000-0000-0000000000aa'::uuid $$;
     create table core.organizations (id uuid primary key, name text); insert into core.organizations values ('00000000-0000-0000-0000-000000000001', 'Allinoneabroad');
-    create table core.profiles (id uuid primary key, full_name text); insert into core.profiles values ('00000000-0000-0000-0000-0000000000aa', 'Luv Kush');
+    create table core.profiles (user_id uuid primary key, full_name text); insert into core.profiles values ('00000000-0000-0000-0000-0000000000aa', 'Luv Kush');
     create table core.legacy_tenant_map (service_key text not null, legacy_id text not null, org_id uuid not null);
     create function core.has_service_access(p uuid, s text, r text[] default null) returns boolean language sql as $$ select true $$;
     create function core.service_role(p uuid, s text) returns text language sql as $$ select 'admin'::text $$;

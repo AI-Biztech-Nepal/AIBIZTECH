@@ -56,7 +56,7 @@ begin
     insert into stock.customers (id, company_id, name, contact_number, address, source, lead_status, notes, created_at)
     values (cid, l.company_id, coalesce(nullif(l.name, ''), 'Unnamed'), l.phone, l.address, 'website', 'new', l.message, ts);
   end if;
-  update stock.leads set status = 'accepted', remark = null, decided_by = (select full_name from core.profiles where id = auth.uid()), decided_at = ts, customer_id = cid where id = p_lead;
+  update stock.leads set status = 'accepted', remark = null, decided_by = (select full_name from core.profiles where user_id = auth.uid()), decided_at = ts, customer_id = cid where id = p_lead;
   return cid;
 end $$;
 
@@ -69,7 +69,7 @@ begin
   if not found then raise exception 'Lead not found'; end if;
   if not core.has_service_access(l.company_id::uuid, 'marketing', array['admin']) then raise exception 'Only a Marketing admin can decide leads'; end if;
   if l.status in ('accepted', 'rejected') then raise exception 'This lead was already %', l.status; end if;
-  update stock.leads set status = 'rejected', remark = left(trim(p_remark), 1000), decided_by = (select full_name from core.profiles where id = auth.uid()),
+  update stock.leads set status = 'rejected', remark = left(trim(p_remark), 1000), decided_by = (select full_name from core.profiles where user_id = auth.uid()),
     decided_at = to_char(now() at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') where id = p_lead;
 end $$;
 
