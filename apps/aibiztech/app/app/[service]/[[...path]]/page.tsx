@@ -37,6 +37,9 @@ export default async function AppPage({ params, searchParams }: Props) {
     // Finance is part of the portal itself (static files at /finance)
     src = `/finance${target === '/' ? '' : target}${search}`;
   } else if (service === 'attendance' && process.env.ATTENDANCE_URL) {
+    // First open: the business gets its Attendance company and the person their Attendance profile
+    const { error: wsError } = await supabase.schema('attendance').rpc('ensure_workspace', { p_org: org.id });
+    if (wsError) redirect('/?error=' + encodeURIComponent('Could not set up Attendance: ' + wsError.message));
     // The fresh copy is served under the portal's own address, so the portal sign-in already applies: no second login
     src = `/attendance${target === '/' ? '' : target}${search}`;
   } else {
