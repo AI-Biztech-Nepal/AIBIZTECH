@@ -15,16 +15,6 @@ export const STOCK_MENU: MenuNode[] = [
     ],
   },
   {
-    label: 'Marketing', icon: 'megaphone', adminOnly: true,
-    children: [
-      { label: 'Leads', icon: 'doc', path: '/marketing?tab=leads' },
-      { label: 'CRM', icon: 'team', path: '/marketing?tab=crm' },
-      { label: 'Share', icon: 'plus', path: '/marketing?tab=share' },
-      { label: 'Offers', icon: 'card', path: '/marketing?tab=offers' },
-      { label: 'Visits', icon: 'clock', path: '/marketing?tab=visits' },
-    ],
-  },
-  {
     label: 'Service', icon: 'wrench',
     children: [
       { label: 'Job Cards', icon: 'wrench', path: '/jobs' },

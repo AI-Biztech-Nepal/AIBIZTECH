@@ -41,7 +41,7 @@ export function Icon({ name, size = 20 }: { name: string; size?: number }) {
 
 export function serviceIcon(key: string, name: string) {
   const s = `${key} ${name}`.toLowerCase();
-  return s.includes('financ') ? 'finance' : s.includes('attend') ? 'attendance' : s.includes('stock') ? 'stock' : 'app';
+  return s.includes('financ') ? 'finance' : s.includes('attend') ? 'attendance' : s.includes('stock') ? 'stock' : s.includes('market') ? 'megaphone' : 'app';
 }
 
 // Attendance Nepal uses its real logo; Stock Manager uses the StockTrack mark; Finance has a logo drawn for the portal
@@ -64,7 +64,7 @@ export function ServiceLogo({ svc }: { svc: { key: string; name: string } }) {
   const kind = serviceIcon(svc.key, svc.name);
   return (
     <span className="svc-logo">
-      {kind === 'attendance' ? <img src="/apps/attendance.png" alt="" width={44} height={44} /> : kind === 'stock' ? <img src="/apps/stock.png" alt="" width={52} height={52} /> : kind === 'finance' ? <FinanceMark /> : <Icon name="app" size={30} />}
+      {kind === 'attendance' ? <img src="/apps/attendance.png" alt="" width={44} height={44} /> : kind === 'stock' ? <img src="/apps/stock.png" alt="" width={52} height={52} /> : kind === 'finance' ? <FinanceMark /> : kind === 'megaphone' ? <Icon name="megaphone" size={30} /> : <Icon name="app" size={30} />}
     </span>
   );
 }

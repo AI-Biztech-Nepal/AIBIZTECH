@@ -23,7 +23,7 @@ export default async function AppPage({ params, searchParams }: Props) {
   if (!org.services[service]) redirect('/?error=' + encodeURIComponent('You do not have access to that app.'));
 
   // Stock Manager is part of the portal now (/stock), not a frame
-  if (service === 'stock') redirect(`/stock${path.length ? '/' + path.map(encodeURIComponent).join('/') : ''}`);
+  if (service === 'stock' || service === 'marketing') redirect(`/${service}${path.length ? '/' + path.map(encodeURIComponent).join('/') : ''}`);
   const { data: svc } = await supabase.schema('core').from('services').select('name, base_url').eq('key', service).eq('is_active', true).maybeSingle();
   if (!svc) redirect('/?error=' + encodeURIComponent('That app is not available.'));
 

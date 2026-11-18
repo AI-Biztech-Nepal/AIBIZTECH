@@ -275,3 +275,17 @@ export async function setWarrantyLength(form: FormData) {
   if (error) go('/stock/warranty', 'error', error.message);
   go('/stock/warranty', 'message', 'Warranty length updated.');
 }
+
+// ---- sanakhat (ownership termination) ----
+export async function setSanakhat(form: FormData) {
+  const { stock, org } = await getStock();
+  const done = text(form, 'done') === '1';
+  const date = text(form, 'date');
+  if (done && date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) go('/stock/sanakhat', 'error', 'Date must look like 2026-11-06.');
+  const { error } = await stock.from('vehicles').update(done
+    ? { ownership_termination_status: 'yes', sanakhat_date: date ?? new Date().toISOString().slice(0, 10), updated_at: new Date().toISOString() }
+    : { ownership_termination_status: 'pending', updated_at: new Date().toISOString() })
+    .eq('id', text(form, 'id') ?? '').eq('company_id', org.id);
+  if (error) go('/stock/sanakhat', 'error', error.message);
+  go('/stock/sanakhat', 'message', done ? 'Sanakhat marked done.' : 'Marked as not done.');
+}

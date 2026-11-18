@@ -5,6 +5,7 @@ import { signOut, switchOrg } from './actions';
 import { Icon, serviceIcon } from './icons';
 import { ATTENDANCE_MENU, type MenuNode } from '@/lib/attendance-menu';
 import { STOCK_MENU } from '@/lib/stock-menu';
+import { MARKETING_MENU } from '@/lib/marketing-menu';
 import { FINANCE_MENU } from '@/lib/finance-menu';
 
 type Page = 'home' | 'admin' | 'team' | 'apps' | 'frame';
@@ -46,6 +47,7 @@ export async function Shell({ org, orgs = [], page, bleed = false, children }: {
               const on = !!org?.services[s.key];
               // Attendance Nepal opens its own menu here (live app, new tab); a bare address with no path keeps the link usable
               if (on && s.key === 'attendance') return <AppMenu key={s.key} service="attendance" icon="attendance" name={s.name} base={s.base_url} nodes={ATTENDANCE_MENU} isAdmin={org?.services.attendance === 'admin'} />;
+              if (on && s.key === 'marketing') return <AppMenu key={s.key} service="marketing" icon="megaphone" name={s.name} base={s.base_url} nodes={MARKETING_MENU} isAdmin={org?.services.marketing === 'admin'} />;
               if (on && s.key === 'stock') return <AppMenu key={s.key} service="stock" icon="stock" name={s.name} base={s.base_url} nodes={STOCK_MENU} isAdmin={org?.services.stock === 'admin'} />;
               // Finance runs inside AIBIZTECH (served at /finance); the other apps are still opened through single sign-on
               return on && s.key === 'finance'
@@ -112,7 +114,7 @@ export async function Shell({ org, orgs = [], page, bleed = false, children }: {
 function AppMenu({ service, icon, name, base, nodes, isAdmin, internal = false }: { service: string; icon: string; name: string; base: string; nodes: MenuNode[]; isAdmin: boolean; internal?: boolean }) {
   const visible = (list: MenuNode[]) => list.filter((n) => !n.adminOnly || isAdmin);
   // Every page opens inside the portal (/app/<app>/<page>), in this same tab, with the sidebar and top bar around it
-  const href = (path = '/') => `${service === 'stock' ? '/stock' : `/app/${service}`}${path === '/' ? '' : path}`;
+  const href = (path = '/') => `${service === 'stock' || service === 'marketing' ? `/${service}` : `/app/${service}`}${path === '/' ? '' : path}`;
   const render = (list: MenuNode[]): ReactNode =>
     visible(list).map((n) =>
       n.children ? (
