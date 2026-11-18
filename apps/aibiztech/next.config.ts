@@ -17,7 +17,6 @@ const config: NextConfig = {
   // Old addresses of the apps now live under /app
   redirects: async () => [
     ...(ATTENDANCE_URL ? [] : [{ source: '/attendance/:path*', destination: '/app/attendance/:path*', permanent: false }]),
-    { source: '/stock/:path*', destination: '/app/stock/:path*', permanent: false },
   ],
   rewrites: async () => ({
     beforeFiles: ATTENDANCE_URL

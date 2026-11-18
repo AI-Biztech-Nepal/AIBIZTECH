@@ -110,7 +110,7 @@ export default async function Launcher({ searchParams }: { searchParams: Search 
               {role ? (
                 <>
                   <p className="cap">Your role: {role}</p>
-                  <a href={`/app/${s.key}`} className="button">Open app</a>
+                  <a href={s.key === 'stock' ? '/stock' : `/app/${s.key}`} className="button">Open app</a>
                 </>
               ) : isAdmin && verified && !expired && status !== 'suspended' ? (
                 <form action={startTrial}>

@@ -112,7 +112,7 @@ export async function Shell({ org, orgs = [], page, bleed = false, children }: {
 function AppMenu({ service, icon, name, base, nodes, isAdmin, internal = false }: { service: string; icon: string; name: string; base: string; nodes: MenuNode[]; isAdmin: boolean; internal?: boolean }) {
   const visible = (list: MenuNode[]) => list.filter((n) => !n.adminOnly || isAdmin);
   // Every page opens inside the portal (/app/<app>/<page>), in this same tab, with the sidebar and top bar around it
-  const href = (path = '/') => `/app/${service}${path === '/' ? '' : path}`;
+  const href = (path = '/') => `${service === 'stock' ? '/stock' : `/app/${service}`}${path === '/' ? '' : path}`;
   const render = (list: MenuNode[]): ReactNode =>
     visible(list).map((n) =>
       n.children ? (
