@@ -115,3 +115,39 @@ export async function deletePart(form: FormData) {
   if (error) go('/stock/spare-parts', 'error', error.message);
   go('/stock/spare-parts', 'message', 'Part removed.');
 }
+
+// ---- sales ----
+export async function recordSale(form: FormData) {
+  const { stock, org, ctx } = await getStock();
+  const vehicle = text(form, 'vehicle_id');
+  const price = num(form, 'sale_price');
+  if (!vehicle || price === null) go('/stock/sales', 'error', 'Choose a vehicle and enter the sale price.');
+  const extra = [1, 2, 3].map((i) => ({ name: text(form, `extra_name_${i}`), amount: num(form, `extra_amount_${i}`) })).filter((e) => e.name && e.amount).map((e) => ({ name: e.name, amount: e.amount }));
+  const { error } = await stock.rpc('record_sale', {
+    p_vehicle: vehicle, p_customer: text(form, 'customer_id') ?? '', p_sale_price: price, p_extra: extra, p_method: text(form, 'payment_method') ?? 'Cash',
+    p_cash: num(form, 'paid_cash') ?? 0, p_bank: num(form, 'paid_bank') ?? 0, p_advance: num(form, 'advance_payment') ?? 0,
+    p_exchange_value: num(form, 'exchange_valuation') ?? 0, p_exchange_brand: text(form, 'exchange_brand'), p_exchange_model: text(form, 'exchange_model'),
+    p_exchange_reg: text(form, 'exchange_reg_no'), p_due_override: null, p_due_date: text(form, 'due_date') ?? '', p_sale_date: text(form, 'sale_date') ?? '',
+    p_notes: text(form, 'notes'), p_witness_name: text(form, 'witness_name'), p_witness_address: text(form, 'witness_address'),
+    p_witness_phone: text(form, 'witness_phone'), p_witness_id: text(form, 'witness_id_number'), p_sold_by: ctx.full_name,
+  });
+  void org;
+  if (error) go('/stock/sales', 'error', error.message);
+  revalidatePath('/stock');
+  go('/stock/sales', 'message', 'Sale recorded. The vehicle is now marked sold.');
+}
+
+export async function receivePayment(form: FormData) {
+  const { stock } = await getStock();
+  const { error } = await stock.rpc('receive_sale_payment', { p_sale: text(form, 'id') ?? '', p_cash: num(form, 'cash') ?? 0, p_bank: num(form, 'bank') ?? 0 });
+  if (error) go('/stock/sales', 'error', error.message);
+  go('/stock/sales', 'message', 'Payment recorded.');
+}
+
+export async function deleteSale(form: FormData) {
+  const { stock } = await getStock();
+  const { error } = await stock.rpc('delete_sale', { p_sale: text(form, 'id') ?? '' });
+  if (error) go('/stock/sales', 'error', error.message);
+  revalidatePath('/stock');
+  go('/stock/sales', 'message', 'Sale deleted. The vehicle is back in stock.');
+}
