@@ -31,27 +31,6 @@ export const STOCK_MENU: MenuNode[] = [
       { label: 'Warranty', icon: 'admin', path: '/warranty' },
     ],
   },
-  {
-    label: 'Finance', icon: 'finance', adminOnly: true,
-    children: [
-      { label: 'Day Book', icon: 'doc', path: '/finance?tab=daybook' },
-      { label: 'Statement', icon: 'doc', path: '/finance?tab=statement' },
-      { label: 'Ledger', icon: 'team', path: '/finance?tab=ledger' },
-      { label: 'Bank Accounts', icon: 'card', path: '/finance?tab=banks' },
-      { label: 'Quotation', icon: 'doc', path: '/finance?tab=quotation' },
-      {
-        label: 'Report', icon: 'finance',
-        children: [
-          { label: 'Sales Report', icon: 'doc', path: '/finance?tab=sales-report' },
-          { label: 'Purchase Report', icon: 'doc', path: '/finance?tab=purchase-report' },
-          { label: 'Expenses Report', icon: 'doc', path: '/finance?tab=expense-report' },
-          { label: 'Receivable Report', icon: 'doc', path: '/finance?tab=receivable-report' },
-          { label: 'Payable Report', icon: 'doc', path: '/finance?tab=payable-report' },
-          { label: 'Ageing Report', icon: 'doc', path: '/finance?tab=ageing-report' },
-        ],
-      },
-    ],
-  },
   { label: 'Sanakhat', icon: 'doc', path: '/sanakhat', adminOnly: true },
   { label: 'AI Assistant', icon: 'spark', path: '/ai', adminOnly: true },
   { label: 'Settings', icon: 'settings', path: '/settings', adminOnly: true },
