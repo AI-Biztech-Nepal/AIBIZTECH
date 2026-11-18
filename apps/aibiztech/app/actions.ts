@@ -133,12 +133,12 @@ export async function updateProfile(form: FormData) {
   const { supabase, ctx } = await getContext();
   const full_name = str(form, 'full_name');
   const phone = str(form, 'phone');
-  if (!full_name) fail('/', 'Enter your name.');
-  if (phone && !PHONE.test(phone)) fail('/', 'Enter a valid phone number (digits, optional + and dashes).');
+  if (!full_name) fail('/profile', 'Enter your name.');
+  if (phone && !PHONE.test(phone)) fail('/profile', 'Enter a valid phone number (digits, optional + and dashes).');
   const { error } = await supabase.schema('core').from('profiles')
     .update({ full_name, phone: phone || null }).eq('user_id', ctx!.user_id);
-  if (error) fail('/', error.message);
-  redirect('/?message=' + encodeURIComponent('Profile saved.'));
+  if (error) fail('/profile', error.message);
+  redirect('/profile?message=' + encodeURIComponent('Profile saved.'));
 }
 
 export async function markNotificationsRead(form: FormData) {

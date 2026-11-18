@@ -68,7 +68,7 @@ export async function Shell({ org, orgs = [], page, bleed = false, children }: {
             </details>
           )}
 
-          {item('/#account', 'settings', 'Settings')}
+          {item('/profile', 'settings', 'Settings')}
         </nav>
         <SidebarMemory />
       </aside>
@@ -98,7 +98,7 @@ export async function Shell({ org, orgs = [], page, bleed = false, children }: {
                   </div>
                 )}
                 <Link href="/onboarding" className="menu-link">+ Add another business</Link>
-                {org && <Link href="/#account" className="menu-link">Edit profile</Link>}
+                {org && <Link href="/profile" className="menu-link">Edit profile</Link>}
                 <form action={signOut}><button className="signout-btn"><Icon name="signout" size={16} /> Sign out</button></form>
               </div>
             </details>
