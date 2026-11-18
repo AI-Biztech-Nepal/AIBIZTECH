@@ -3,7 +3,6 @@
 export type MenuNode = { label: string; icon: string; path?: string; adminOnly?: boolean; children?: MenuNode[] };
 
 export const ATTENDANCE_MENU: MenuNode[] = [
-  { label: 'Dashboard', icon: 'dashboard', path: '/' },
   {
     label: 'Attendance', icon: 'clock',
     children: [

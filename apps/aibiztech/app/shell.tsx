@@ -47,12 +47,12 @@ export async function Shell({ org, orgs = [], page, bleed = false, children }: {
             {services?.filter((s) => !org || org.services[s.key]).map((s) => {
               const on = !!org?.services[s.key];
               // Attendance Nepal opens its own menu here (live app, new tab); a bare address with no path keeps the link usable
-              if (on && s.key === 'attendance') return <AppMenu key={s.key} service="attendance" icon="attendance" name={s.name} base={s.base_url} nodes={ATTENDANCE_MENU} isAdmin={org?.services.attendance === 'admin'} />;
-              if (on && s.key === 'marketing') return <AppMenu key={s.key} service="marketing" icon="megaphone" name={s.name} base={s.base_url} nodes={MARKETING_MENU} isAdmin={org?.services.marketing === 'admin'} />;
-              if (on && s.key === 'stock') return <AppMenu key={s.key} service="stock" icon="stock" name={s.name} base={s.base_url} nodes={STOCK_MENU} isAdmin={org?.services.stock === 'admin'} />;
+              if (on && s.key === 'attendance') return <AppMenu key={s.key} service="attendance" icon="attendance" name={s.name} base={s.base_url} home="/" nodes={ATTENDANCE_MENU} isAdmin={org?.services.attendance === 'admin'} />;
+              if (on && s.key === 'marketing') return <AppMenu key={s.key} service="marketing" icon="megaphone" name={s.name} base={s.base_url} home="/" nodes={MARKETING_MENU} isAdmin={org?.services.marketing === 'admin'} />;
+              if (on && s.key === 'stock') return <AppMenu key={s.key} service="stock" icon="stock" name={s.name} base={s.base_url} home="/" nodes={STOCK_MENU} isAdmin={org?.services.stock === 'admin'} />;
               // Finance runs inside AIBIZTECH (served at /finance); the other apps are still opened through single sign-on
               return on && s.key === 'finance'
-                ? <AppMenu key={s.key} service="finance" icon="finance" name={s.name} base="/finance" internal nodes={FINANCE_MENU} isAdmin />
+                ? <AppMenu key={s.key} service="finance" icon="finance" name={s.name} base="/finance" internal home="/company-dashboard" nodes={FINANCE_MENU} isAdmin />
                 : on
                 ? item(`/app/${s.key}`, serviceIcon(s.key, s.name), s.name)
                 : item(org ? '/' : '/onboarding', serviceIcon(s.key, s.name), s.name, false, <Icon name="lockmini" size={14} />);
@@ -112,7 +112,7 @@ export async function Shell({ org, orgs = [], page, bleed = false, children }: {
 
 // An app's own menu as a dropdown under the app name; its pages are on the app itself and open in this same tab.
 // "from=aibiztech" lets the app show a way back to the portal (only for people who arrived from here).
-function AppMenu({ service, icon, name, base, nodes, isAdmin, internal = false }: { service: string; icon: string; name: string; base: string; nodes: MenuNode[]; isAdmin: boolean; internal?: boolean }) {
+function AppMenu({ service, icon, name, base, nodes, isAdmin, home = '/', internal = false }: { service: string; icon: string; name: string; base: string; nodes: MenuNode[]; isAdmin: boolean; home?: string; internal?: boolean }) {
   const visible = (list: MenuNode[]) => list.filter((n) => !n.adminOnly || isAdmin);
   // Every page opens inside the portal (/app/<app>/<page>), in this same tab, with the sidebar and top bar around it
   const href = (path = '/') => `${service === 'stock' || service === 'marketing' ? `/${service}` : `/app/${service}`}${path === '/' ? '' : path}`;
@@ -131,7 +131,8 @@ function AppMenu({ service, icon, name, base, nodes, isAdmin, internal = false }
     );
   return (
     <details className="app-menu" data-menu={`app:${service}`}>
-      <summary className="nav-item"><Icon name={icon} size={18} /><span>{name}</span></summary>
+      {/* Clicking the name opens the app's dashboard; the arrow opens and closes the list */}
+      <summary className="nav-item"><a href={href(home)} className="app-title"><Icon name={icon} size={18} /><span>{name}</span></a></summary>
       <div className="sub">{render(nodes)}</div>
     </details>
   );
