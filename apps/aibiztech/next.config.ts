@@ -1,5 +1,9 @@
 import type { NextConfig } from 'next';
 
+// The fresh Attendance copy (services/attendance/admin-web) runs as its own Vercel project; the portal serves it under /attendance
+// so it shares the portal's sign-in cookie. Leave unset until that project exists.
+const ATTENDANCE_URL = (process.env.ATTENDANCE_URL ?? '').trim().replace(/\/$/, '');
+
 const config: NextConfig = {
   // Default is 1 MB; the PAN photo (max 4 MB) is posted with the onboarding form
   experimental: { serverActions: { bodySizeLimit: '5mb' } },
@@ -12,11 +16,16 @@ const config: NextConfig = {
   // Finance is a single-page app: any address under /finance that is not a real file opens its index.html
   // Old addresses of the apps now live under /app
   redirects: async () => [
-    { source: '/attendance/:path*', destination: '/app/attendance/:path*', permanent: false },
+    ...(ATTENDANCE_URL ? [] : [{ source: '/attendance/:path*', destination: '/app/attendance/:path*', permanent: false }]),
     { source: '/stock/:path*', destination: '/app/stock/:path*', permanent: false },
   ],
   rewrites: async () => ({
-    beforeFiles: [],
+    beforeFiles: ATTENDANCE_URL
+      ? [
+          { source: '/attendance', destination: `${ATTENDANCE_URL}/attendance` },
+          { source: '/attendance/:path*', destination: `${ATTENDANCE_URL}/attendance/:path*` },
+        ]
+      : [],
     afterFiles: [],
     fallback: [{ source: '/finance/:path*', destination: '/finance/index.html' }],
   }),

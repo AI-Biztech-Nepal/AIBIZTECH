@@ -34,6 +34,9 @@ export default async function AppPage({ params, searchParams }: Props) {
   if (service === 'finance') {
     // Finance is part of the portal itself (static files at /finance)
     src = `/finance${target === '/' ? '' : target}${search}`;
+  } else if (service === 'attendance' && process.env.ATTENDANCE_URL) {
+    // The fresh copy is served under the portal's own address, so the portal sign-in already applies: no second login
+    src = `/attendance${target === '/' ? '' : target}${search}`;
   } else {
     const host = (await headers()).get('host') ?? '';
     let base = svc.base_url.replace(/\/$/, '');
