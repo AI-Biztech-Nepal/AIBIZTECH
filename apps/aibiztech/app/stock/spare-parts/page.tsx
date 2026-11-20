@@ -5,7 +5,7 @@ import { addPart, adjustPart, deletePart } from '../actions';
 
 export default async function SpareParts({ searchParams }: { searchParams: Search }) {
   const { error, message } = await searchParams;
-  const { stock, ctx, org, setupError } = await getStock();
+  const { stock, ctx, org, setupError } = await getStock('vehicles');
   const [{ data: parts, error: loadError }, { data: vendors }] = await Promise.all([
     stock.from('spare_parts').select('id, name, category, part_number, quantity, unit_cost, selling_price, min_stock_alert, location').eq('company_id', org.id).order('name').limit(2000),
     stock.from('vendors').select('id, name').eq('company_id', org.id).order('name'),

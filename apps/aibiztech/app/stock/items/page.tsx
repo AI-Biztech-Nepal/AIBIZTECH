@@ -19,7 +19,7 @@ export default async function Items({ searchParams }: { searchParams: Promise<{ 
   return (
     <Shell org={org} orgs={ctx.orgs} page="frame">
       <h1>Items</h1>
-      <p>Anything you sell that is not a vehicle or a spare part. An item appears on your website by itself as soon as it has a photo and a selling price.</p>
+      <p>Anything you sell. An item appears on your website by itself as soon as it has a photo and a selling price.</p>
       <Notice error={error ?? setupError ?? loadError?.message} message={message} />
 
       {current ? (
@@ -134,7 +134,7 @@ export default async function Items({ searchParams }: { searchParams: Promise<{ 
       {org.services.stock === 'admin' ? (
         <section className="tile">
           <h2>Vehicles</h2>
-          <p>{sellsVehicles ? 'Vehicles are on: Stock Manager shows vehicle inventory, sales, EMI, service and Sanakhat for this business.' : 'Vehicles are off for this business: it only sees Items and the generic parts of Stock Manager.'}</p>
+          <p>{sellsVehicles ? 'Vehicles are on: Stock Manager shows vehicle inventory, spare parts, sales, EMI, service and Sanakhat for this business.' : 'Vehicles are off for this business: it only sees Items and the generic parts of Stock Manager.'}</p>
           <form action={setSellsVehicles}>
             <input type="hidden" name="on" value={sellsVehicles ? '0' : '1'} />
             <button type="submit" className="secondary">{sellsVehicles ? 'Hide the vehicle features' : 'This business sells vehicles: turn the vehicle features on'}</button>

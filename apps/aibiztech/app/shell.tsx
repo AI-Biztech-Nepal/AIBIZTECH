@@ -53,8 +53,8 @@ export async function Shell({ org, orgs = [], page, bleed = false, children }: {
               if (on && s.key === 'marketing') return <AppMenu key={s.key} service="marketing" icon="megaphone" name={s.name} base={s.base_url} home="/" nodes={MARKETING_MENU} isAdmin={org?.services.marketing === 'admin'} />;
               if (on && s.key === 'stock') {
                 const stockAdmin = org?.services.stock === 'admin';
-                // a business that does not sell vehicles sees Items and its other generic parts only
-                const menu = sellsVehicles ? STOCK_MENU : STOCK_MENU.filter((n) => n.path !== '/inventory');
+                // a business that does not sell vehicles sees Items and the generic parts only (vehicle inventory and spare parts are vehicle features)
+                const menu = sellsVehicles ? STOCK_MENU : STOCK_MENU.filter((n) => n.path !== '/inventory' && n.path !== '/spare-parts');
                 // Sales, EMI, Service and Sanakhat sit beside Stock Manager in the sidebar, not inside it
                 return (
                   <Fragment key={s.key}>
