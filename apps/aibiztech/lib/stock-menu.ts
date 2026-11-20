@@ -3,6 +3,7 @@ import type { MenuNode } from './attendance-menu';
 // Stock Manager's own menu in the portal sidebar: its inventory, flat under the heading (the heading opens the dashboard)
 export const STOCK_MENU: MenuNode[] = [
   { label: 'Product', icon: 'stock', path: '/inventory' },
+  { label: 'Items', icon: 'stock', path: '/items' },
   { label: 'Spare Parts', icon: 'structure', path: '/spare-parts' },
 ];
 
