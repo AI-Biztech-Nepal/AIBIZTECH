@@ -11,9 +11,9 @@ export async function getStock(need?: 'vehicles') {
   if (!org.services.stock) redirect('/?error=' + encodeURIComponent('You do not have access to Stock Manager.'));
   const stock = supabase.schema('stock');
   const { error } = await supabase.schema('stock').rpc('ensure_company', { p_org: org.id });
-  // on unless the business turned it off; if the setting cannot be read, behave as before (on)
+  // off unless the business turned vehicles on
   const { data: company } = await stock.from('companies').select('sells_vehicles').eq('id', org.id).maybeSingle();
-  const sellsVehicles = company?.sells_vehicles !== false;
+  const sellsVehicles = company?.sells_vehicles === true;
   if (need === 'vehicles' && !sellsVehicles) redirect('/stock/items');
   return { supabase, stock, ctx, org, setupError: error?.message ?? null, sellsVehicles };
 }

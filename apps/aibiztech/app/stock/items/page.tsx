@@ -134,10 +134,10 @@ export default async function Items({ searchParams }: { searchParams: Promise<{ 
       {org.services.stock === 'admin' ? (
         <section className="tile">
           <h2>Vehicles</h2>
-          <p>{sellsVehicles ? 'Stock Manager shows vehicle inventory, sales, EMI, service and Sanakhat for this business.' : 'Vehicle features are hidden for this business.'}</p>
+          <p>{sellsVehicles ? 'Vehicles are on: Stock Manager shows vehicle inventory, sales, EMI, service and Sanakhat for this business.' : 'Vehicles are off for this business: it only sees Items and the generic parts of Stock Manager.'}</p>
           <form action={setSellsVehicles}>
             <input type="hidden" name="on" value={sellsVehicles ? '0' : '1'} />
-            <button type="submit" className="secondary">{sellsVehicles ? 'This business does not sell vehicles: hide them' : 'Show vehicle features again'}</button>
+            <button type="submit" className="secondary">{sellsVehicles ? 'Hide the vehicle features' : 'This business sells vehicles: turn the vehicle features on'}</button>
           </form>
         </section>
       ) : null}

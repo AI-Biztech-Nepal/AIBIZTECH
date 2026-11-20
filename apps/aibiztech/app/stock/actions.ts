@@ -411,5 +411,5 @@ export async function setSellsVehicles(form: FormData) {
   const on = text(form, 'on') === '1';
   const { error } = await stock.rpc('set_sells_vehicles', { p_org: org.id, p_value: on });
   if (error) itemsBack(null, 'error', error.message);
-  redirect(on ? '/stock?message=' + encodeURIComponent('Vehicle features are back on.') : '/stock/items?message=' + encodeURIComponent('Vehicle features are hidden for this business.'));
+  redirect(on ? '/stock?message=' + encodeURIComponent('Vehicle features are on.') : '/stock/items?message=' + encodeURIComponent('Vehicle features are off for this business.'));
 }

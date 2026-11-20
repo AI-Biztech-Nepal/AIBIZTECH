@@ -19,8 +19,8 @@ export async function Shell({ org, orgs = [], page, bleed = false, children }: {
     supabase.schema('core').from('services').select('key, name, base_url').eq('is_active', true).order('name'),
     supabase.auth.getClaims(),
   ]);
-  // does this business sell vehicles? On unless it turned that off (also on if the setting cannot be read)
-  const sellsVehicles = !org?.services.stock || (await supabase.schema('stock').from('companies').select('sells_vehicles').eq('id', org.id).maybeSingle()).data?.sells_vehicles !== false;
+  // does this business sell vehicles? Off unless it turned them on
+  const sellsVehicles = !org?.services.stock || (await supabase.schema('stock').from('companies').select('sells_vehicles').eq('id', org.id).maybeSingle()).data?.sells_vehicles === true;
   const email = claims?.claims.email ?? '';
   const status = org?.verification_status;
   const statusLabel = status === 'verified' ? 'Verified' : status === 'rejected' ? 'Rejected' : 'Awaiting verification';
