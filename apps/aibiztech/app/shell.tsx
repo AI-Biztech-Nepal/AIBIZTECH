@@ -19,6 +19,8 @@ export async function Shell({ org, orgs = [], page, bleed = false, children }: {
     supabase.schema('core').from('services').select('key, name, base_url').eq('is_active', true).order('name'),
     supabase.auth.getClaims(),
   ]);
+  // does this business sell vehicles? On unless it turned that off (also on if the setting cannot be read)
+  const sellsVehicles = !org?.services.stock || (await supabase.schema('stock').from('companies').select('sells_vehicles').eq('id', org.id).maybeSingle()).data?.sells_vehicles !== false;
   const email = claims?.claims.email ?? '';
   const status = org?.verification_status;
   const statusLabel = status === 'verified' ? 'Verified' : status === 'rejected' ? 'Rejected' : 'Awaiting verification';
@@ -51,14 +53,16 @@ export async function Shell({ org, orgs = [], page, bleed = false, children }: {
               if (on && s.key === 'marketing') return <AppMenu key={s.key} service="marketing" icon="megaphone" name={s.name} base={s.base_url} home="/" nodes={MARKETING_MENU} isAdmin={org?.services.marketing === 'admin'} />;
               if (on && s.key === 'stock') {
                 const stockAdmin = org?.services.stock === 'admin';
+                // a business that does not sell vehicles sees Items and its other generic parts only
+                const menu = sellsVehicles ? STOCK_MENU : STOCK_MENU.filter((n) => n.path !== '/inventory');
                 // Sales, EMI, Service and Sanakhat sit beside Stock Manager in the sidebar, not inside it
                 return (
                   <Fragment key={s.key}>
-                    <AppMenu service="stock" icon="stock" name={s.name} base={s.base_url} home="/" nodes={STOCK_MENU} isAdmin={stockAdmin} />
-                    {item('/stock/sales', 'task', 'Sales')}
-                    {stockAdmin && item('/stock/emi', 'card', 'EMI')}
-                    <AppMenu service="stock" icon="wrench" name="Service" base={s.base_url} home="/jobs" nodes={STOCK_SERVICE_MENU} isAdmin={stockAdmin} />
-                    {stockAdmin && item('/stock/sanakhat', 'doc', 'Sanakhat')}
+                    <AppMenu service="stock" icon="stock" name={s.name} base={s.base_url} home={sellsVehicles ? '/' : '/items'} nodes={menu} isAdmin={stockAdmin} />
+                    {sellsVehicles && item('/stock/sales', 'task', 'Sales')}
+                    {sellsVehicles && stockAdmin && item('/stock/emi', 'card', 'EMI')}
+                    {sellsVehicles && <AppMenu service="stock" icon="wrench" name="Service" base={s.base_url} home="/jobs" nodes={STOCK_SERVICE_MENU} isAdmin={stockAdmin} />}
+                    {sellsVehicles && stockAdmin && item('/stock/sanakhat', 'doc', 'Sanakhat')}
                   </Fragment>
                 );
               }

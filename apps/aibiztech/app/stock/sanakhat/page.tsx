@@ -10,7 +10,7 @@ const daysSince = (d: string | null) => { const t = Date.parse((d ?? '').slice(0
 // Every vehicle with the progress of its Sanakhat (ownership termination). No prices or purchase details are shown here.
 export default async function Sanakhat({ searchParams }: { searchParams: Promise<{ error?: string; message?: string; q?: string; show?: string }> }) {
   const { error, message, q, show } = await searchParams;
-  const { stock, ctx, org, setupError } = await getStock();
+  const { stock, ctx, org, setupError } = await getStock('vehicles');
   const { data, error: loadError } = await stock.from('vehicles').select('id, brand, model, year, registration_number, color, status, ownership_termination_status, sanakhat_date, created_at').eq('company_id', org.id).order('created_at', { ascending: false }).limit(5000);
   const all = (data ?? []).map((v) => ({ ...v, done: v.ownership_termination_status === 'yes' }));
   const term = String(q ?? '').trim().toLowerCase();

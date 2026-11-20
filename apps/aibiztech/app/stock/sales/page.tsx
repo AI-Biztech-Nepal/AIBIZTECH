@@ -5,7 +5,7 @@ import { deleteSale, receivePayment, recordSale } from '../actions';
 
 export default async function Sales({ searchParams }: { searchParams: Search }) {
   const { error, message } = await searchParams;
-  const { stock, ctx, org, setupError } = await getStock();
+  const { stock, ctx, org, setupError } = await getStock('vehicles');
   const [{ data: sales, error: loadError }, { data: vehicles }, { data: customers }] = await Promise.all([
     stock.from('sales').select('id, vehicle_id, customer_id, sale_price, total_amount, due_amount, due_date, payment_status, sale_date').eq('company_id', org.id).order('sale_date', { ascending: false }).limit(1000),
     stock.from('vehicles').select('id, brand, model, year, registration_number, selling_price, status').eq('company_id', org.id).order('created_at', { ascending: false }).limit(2000),

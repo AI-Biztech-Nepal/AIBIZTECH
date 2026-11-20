@@ -9,7 +9,7 @@ const ORDER = { active: 0, awaiting: 1, expired: 2, void: 3, none: 4 } as const;
 
 export default async function Warranty({ searchParams }: { searchParams: Search }) {
   const { error, message } = await searchParams;
-  const { stock, ctx, org, setupError } = await getStock();
+  const { stock, ctx, org, setupError } = await getStock('vehicles');
   const [{ data: sold, error: loadError }, { data: settings }] = await Promise.all([
     stock.from('vehicles').select('id, brand, model, year, registration_number, status, sold_date, customer_id, warranty_days, warranty_void, warranty_void_reason').eq('company_id', org.id).eq('status', 'sold').limit(5000),
     stock.from('settings').select('warranty_days_default').eq('company_id', org.id).maybeSingle(),

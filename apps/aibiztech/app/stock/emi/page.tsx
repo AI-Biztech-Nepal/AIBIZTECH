@@ -5,7 +5,7 @@ import { addEmiPayment, createEmi } from '../actions';
 
 export default async function Emi({ searchParams }: { searchParams: Search }) {
   const { error, message } = await searchParams;
-  const { stock, ctx, org, setupError } = await getStock();
+  const { stock, ctx, org, setupError } = await getStock('vehicles');
   if (org.services.stock !== 'admin') {
     return <Shell org={org} orgs={ctx.orgs} page="frame"><h1>EMI</h1><p>Only a Stock Manager admin can see EMI plans.</p></Shell>;
   }

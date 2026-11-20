@@ -2,7 +2,7 @@ import { getStock, money } from '@/lib/stock';
 import { Shell } from '../shell';
 
 export default async function StockHome() {
-  const { stock, ctx, org, setupError } = await getStock();
+  const { stock, ctx, org, setupError } = await getStock('vehicles');
   const { data } = await stock.from('vehicles').select('status, purchase_price, selling_price').eq('company_id', org.id).limit(5000);
   const rows = data ?? [];
   const avail = rows.filter((v) => v.status !== 'sold');

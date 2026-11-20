@@ -5,7 +5,7 @@ import { addVehicle, deleteVehicle } from '../actions';
 
 export default async function Inventory({ searchParams }: { searchParams: Search }) {
   const { error, message } = await searchParams;
-  const { stock, ctx, org, setupError } = await getStock();
+  const { stock, ctx, org, setupError } = await getStock('vehicles');
   const { data: vehicles, error: loadError } = await stock.from('vehicles').select('id, brand, model, variant, year, registration_number, color, selling_price, purchase_price, status').eq('company_id', org.id).order('created_at', { ascending: false }).limit(500);
   const problem = error ?? setupError ?? loadError?.message;
   return (

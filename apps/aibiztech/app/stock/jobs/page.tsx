@@ -5,7 +5,7 @@ import { createJob, deleteJob, setJobStatus } from '../actions';
 
 export default async function Jobs({ searchParams }: { searchParams: Search }) {
   const { error, message } = await searchParams;
-  const { stock, ctx, org, setupError } = await getStock();
+  const { stock, ctx, org, setupError } = await getStock('vehicles');
   const [{ data: jobs, error: loadError }, { data: vehicles }, { data: parts }] = await Promise.all([
     stock.from('job_cards').select('id, job_number, job_date, vehicle_brand, vehicle_model, registration_number, customer_name, work_description, mechanic_name, estimated_cost, actual_cost, status, is_warranty, is_external, parts').eq('company_id', org.id).order('created_at', { ascending: false }).limit(500),
     stock.from('vehicles').select('id, brand, model, year, registration_number, status').eq('company_id', org.id).in('status', ['available', 'in_repair', 'sold']).order('created_at', { ascending: false }).limit(2000),

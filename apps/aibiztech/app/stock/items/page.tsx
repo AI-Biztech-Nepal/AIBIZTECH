@@ -2,13 +2,13 @@ import type { ItemField } from '@/lib/items';
 import { getStock, money } from '@/lib/stock';
 import { Notice } from '../../notice';
 import { Shell } from '../../shell';
-import { addItem, addItemCategory, completeItem, deleteItem, deleteItemCategory, setItemQuantity, updateItemCategory } from '../actions';
+import { addItem, addItemCategory, completeItem, deleteItem, deleteItemCategory, setItemQuantity, setSellsVehicles, updateItemCategory } from '../actions';
 
 const PHOTO = 'image/jpeg,image/png,image/webp';
 
 export default async function Items({ searchParams }: { searchParams: Promise<{ error?: string; message?: string; cat?: string }> }) {
   const { error, message, cat } = await searchParams;
-  const { stock, ctx, org, setupError } = await getStock();
+  const { stock, ctx, org, setupError, sellsVehicles } = await getStock();
   const [{ data: categories, error: loadError }, { data: items }] = await Promise.all([
     stock.from('item_categories').select('id, name, website_key, fields').eq('company_id', org.id).order('created_at'),
     stock.from('items').select('id, name, category_id, selling_price, original_price, quantity, image_url').eq('company_id', org.id).order('created_at', { ascending: false }).limit(1000),
@@ -131,6 +131,16 @@ export default async function Items({ searchParams }: { searchParams: Promise<{ 
           </table>
         ) : <p>No items yet.</p>}
       </section>
+      {org.services.stock === 'admin' ? (
+        <section className="tile">
+          <h2>Vehicles</h2>
+          <p>{sellsVehicles ? 'Stock Manager shows vehicle inventory, sales, EMI, service and Sanakhat for this business.' : 'Vehicle features are hidden for this business.'}</p>
+          <form action={setSellsVehicles}>
+            <input type="hidden" name="on" value={sellsVehicles ? '0' : '1'} />
+            <button type="submit" className="secondary">{sellsVehicles ? 'This business does not sell vehicles: hide them' : 'Show vehicle features again'}</button>
+          </form>
+        </section>
+      ) : null}
     </Shell>
   );
 }

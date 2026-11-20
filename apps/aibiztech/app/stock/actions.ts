@@ -404,3 +404,12 @@ export async function deleteItem(form: FormData) {
   const { error } = await stock.from('items').delete().eq('id', text(form, 'id') ?? '').eq('company_id', org.id);
   itemsBack(text(form, 'cat'), error ? 'error' : 'message', error ? error.message : 'Item removed.');
 }
+
+// the per-business switch for the vehicle parts of Stock Manager (admins only; the database checks too)
+export async function setSellsVehicles(form: FormData) {
+  const { stock, org } = await getStock();
+  const on = text(form, 'on') === '1';
+  const { error } = await stock.rpc('set_sells_vehicles', { p_org: org.id, p_value: on });
+  if (error) itemsBack(null, 'error', error.message);
+  redirect(on ? '/stock?message=' + encodeURIComponent('Vehicle features are back on.') : '/stock/items?message=' + encodeURIComponent('Vehicle features are hidden for this business.'));
+}
