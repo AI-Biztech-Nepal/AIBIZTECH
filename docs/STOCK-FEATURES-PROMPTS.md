@@ -76,6 +76,21 @@ Plan first, wait for my OK, new branch, LOCAL test setup only (local Postgres or
 Tests: old token still works; portal token works with the right role; wrong org, wrong service, expired trial, a member without a role are refused; missing X-Org-Id is refused. Show output and list what you could not check.
 ```
 
+## Prompt 2b — New orgs sign in through the portal; Hamro G&G stays as it is (Stock repo)
+
+Decision: no migration of Stock's data or users into the portal project. Hamro G&G keeps Stock's own login and data. Every NEW business signs up in the portal and uses Stock with the portal login. The backend bridge (2a) already accepts both tokens; this adds the frontend and the missing provisioning.
+
+```
+Read docs/PORTAL-CUTOVER.md and backend/portal_bridge.py in Auto-Stock-Manager, and docs/adr/0001-one-parent-domain.md in the portal repo.
+Branch off main (the working tree has uncommitted work on generic-items-4: do not touch or stash it).
+Plan first, wait for my OK. LOCAL setup only; never the live portal or Stock project.
+1. Provisioning: a portal org with Stock live has no core.legacy_tenant_map row, so the bridge refuses it today. Proposed default, no write to the portal DB (the bridge role is read-only): when no map row exists, use company_id = str(org_id) and create the companies row in Stock on first request, once the service is live for the org. Rows in the map (Hamro) keep winning. Check this cannot collide with an old company id, and that two parallel first requests do not create two rows.
+2. Frontend: if there is no Stock token, sign in through the portal (redirect to the portal login, come back with the session; plan the mechanism given the parent-domain ADR, and what works on localhost before the domain exists). Send Authorization: Bearer <portal token> and X-Org-Id on every API call. Org picker for someone in several orgs. The old login page and old token stay for Hamro and installed APKs.
+3. Close Stock's own /auth/signup (and email-verification signup flow) so no new business creates an old-style account. Existing old logins keep working. List anything else a new portal user would hit that assumes a Stock user row (team screens, /platform/*).
+4. Do NOT migrate or touch Hamro's data, users or map row.
+Tests: new org first request creates exactly one company; second request reuses it; org without live Stock service is refused; mapped org (Hamro) still resolves to its old company_id; old token still works; /auth/signup refused. Show output and list what you could not check (no real domain, no real SSO).
+```
+
 ## Prompt 2 — Guard every feature in the backend (Stock repo, branch off portal-supabase)
 
 ```
