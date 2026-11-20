@@ -1,38 +1,55 @@
--- Generic Items for Stock Manager (suitcases, kitchenware, anything that is not a vehicle or a spare part), whose photo, price and category put it on the
--- website, and the public feed a business's own website reads (All In One Abroad -> allinoneabroad.com).
--- public.website_products(owner) keeps the SAME name, argument and first columns as the old Finance function, so the website
--- only needs its data URL and anon key changed; the item's brand, colour, sizes, warranty, features and all photos come in the same rows. Additive and safe to run more than once.
+-- Generic Items for Stock Manager. Every business defines its OWN item categories, and each category defines the extra fields
+-- its items ask for (a luggage shop: Sizes, Colour, Warranty; a pharmacy: Strength, Expiry; anything else). Nothing here knows
+-- what a business sells.
+--
+-- An item with a photo, a selling price and a category is also published on the business's own website through
+-- public.website_products(owner): the business id in, that business's items out. Its first columns match the old Finance
+-- function (id, name, category, price, original_price, stock, image, description) so an existing site keeps working with only
+-- its data URL changed; the rest (details, images) are extra. Additive and safe to run more than once.
 begin;
 
+-- One row per category a business has made. website_key is the short word a website filters on (e.g. luggage); fields is the
+-- list of extra inputs for that category's items: [{"key": "sizes", "label": "Sizes", "long": false}, ...]
+create table if not exists stock.item_categories (
+  id          varchar(36) primary key default gen_random_uuid()::text,
+  company_id  varchar(36) not null,
+  name        varchar(100) not null,
+  website_key varchar(60) not null,
+  fields      jsonb not null default '[]',
+  created_at  timestamptz not null default now(),
+  unique (company_id, website_key)
+);
+
 create table if not exists stock.items (
-  id              varchar(36) primary key default gen_random_uuid()::text,
-  company_id      varchar(36) not null,
-  name            varchar(255) not null,
-  category        varchar(100),
-  selling_price   double precision check (selling_price is null or selling_price >= 0),
-  original_price  double precision check (original_price is null or original_price >= 0),
-  quantity        integer not null default 0 check (quantity >= 0),
-  image_url       text,
-  description     text,
-  brand           varchar(100),
-  color           varchar(100),
-  item_type       varchar(50),     -- e.g. "Full Set", shown on the product page
-  warranty        varchar(100),    -- e.g. "3 Year International Warranty"
-  sizes           varchar(255),    -- e.g. "20-inch / 24-inch / 28-inch"
-  features        text,            -- key features, one per line
-  extra_images    text[] not null default '{}',  -- more photos after the main one (image_url)
-  website_category varchar(20) check (website_category in ('luggage', 'kitchen', 'appliances')),
-  created_at      timestamptz not null default now(),
-  updated_at      timestamptz not null default now()
+  id             varchar(36) primary key default gen_random_uuid()::text,
+  company_id     varchar(36) not null,
+  category_id    varchar(36) not null references stock.item_categories(id) on delete restrict,
+  name           varchar(255) not null,
+  selling_price  double precision check (selling_price is null or selling_price >= 0),
+  original_price double precision check (original_price is null or original_price >= 0),
+  quantity       integer not null default 0 check (quantity >= 0),
+  image_url      text,                              -- the main photo
+  extra_images   text[] not null default '{}',      -- more photos after it
+  description    text,
+  attributes     jsonb not null default '{}',       -- values for the category's fields, keyed by field key
+  created_at     timestamptz not null default now(),
+  updated_at     timestamptz not null default now()
 );
 create index if not exists idx_items_company_id on stock.items (company_id);
+create index if not exists idx_item_categories_company_id on stock.item_categories (company_id);
 
 -- same rule as every other stock table: members of that business with Stock Manager only
-alter table stock.items enable row level security;
-drop policy if exists portal_member_all on stock.items;
-create policy portal_member_all on stock.items for all to authenticated
-  using (core.has_service_access(company_id::uuid, 'stock')) with check (core.has_service_access(company_id::uuid, 'stock'));
-grant select, insert, update, delete on stock.items to authenticated;
+do $$
+declare t text;
+begin
+  foreach t in array array['item_categories', 'items'] loop
+    execute format('alter table stock.%I enable row level security', t);
+    execute format('drop policy if exists portal_member_all on stock.%I', t);
+    execute format($p$create policy portal_member_all on stock.%I for all to authenticated
+      using (core.has_service_access(company_id::uuid, 'stock')) with check (core.has_service_access(company_id::uuid, 'stock'))$p$, t);
+    execute format('grant select, insert, update, delete on stock.%I to authenticated', t);
+  end loop;
+end $$;
 
 -- Item photos: a public bucket, one folder per business (its id), writable only by that business's Stock members
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
@@ -54,23 +71,29 @@ create policy item_photos_delete_member on storage.objects for delete to authent
   and case when (storage.foldername(name))[1] ~ '^[0-9a-f-]{36}$'
            then core.has_service_access(((storage.foldername(name))[1])::uuid, 'stock') else false end);
 
--- What the website may read: only the public fields of one business's items - never a cost, SKU or anything
--- from the books. An item with no photo, no website category or no selling price is left out (the site cannot show it).
--- Runs as the function's owner so the site needs no login, only the business id.
+-- What a website may read: only the public fields of one business's items - never a cost, SKU or anything from the books.
+-- An item with no photo or no selling price is left out (a site cannot show it); it appears by itself once it has both.
+-- details is the item's filled-in fields in the category's order, as [{"label": "Sizes", "value": "20-inch"}, ...];
+-- images is every photo, the main one first. Runs as the function's owner so the site needs no login, only the business id.
 create or replace function public.website_products(p_owner uuid)
 returns table (
   id uuid, name text, category text, price numeric, original_price numeric, stock integer, image text, description text,
-  brand text, color text, item_type text, warranty text, sizes text, features text, images text[]
+  category_name text, details jsonb, images text[]
 )
 language sql stable security definer set search_path = ''
 as $$
-  select i.id::uuid, i.name::text, i.website_category::text, i.selling_price::numeric, i.original_price::numeric,
+  select i.id::uuid, i.name::text, c.website_key::text, i.selling_price::numeric, i.original_price::numeric,
          greatest(i.quantity, 0), i.image_url, left(coalesce(i.description, ''), 255),
-         i.brand::text, i.color::text, i.item_type::text, i.warranty::text, i.sizes::text, i.features,
+         c.name::text,
+         coalesce((
+           select jsonb_agg(jsonb_build_object('label', f.field ->> 'label', 'value', i.attributes ->> (f.field ->> 'key')) order by f.ord)
+           from jsonb_array_elements(c.fields) with ordinality as f(field, ord)
+           where coalesce(i.attributes ->> (f.field ->> 'key'), '') <> ''
+         ), '[]'::jsonb),
          array_prepend(i.image_url, i.extra_images)
   from stock.items i
+  join stock.item_categories c on c.id = i.category_id
   where i.company_id = p_owner::text
-    and i.website_category is not null
     and coalesce(i.image_url, '') <> ''
     and i.selling_price > 0
   order by i.created_at, i.id

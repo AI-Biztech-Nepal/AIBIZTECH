@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { getStock } from '@/lib/stock';
+import { parseFieldLines, readAttributes, slugify, type ItemField } from '@/lib/items';
 import { DEFAULT_WARRANTY_DAYS, emiPlan, warrantyInfo } from '@/lib/stock-calc';
 
 const text = (f: FormData, k: string) => { const v = String(f.get(k) ?? '').trim(); return v || null; };
@@ -290,55 +291,77 @@ export async function setSanakhat(form: FormData) {
   go('/stock/sanakhat', 'message', done ? 'Sanakhat marked done.' : 'Marked as not done.');
 }
 
-// ---- items (anything that is not a vehicle or a part; every item with a photo, price and category appears on the business's website) ----
+// ---- items: anything that is not a vehicle or a spare part. Each business makes its own categories (and the extra fields each
+// category asks for); an item with a photo, a selling price and a category is published on the business's website by itself. ----
 const ITEM_PHOTO_TYPES: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
-const WEBSITE_CATEGORIES = ['luggage', 'kitchen', 'appliances'];
+const itemsBack = (cat: string | null, kind: 'error' | 'message', msg: string): never =>
+  redirect(`/stock/items?${cat ? `cat=${encodeURIComponent(cat)}&` : ''}${kind}=${encodeURIComponent(msg)}`);
+
+export async function addItemCategory(form: FormData) {
+  const { stock, org } = await getStock();
+  const name = text(form, 'name');
+  if (!name) itemsBack(null, 'error', 'Category name is required.');
+  const website_key = slugify(text(form, 'website_key') ?? name!);
+  if (!website_key) itemsBack(null, 'error', 'The website word needs letters or numbers.');
+  const id = randomUUID();
+  const { error } = await stock.from('item_categories').insert({ id, company_id: org.id, name: name!.slice(0, 100), website_key: website_key.slice(0, 60), fields: parseFieldLines(String(form.get('fields') ?? '')) });
+  if (error) itemsBack(null, 'error', error.code === '23505' ? 'You already have a category with that website word.' : error.message);
+  itemsBack(id, 'message', 'Category added.');
+}
+
+export async function deleteItemCategory(form: FormData) {
+  const { stock, org } = await getStock();
+  const { error } = await stock.from('item_categories').delete().eq('id', text(form, 'id') ?? '').eq('company_id', org.id);
+  if (error) itemsBack(text(form, 'id'), 'error', error.code === '23503' ? 'Remove the items in this category first.' : error.message);
+  itemsBack(null, 'message', 'Category removed.');
+}
 
 // up to three photos from the form fields photo, photo2, photo3; returns their public addresses (stops with a message if one is bad)
-async function uploadItemPhotos(supabase: Awaited<ReturnType<typeof getStock>>['supabase'], orgId: string, id: string, form: FormData, taken: number): Promise<string[]> {
+async function uploadItemPhotos(supabase: Awaited<ReturnType<typeof getStock>>['supabase'], orgId: string, id: string, form: FormData, taken: number, cat: string | null): Promise<string[]> {
   const urls: string[] = [];
   for (const field of ['photo', 'photo2', 'photo3']) {
     const photo = form.get(field);
     if (!(photo instanceof File) || photo.size === 0) continue;
     const ext = ITEM_PHOTO_TYPES[photo.type];
-    if (!ext) go('/stock/items', 'error', 'Photos must be JPG, PNG or WebP images.');
-    if (photo.size > 2 * 1024 * 1024) go('/stock/items', 'error', 'Each photo must be under 2 MB.');
+    if (!ext) itemsBack(cat, 'error', 'Photos must be JPG, PNG or WebP images.');
+    if (photo.size > 2 * 1024 * 1024) itemsBack(cat, 'error', 'Each photo must be under 2 MB.');
     const path = `${orgId}/${id}-${taken + urls.length + 1}.${ext}`;
     const { error } = await supabase.storage.from('item-photos').upload(path, photo, { contentType: photo.type });
-    if (error) go('/stock/items', 'error', error.message);
+    if (error) itemsBack(cat, 'error', error.message);
     urls.push(supabase.storage.from('item-photos').getPublicUrl(path).data.publicUrl);
   }
   return urls;
 }
 
-// An item is saved with whatever is known. It appears on the website by itself as soon as it has a photo, a selling price
-// and a website category (the category comes from the tab); until then the list says what is missing.
+// An item is saved with whatever is known. It appears on the website by itself as soon as it has a photo and a selling price;
+// until then the list says what is missing.
 export async function addItem(form: FormData) {
   const { supabase, stock, org } = await getStock();
+  const cat = text(form, 'category_id');
   const name = text(form, 'name');
-  if (!name) go('/stock/items', 'error', 'Item name is required.');
-  const category = text(form, 'website_category');
-  if (!(category && WEBSITE_CATEGORIES.includes(category))) go('/stock/items', 'error', 'Pick Luggage, Kitchen or Home Appliances.');
+  if (!name) itemsBack(cat, 'error', 'Item name is required.');
+  const { data: category } = await stock.from('item_categories').select('id, fields').eq('id', cat ?? '').eq('company_id', org.id).maybeSingle();
+  if (!category) itemsBack(null, 'error', 'Pick a category first.');
   const id = randomUUID();
-  const urls = await uploadItemPhotos(supabase, org.id, id, form, 0);
+  const urls = await uploadItemPhotos(supabase, org.id, id, form, 0, cat);
+  const price = num(form, 'selling_price');
   const { error } = await stock.from('items').insert({
-    id, company_id: org.id, name, selling_price: num(form, 'selling_price'), original_price: num(form, 'original_price'),
+    id, company_id: org.id, category_id: category!.id, name, selling_price: price, original_price: num(form, 'original_price'),
     quantity: Math.max(0, Math.trunc(num(form, 'quantity') ?? 0)), image_url: urls[0] ?? null, extra_images: urls.slice(1), description: text(form, 'description'),
-    brand: text(form, 'brand'), color: text(form, 'color'), item_type: text(form, 'item_type'), warranty: text(form, 'warranty'), sizes: text(form, 'sizes'), features: text(form, 'features'),
-    website_category: category,
+    attributes: readAttributes((category!.fields ?? []) as ItemField[], (n) => String(form.get(n) ?? '')),
   });
-  if (error) go('/stock/items', 'error', error.message);
-  go('/stock/items', 'message', urls[0] && (num(form, 'selling_price') ?? 0) > 0 ? 'Item added and now on the website.' : 'Item added. It will go on the website once it has a photo and a selling price.');
+  if (error) itemsBack(cat, 'error', error.message);
+  itemsBack(cat, 'message', urls[0] && (price ?? 0) > 0 ? 'Item added and now on the website.' : 'Item added. It will go on the website once it has a photo and a selling price.');
 }
 
-// fill in what an item was missing: a selling price and/or more photos (the first photo becomes the main one if there is none yet)
+// fill in what an item was missing: a selling price and/or a photo (the first photo becomes the main one if there is none yet)
 export async function completeItem(form: FormData) {
   const { supabase, stock, org } = await getStock();
   const id = text(form, 'id') ?? '';
-  const { data: it } = await stock.from('items').select('image_url, extra_images').eq('id', id).eq('company_id', org.id).maybeSingle();
-  if (!it) go('/stock/items', 'error', 'Item not found.');
+  const { data: it } = await stock.from('items').select('image_url, extra_images, category_id').eq('id', id).eq('company_id', org.id).maybeSingle();
+  if (!it) itemsBack(null, 'error', 'Item not found.');
   const have = (it!.image_url ? 1 : 0) + (it!.extra_images?.length ?? 0);
-  const urls = await uploadItemPhotos(supabase, org.id, id, form, have + 10); // +10 keeps new file names apart from the old ones
+  const urls = await uploadItemPhotos(supabase, org.id, id, form, have + 10, it!.category_id); // +10 keeps new file names apart from old ones
   const price = num(form, 'selling_price');
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (price !== null && price >= 0) patch.selling_price = price;
@@ -347,20 +370,18 @@ export async function completeItem(form: FormData) {
     else { patch.image_url = urls[0]; patch.extra_images = [...(it!.extra_images ?? []), ...urls.slice(1)]; }
   }
   const { error } = await stock.from('items').update(patch).eq('id', id).eq('company_id', org.id);
-  if (error) go('/stock/items', 'error', error.message);
-  go('/stock/items', 'message', 'Item updated.');
+  if (error) itemsBack(it!.category_id, 'error', error.message);
+  itemsBack(it!.category_id, 'message', 'Item updated.');
 }
 
 export async function setItemQuantity(form: FormData) {
   const { stock, org } = await getStock();
   const { error } = await stock.from('items').update({ quantity: Math.max(0, Math.trunc(num(form, 'quantity') ?? 0)), updated_at: new Date().toISOString() }).eq('id', text(form, 'id') ?? '').eq('company_id', org.id);
-  if (error) go('/stock/items', 'error', error.message);
-  go('/stock/items', 'message', 'Quantity saved.');
+  itemsBack(text(form, 'cat'), error ? 'error' : 'message', error ? error.message : 'Quantity saved.');
 }
 
 export async function deleteItem(form: FormData) {
   const { stock, org } = await getStock();
   const { error } = await stock.from('items').delete().eq('id', text(form, 'id') ?? '').eq('company_id', org.id);
-  if (error) go('/stock/items', 'error', error.message);
-  go('/stock/items', 'message', 'Item removed.');
+  itemsBack(text(form, 'cat'), error ? 'error' : 'message', error ? error.message : 'Item removed.');
 }
