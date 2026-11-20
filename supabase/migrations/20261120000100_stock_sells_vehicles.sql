@@ -1,5 +1,5 @@
 -- Per-business switch: does this business sell vehicles? OFF for new businesses, so Stock Manager starts generic (Items,
--- spare parts, customers, vendors) and a business turns vehicles on only if it needs them. Businesses that exist today and
+-- customers, vendors) and a business turns vehicles on only if it needs them. Businesses that exist today and
 -- already have a Stock record are switched ON once, when this column is first added, so they lose nothing.
 -- When it is off, the vehicle parts (vehicle inventory, spare parts, sales, EMI, service, Sanakhat) are hidden and Stock Manager opens
 -- on Items. Only a Stock Manager admin can change it. Safe to run more than once (the one-time backfill never repeats).
