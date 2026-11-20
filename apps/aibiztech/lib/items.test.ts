@@ -23,3 +23,19 @@ test('readAttributes keeps only the category fields that were filled in', () => 
   const form: Record<string, string> = { f_sizes: ' 20-inch ', f_colour: '', f_other: 'x' };
   assert.deepEqual(readAttributes(fields, (n) => form[n] ?? ''), { sizes: '20-inch' });
 });
+
+import { editFields } from './items.ts';
+
+test('editFields keeps keys on rename, drops removed, appends new', () => {
+  const existing = parseFieldLines('Sizes\nColour\nWarranty');
+  const out = editFields(existing, [
+    { key: 'sizes', label: 'Available sizes', long: false, remove: false },
+    { key: 'colour', label: 'Colour', long: false, remove: true },
+    { key: 'warranty', label: 'Warranty', long: true, remove: false },
+  ], 'Material\nsizes\n');
+  assert.deepEqual(out, [
+    { key: 'sizes', label: 'Available sizes', long: false },
+    { key: 'warranty', label: 'Warranty', long: true },
+    { key: 'material', label: 'Material', long: false },
+  ]);
+});

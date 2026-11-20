@@ -29,3 +29,20 @@ export function readAttributes(fields: ItemField[], get: (name: string) => strin
   }
   return out;
 }
+
+// Editing a category: the fields it already has keep their key (so values already saved on items stay attached, even if the
+// label is renamed); ticked ones are removed (their old values stay stored but are no longer shown); new lines are added after.
+export type FieldEdit = { key: string; label: string; long: boolean; remove: boolean };
+export function editFields(existing: ItemField[], edits: FieldEdit[], newLines: string): ItemField[] {
+  const byKey = new Map(edits.map((e) => [e.key, e]));
+  const out: ItemField[] = [];
+  for (const f of existing) {
+    const e = byKey.get(f.key);
+    if (!e) { out.push(f); continue; }
+    const label = e.label.trim().slice(0, 60);
+    if (!e.remove && label) out.push({ key: f.key, label, long: e.long });
+  }
+  const taken = new Set(existing.map((f) => f.key));
+  for (const f of parseFieldLines(newLines)) if (!taken.has(f.key)) { taken.add(f.key); out.push(f); }
+  return out.slice(0, 20);
+}

@@ -2,7 +2,7 @@ import type { ItemField } from '@/lib/items';
 import { getStock, money } from '@/lib/stock';
 import { Notice } from '../../notice';
 import { Shell } from '../../shell';
-import { addItem, addItemCategory, completeItem, deleteItem, deleteItemCategory, setItemQuantity } from '../actions';
+import { addItem, addItemCategory, completeItem, deleteItem, deleteItemCategory, setItemQuantity, updateItemCategory } from '../actions';
 
 const PHOTO = 'image/jpeg,image/png,image/webp';
 
@@ -64,6 +64,28 @@ export default async function Items({ searchParams }: { searchParams: Promise<{ 
           <label>Extra details its items need (one per line; add &quot;| long&quot; for a bigger box)<textarea name="fields" rows={5} placeholder={'Size\nColour\nMaterial\nCare instructions | long'} /></label>
           <button type="submit">Add category</button>
         </form>
+        {current ? (
+          <details style={{ marginTop: 12 }}>
+            <summary>Edit the category &quot;{current.name}&quot;</summary>
+            <form action={updateItemCategory} key={current.id}>
+              <input type="hidden" name="id" value={current.id} />
+              <div className="grid2">
+                <label>Name<input name="name" defaultValue={current.name} required /></label>
+                <label>Website word (your website filters on this: changing it can hide these items there until the website is updated)<input name="website_key" defaultValue={current.website_key} /></label>
+              </div>
+              {fields.map((f) => (
+                <div key={f.key} style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                  <input type="hidden" name="fkey" value={f.key} />
+                  <label style={{ flex: 1 }}>Detail<input name="flabel" defaultValue={f.label} /></label>
+                  <label><input type="checkbox" name={`flong_${f.key}`} defaultChecked={f.long} /> big box</label>
+                  <label><input type="checkbox" name={`fremove_${f.key}`} /> remove</label>
+                </div>
+              ))}
+              <label>Add more details (one per line, &quot;| long&quot; for a bigger box)<textarea name="fields" rows={3} /></label>
+              <button type="submit">Save category</button>
+            </form>
+          </details>
+        ) : null}
         {current ? (
           <form action={deleteItemCategory} style={{ marginTop: 8 }}>
             <input type="hidden" name="id" value={current.id} />

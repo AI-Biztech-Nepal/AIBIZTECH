@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { getStock } from '@/lib/stock';
-import { parseFieldLines, readAttributes, slugify, type ItemField } from '@/lib/items';
+import { editFields, parseFieldLines, readAttributes, slugify, type ItemField } from '@/lib/items';
 import { DEFAULT_WARRANTY_DAYS, emiPlan, warrantyInfo } from '@/lib/stock-calc';
 
 const text = (f: FormData, k: string) => { const v = String(f.get(k) ?? '').trim(); return v || null; };
@@ -307,6 +307,25 @@ export async function addItemCategory(form: FormData) {
   const { error } = await stock.from('item_categories').insert({ id, company_id: org.id, name: name!.slice(0, 100), website_key: website_key.slice(0, 60), fields: parseFieldLines(String(form.get('fields') ?? '')) });
   if (error) itemsBack(null, 'error', error.code === '23505' ? 'You already have a category with that website word.' : error.message);
   itemsBack(id, 'message', 'Category added.');
+}
+
+export async function updateItemCategory(form: FormData) {
+  const { stock, org } = await getStock();
+  const id = text(form, 'id') ?? '';
+  const name = text(form, 'name');
+  if (!name) itemsBack(id, 'error', 'Category name is required.');
+  const website_key = slugify(text(form, 'website_key') ?? name!);
+  if (!website_key) itemsBack(id, 'error', 'The website word needs letters or numbers.');
+  const { data: cat } = await stock.from('item_categories').select('fields').eq('id', id).eq('company_id', org.id).maybeSingle();
+  if (!cat) itemsBack(null, 'error', 'Category not found.');
+  const edits = form.getAll('fkey').map((k, n) => {
+    const key = String(k);
+    return { key, label: String(form.getAll('flabel')[n] ?? ''), long: form.get('flong_' + key) === 'on', remove: form.get('fremove_' + key) === 'on' };
+  });
+  const fields = editFields((cat!.fields ?? []) as ItemField[], edits, String(form.get('fields') ?? ''));
+  const { error } = await stock.from('item_categories').update({ name: name!.slice(0, 100), website_key: website_key.slice(0, 60), fields }).eq('id', id).eq('company_id', org.id);
+  if (error) itemsBack(id, 'error', error.code === '23505' ? 'You already have a category with that website word.' : error.message);
+  itemsBack(id, 'message', 'Category saved.');
 }
 
 export async function deleteItemCategory(form: FormData) {
