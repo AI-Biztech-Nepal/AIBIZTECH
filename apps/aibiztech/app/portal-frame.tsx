@@ -25,7 +25,7 @@ type Props = {
   bleed?: boolean; // an app's own page fills the whole area
   light?: boolean; // redesigned portal pages; module screens keep their own look
   preview?: boolean; // look only: switching business and signing out do nothing
-  phoneDate?: string; // set by the dashboard: its phone look, with this date in the header and a bar along the bottom
+  phoneDate?: string; // set by the dashboard: a charcoal header on phones, with this date in it
   children: ReactNode;
 };
 
@@ -40,6 +40,7 @@ export function PortalFrame({ org, orgs = [], services, person, email, page, ble
   const statusLabel = status === 'verified' ? 'Verified' : status === 'rejected' ? 'Rejected' : 'Awaiting verification';
   const apps = appsInOrder(services, org);
   const phone = !!org && !!phoneDate;
+  const bar = page !== 'frame'; // portal pages get a bar along the bottom on phones; module screens keep their own look
 
   const item = (href: string, icon: string, label: string, active = false, extra?: ReactNode) => (
     <Link href={href} className={cls(s.item, active && s.active)} aria-current={active ? 'page' : undefined} aria-label={label} title={label}>
@@ -48,7 +49,7 @@ export function PortalFrame({ org, orgs = [], services, person, email, page, ble
   );
 
   return (
-    <div className={cls(s.frame, fontVariables, phone && s.tabbed)}>
+    <div className={cls(s.frame, fontVariables, phone && s.phoneHead, bar && s.tabbed)}>
       <aside className={s.sidebar} data-lenis-prevent>
         <div className={s.brand}>
           {/* The logo file is one tall picture; the mark and the wordmark are shown side by side by cropping it */}
@@ -156,11 +157,12 @@ export function PortalFrame({ org, orgs = [], services, person, email, page, ble
 
       <main className={cls(s.content, bleed && s.bleed, light && s.light)}>{children}</main>
 
-      {phone && (
+      {bar && (
         <nav className={s.tabs} aria-label="Shortcuts">
-          <Link href="/" aria-current="page"><Icon name="dashboard" /><span>Home</span></Link>
-          {TABS.filter(([key]) => org.services[key]).map(([key, label, href]) => <a key={key} href={href}><Icon name={key} /><span>{label}</span></a>)}
-          <MenuButton className={s.more} label="More" />
+          <Link href="/" aria-current={page === 'home' ? 'page' : undefined}><Icon name="dashboard" /><span>Home</span></Link>
+          {TABS.filter(([key]) => org?.services[key]).map(([key, label, href]) => <a key={key} href={href}><Icon name={key} /><span>{label}</span></a>)}
+          {/* the other portal pages are reached through More, so it is the one lit on them */}
+          <MenuButton className={cls(s.more, page !== 'home' && s.here)} label="More" />
         </nav>
       )}
     </div>

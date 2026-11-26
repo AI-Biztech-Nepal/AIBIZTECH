@@ -30,7 +30,7 @@ export function CollapseButton({ className }: { className: string }) {
   );
 }
 
-// With a label it is the "More" button of the phone dashboard's bottom bar
+// With a label it is the "More" button of the phones' bottom bar
 export function MenuButton({ className, label }: { className: string; label?: string }) {
   const [open, setOpen] = useState(false);
   const path = usePathname();
