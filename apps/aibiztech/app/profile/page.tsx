@@ -17,7 +17,7 @@ export default async function Profile({ searchParams }: { searchParams: Search }
     supabase.schema('core').from('services').select('key, name').eq('is_active', true).order('name'),
   ]);
   return (
-    <Shell org={org} orgs={ctx.orgs} page="home">
+    <Shell org={org} orgs={ctx.orgs} page="profile">
       <h1>Settings</h1>
       <Notice error={error} message={message} />
       <section className="tile">

@@ -1,0 +1,155 @@
+/* The signed-in frame: charcoal side panel, white top bar. The content area keeps the old dark look
+   unless a page asks for .light, so module screens are not restyled. */
+.frame {
+  --side: 232px;
+  display: grid;
+  grid-template-columns: var(--side) minmax(0, 1fr);
+  grid-template-rows: 62px 1fr;
+  grid-template-areas: 'side top' 'side main';
+  min-height: 100vh;
+  /* the panel's colour runs the whole height of a long page */
+  background: linear-gradient(to right, #1e2128 var(--side), transparent var(--side));
+}
+
+/* ---- side panel ---- */
+.sidebar {
+  position: sticky;
+  top: 0;
+  grid-area: side;
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  height: 100vh;
+  padding: 12px 10px 24px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: #1e2128;
+  color: #d5d8e0;
+  font: 13px/1.4 var(--font-body), system-ui, sans-serif;
+}
+.brand { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 2px 6px; }
+.logo { display: flex; align-items: center; gap: 8px; }
+.mark, .word { position: relative; display: block; overflow: hidden; }
+.mark { width: 36px; height: 28px; }
+.word { width: 104px; height: 17px; }
+.mark img, .word img { position: absolute; max-width: none; height: auto; }
+.mark img { top: -1px; left: -22px; width: 80px; }
+.word img { top: -45px; left: -5px; width: 114px; }
+.sidebar .collapse { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border-radius: 6px; background: transparent; color: #a3a9b8; }
+.sidebar .collapse:hover { background: rgba(255, 255, 255, 0.08); color: #ffffff; }
+
+.nav { display: flex; flex-direction: column; gap: 16px; }
+.group { display: flex; flex-direction: column; gap: 1px; }
+.groupTitle { padding: 0 10px 4px; color: #a3a9b8; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+.sidebar .item { display: flex; align-items: center; gap: 10px; min-height: 34px; padding: 0 10px; border-radius: 6px; color: #d5d8e0; font-weight: 500; text-decoration: none; }
+.sidebar .item:hover { background: rgba(255, 255, 255, 0.08); color: #ffffff; }
+.sidebar .item svg { flex: none; color: #a3a9b8; }
+.sidebar .item.active { background: #343946; color: #ffffff; font-weight: 600; }
+.sidebar .item.active svg { color: #22d3ee; }
+.label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.menu > summary { cursor: pointer; list-style: none; }
+.menu > summary::-webkit-details-marker { display: none; }
+.menu > summary::after { content: '▸'; margin-left: auto; color: #a3a9b8; font-size: 11px; }
+.menu[open] > summary::after { content: '▾'; }
+.appTitle { display: flex; flex: 1; align-items: center; gap: 10px; min-width: 0; min-height: 34px; color: inherit; text-decoration: none; }
+.sidebar .appTitle { color: inherit; }
+.sub { display: flex; flex-direction: column; margin: 2px 0 6px 18px; padding-left: 8px; border-left: 1px solid #3a3f4c; }
+.sidebar .sub .item { min-height: 30px; color: #b9bfcc; font-weight: 400; }
+.sidebar .sub .item:hover { color: #ffffff; }
+
+/* ---- top bar ---- */
+.top {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  grid-area: top;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 24px;
+  border-bottom: 1px solid #e4e7f0;
+  background: #ffffff;
+  color: #1a1f2e;
+  color-scheme: light;
+  font: 13px/1.4 var(--font-body), system-ui, sans-serif;
+}
+.top .menuButton { display: none; place-items: center; width: 40px; height: 40px; padding: 0; border: 1px solid #d9ddea; border-radius: 6px; background: #ffffff; color: #1a1f2e; }
+.drop { position: relative; min-width: 0; }
+.drop > summary { cursor: pointer; list-style: none; }
+.drop > summary::-webkit-details-marker { display: none; }
+.account { margin-left: auto; flex: none; }
+.business { display: flex; align-items: center; gap: 9px; height: 38px; padding: 0 10px 0 6px; border: 1px solid #d9ddea; border-radius: 6px; font-weight: 600; }
+.business::after { content: '▾'; color: #545d73; font-size: 11px; }
+.square { display: grid; flex: none; place-items: center; width: 26px; height: 26px; border-radius: 5px; background: #1e2128; color: #ffffff; font-size: 11px; }
+.businessName { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.who { display: flex; align-items: center; gap: 9px; height: 40px; }
+.avatar { position: relative; display: grid; flex: none; place-items: center; width: 32px; height: 32px; border-radius: 50%; background: #e9f0fc; color: #163f8c; font-size: 12px; font-weight: 700; }
+.avatar i { position: absolute; right: -2px; bottom: -2px; width: 10px; height: 10px; border: 2px solid #ffffff; border-radius: 50%; background: #8e96aa; }
+.avatar i.verified { background: #1b6e45; }
+.avatar i.pending { background: #c98200; }
+.avatar i.rejected { background: #a52f38; }
+.whoText { display: grid; line-height: 1.25; }
+.whoText strong { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.whoText small { color: #545d73; font-size: 11px; text-transform: capitalize; }
+
+.panel { position: absolute; top: calc(100% + 8px); left: 0; display: flex; flex-direction: column; gap: 2px; width: 272px; max-width: calc(100vw - 24px); max-height: 70vh; padding: 8px; overflow-y: auto; border: 1px solid #d9ddea; border-radius: 8px; background: #ffffff; box-shadow: 0 10px 28px rgba(17, 19, 24, 0.14); }
+.panel.right { right: 0; left: auto; }
+.panel form { display: block; }
+.panel small { padding: 4px 10px; color: #666f85; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+.panel dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; margin: 0; padding: 8px 10px; border-top: 1px solid #e4e7f0; }
+.panel dt { color: #545d73; }
+.panel dd { margin: 0; overflow-wrap: anywhere; }
+.me { display: grid; padding: 4px 10px 8px; }
+.me span { color: #545d73; overflow-wrap: anywhere; }
+.panel .choice { display: flex; justify-content: space-between; gap: 10px; width: 100%; padding: 9px 10px; border-radius: 6px; background: transparent; color: #1a1f2e; font-size: 13px; text-align: left; }
+.panel .choice:hover { background: #f3f5fa; }
+.panel .choice.current { background: #e9f0fc; color: #163f8c; font-weight: 600; }
+.panel .link { padding: 9px 10px; border-radius: 6px; color: #1d5fcc; font-weight: 600; text-decoration: none; }
+.panel .signOut { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; margin-top: 4px; padding: 9px 10px; border-radius: 6px; background: #fbeaeb; color: #8e2129; font-size: 13px; font-weight: 600; }
+
+/* ---- content ---- */
+.content { grid-area: main; min-width: 0; width: 100%; max-width: 1100px; margin: 0; padding: 32px clamp(16px, 4vw, 48px) 64px; }
+.content.bleed { max-width: none; padding: 0; }
+.content.light {
+  --bg: #f8f9fc;
+  --surface: #ffffff;
+  --text: #1a1f2e;
+  --muted: #545d73;
+  --border: #8e96aa;
+  --accent: #1d5fcc;
+  --cyan: #1d5fcc;
+  --error: #a52f38;
+  --ok: #1b6e45;
+  max-width: none;
+  padding: 22px 24px 48px;
+  background: var(--bg);
+  color: var(--text);
+  color-scheme: light;
+  font-family: var(--font-body), system-ui, sans-serif;
+}
+
+/* Collapsed side panel: icons only (wide screens) */
+@media (min-width: 861px) {
+  :global(html[data-sidebar-collapsed]) .frame { --side: 64px; }
+  :global(html[data-sidebar-collapsed]) .brand { flex-direction: column; }
+  :global(html[data-sidebar-collapsed]) :is(.word, .label, .groupTitle, .sub) { display: none; }
+  :global(html[data-sidebar-collapsed]) .sidebar .item { justify-content: center; padding: 0; }
+  :global(html[data-sidebar-collapsed]) .menu > summary::after { content: none; }
+  :global(html[data-sidebar-collapsed]) .appTitle { justify-content: center; }
+  :global(html[data-sidebar-collapsed]) .group { padding-top: 8px; border-top: 1px solid #3a3f4c; }
+}
+
+/* Phones: the side panel opens under the top bar */
+@media (max-width: 860px) {
+  .frame { grid-template-columns: minmax(0, 1fr); grid-template-rows: 62px auto 1fr; grid-template-areas: 'top' 'side' 'main'; background: none; }
+  .sidebar { position: static; display: none; height: auto; }
+  :global(html[data-sidebar-open]) .sidebar { display: flex; }
+  .sidebar .collapse { display: none; }
+  .top { gap: 8px; padding: 0 12px; }
+  .top .menuButton { display: grid; }
+  .businessName { max-width: 34vw; }
+  .whoText { display: none; }
+  .content.light { padding: 16px 14px 40px; }
+}

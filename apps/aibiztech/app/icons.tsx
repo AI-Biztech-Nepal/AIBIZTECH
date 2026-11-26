@@ -33,6 +33,8 @@ const paths: Record<string, ReactNode> = {
   spark: <><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z" /><path d="M19 16l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7z" /></>,
   plus: <><circle cx="12" cy="12" r="9" /><path d="M12 8v8M8 12h8" /></>,
   app: <><rect x="3" y="3" width="18" height="18" rx="4" /><path d="M8 12h8M12 8v8" /></>,
+  panel: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /></>,
+  menu: <path d="M4 7h16M4 12h16M4 17h16" />,
 };
 
 export function Icon({ name, size = 20 }: { name: string; size?: number }) {

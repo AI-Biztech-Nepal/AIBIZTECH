@@ -1,144 +1,210 @@
+import 'lenis/dist/lenis.css';
+import Link from 'next/link';
 import type { ReactNode } from 'react';
+import { ReactLenis } from 'lenis/react';
 import { npr, type computeDashboard } from '@/lib/books';
+import { MonthChart } from './dashboard-chart';
+import { ServiceLogo } from './icons';
+import s from './dashboard.module.css';
 
 type D = ReturnType<typeof computeDashboard>;
-const PALETTE = ['#0b79ee', '#22d3ee', '#f59e0b', '#a78bfa', '#34d399', '#f472b6', '#94a3b8'];
-const pct = (n: number, total: number) => (total > 0 ? `${((n / total) * 100).toFixed(1)}%` : '0%');
+type Messages = { error?: string; message?: string };
 
-function Panel({ title, sub, right, children }: { title: string; sub?: string; right?: ReactNode; children: ReactNode }) {
+const pct = (n: number, total: number) => (total > 0 ? `${((n / total) * 100).toFixed(1)}%` : '0%');
+const sum = (list: number[]) => list.reduce((a, v) => a + v, 0);
+const count = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+function Notices({ error, message }: Messages) {
+  if (error) return <p role="alert" className={s.alert}>{error}</p>;
+  return message ? <p role="status" className={s.banner}>{message}</p> : null;
+}
+
+function Panel({ title, sub, right, className, children }: { title: string; sub?: string; right?: ReactNode; className?: string; children: ReactNode }) {
   return (
-    <section className="tile dash-panel">
-      <div className="panel-head"><div><h2>{title}</h2>{sub && <p className="muted">{sub}</p>}</div>{right}</div>
+    <section className={className ? `${s.panel} ${className}` : s.panel}>
+      <div className={s.panelHead}>
+        <div><h2>{title}</h2>{sub && <p className={s.sub}>{sub}</p>}</div>
+        {right}
+      </div>
       {children}
     </section>
   );
 }
 
-function Money({ label, value, tone }: { label: string; value: number; tone: 'in' | 'out' | 'plain' }) {
-  return <div className={`money ${tone}`}><span>{label}</span><strong>{npr(value)}</strong></div>;
+// Names with a bar each; `of` adds each row's share
+function Bars({ rows, of }: { rows: { name: string; value: number }[]; of?: number }) {
+  const max = Math.max(...rows.map((r) => Math.abs(r.value)), 1);
+  return (
+    <ul className={`${s.list} ${s.rows}`}>
+      {rows.map((r) => (
+        <li key={r.name}>
+          <span title={r.name}>{r.name}</span>
+          <span className={s.track}><i className={r.value < 0 ? s.below : undefined} style={{ width: `${(Math.abs(r.value) / max) * 100}%` }} /></span>
+          <b>{npr(r.value)}{of !== undefined && <em>{pct(r.value, of)}</em>}</b>
+        </li>
+      ))}
+    </ul>
+  );
 }
 
-// Two lines over twelve months; the first is filled
-function Trend({ labels, a, b, nameA, nameB }: { labels: string[]; a: number[]; b: number[]; nameA: string; nameB: string }) {
-  const W = 600, H = 210, L = 44, R = 12, T = 12, B = 26;
-  const max = Math.max(...a, ...b, 1);
-  const x = (i: number) => L + (i * (W - L - R)) / (labels.length - 1);
-  const y = (v: number) => T + (1 - v / max) * (H - T - B);
-  const line = (s: number[]) => s.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
-  const area = `${line(a)} L${x(a.length - 1)},${H - B} L${x(0)},${H - B} Z`;
-  const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => f * max);
-  const short = (n: number) => (n >= 1e7 ? `${(n / 1e7).toFixed(1)}Cr` : n >= 1e5 ? `${(n / 1e5).toFixed(1)}L` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(Math.round(n)));
+type Props = Messages & {
+  orgName: string;
+  today: string;
+  access: Record<string, string>; // app key -> this person's role in it
+  isAdmin: boolean;
+  verification: { status: string; note: string | null };
+  d: D | null; // the Finance figures, when there are any
+};
+
+export function DashboardView({ orgName, today, access, isAdmin, verification, d, error, message }: Props) {
+  const money = access.finance && access.finance !== 'viewer';
+  const actions = [
+    access.attendance && ['Add employee', '/app/attendance/employees'],
+    money && ['Money received', '/app/finance/quick-payment?type=in'],
+    money && ['Money paid', '/app/finance/quick-payment?type=out'],
+    access.stock && ['Add vehicle', '/stock/inventory'],
+    access.stock && ['Record sale', '/stock/sales'],
+  ].filter(Boolean) as string[][];
+
   return (
-    <div>
-      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`${nameA} and ${nameB}, last 12 months`} className="chart">
-        <defs><linearGradient id="fillA" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#0b79ee" stopOpacity="0.45" /><stop offset="1" stopColor="#0b79ee" stopOpacity="0" /></linearGradient></defs>
-        {ticks.map((t) => <g key={t}><line x1={L} x2={W - R} y1={y(t)} y2={y(t)} stroke="#243665" strokeDasharray="3 4" /><text x={L - 6} y={y(t) + 4} textAnchor="end" fontSize="10" fill="#8fa3c7">{short(t)}</text></g>)}
-        <path d={area} fill="url(#fillA)" />
-        <path d={line(b)} fill="none" stroke="#f59e0b" strokeWidth="2.2" strokeLinejoin="round" />
-        <path d={line(a)} fill="none" stroke="#22d3ee" strokeWidth="2.6" strokeLinejoin="round" />
-        {labels.map((l, i) => <text key={i} x={x(i)} y={H - 8} textAnchor="middle" fontSize="10" fill="#8fa3c7">{l}</text>)}
-      </svg>
-      <p className="legend"><i style={{ background: '#22d3ee' }} />{nameA} <i style={{ background: '#f59e0b' }} />{nameB}</p>
+    <div className={s.page}>
+      <ReactLenis root options={{ anchors: true }} />
+      <div className={s.head}>
+        <div>
+          <h1>Dashboard</h1>
+          <p className={s.sub}>{today} · {orgName}</p>
+        </div>
+        {!!actions.length && <div className={s.actions}>{actions.map(([label, href]) => <a key={label} href={href}>{label}</a>)}</div>}
+      </div>
+
+      <Notices error={error} message={message} />
+      {verification.status === 'pending' && <p role="status" className={s.banner}>Your organization is awaiting verification. Apps unlock once it is verified.</p>}
+      {verification.status === 'rejected' && <p role="alert" className={s.alert}>Verification was rejected{verification.note ? `: ${verification.note}` : '.'} Contact support.</p>}
+
+      {d ? <Money d={d} /> : (
+        <section className={s.panel}>
+          <h2>No money figures to show</h2>
+          <p className={s.sub}>
+            {access.finance ? 'Finance could not be reached just now. Reload the page to try again.' : 'Sales, cash and balances appear here when you have access to Finance.'}
+            {!access.finance && isAdmin && <> <Link href="/apps">Add apps</Link></>}
+          </p>
+        </section>
+      )}
     </div>
   );
 }
 
-function Donut({ rows }: { rows: [string, number][] }) {
-  const total = rows.reduce((a, r) => a + r[1], 0);
-  const top = rows.slice(0, 6);
-  const rest = rows.slice(6).reduce((a, r) => a + r[1], 0);
-  const parts: [string, number][] = rest > 0 ? [...top, ['Other', rest]] : top;
-  const R = 42, C = 2 * Math.PI * R;
-  let off = 0;
-  return (
-    <div className="donut-wrap">
-      <svg viewBox="0 0 120 120" className="donut" role="img" aria-label="Expenses by category">
-        <circle cx="60" cy="60" r={R} fill="none" stroke="#243665" strokeWidth="16" />
-        {total > 0 && parts.map(([name, v], i) => {
-          const len = (v / total) * C;
-          const el = <circle key={name} cx="60" cy="60" r={R} fill="none" stroke={PALETTE[i % PALETTE.length]} strokeWidth="16" strokeDasharray={`${len} ${C - len}`} strokeDashoffset={-off} transform="rotate(-90 60 60)" />;
-          off += len;
-          return el;
-        })}
-        <text x="60" y="64" textAnchor="middle" fontSize="13" fontWeight="700" fill="#e8f0ff">{total > 0 ? npr(total).replace('NPR ', '') : '—'}</text>
-      </svg>
-      <ul className="legend-list">
-        {parts.map(([name, v], i) => <li key={name}><i style={{ background: PALETTE[i % PALETTE.length] }} /><span>{name}</span><b>{pct(v, total)}</b></li>)}
-        {!parts.length && <li className="muted">No expenses yet</li>}
-      </ul>
-    </div>
-  );
-}
-
-export function MoneyDashboard({ d }: { d: D }) {
-  const ageTotal = d.ageBuckets.reduce((a, v) => a + v, 0);
-  const bankMax = Math.max(...d.bankRows.map((r) => Math.abs(r.value)), 1);
-  const topTotal = d.topCustomers.reduce((a, r) => a + r[1], 0);
+function Money({ d }: { d: D }) {
+  const last = d.months.length - 1;
+  const month = d.months[last];
   const net = d.receivable - d.payable;
-  return (
-    <div className="dash">
-      <div className="dash-grid">
-        <Panel title="Sales and purchases" sub="What you sold and what you bought · last 12 months">
-          <div className="money-row"><Money label="Sales" value={d.totals.sales} tone="in" /><Money label="Purchases" value={d.totals.purchases} tone="out" /></div>
-          <Trend labels={d.months} a={d.sales} b={d.purchases} nameA="Sales" nameB="Purchases" />
-        </Panel>
+  const ageTotal = sum(d.ageBuckets);
+  const ages = ['0 to 30 days', '31 to 60 days', 'Over 60 days'].map((label, i) => ({ label, value: d.ageBuckets[i], tone: [s.age0, s.age1, s.age2][i] }));
+  const topTotal = sum(d.topCustomers.map((r) => r[1]));
+  // Six categories at most; the rest are one row
+  const rest = sum(d.expenseRows.slice(6).map((r) => r[1]));
+  const expenses = d.expenseRows.slice(0, 6).concat(rest > 0 ? [['All other', rest]] : []).map(([name, value]) => ({ name, value }));
 
-        <Panel title="Recent activity" sub="Latest sales, purchases and payments">
-          {!d.recent.length ? <p className="muted">Nothing recorded yet. Add entries in Finance.</p> : (
-            <ul className="activity">
-              {d.recent.map((r, i) => (
-                <li key={i}><span className="who"><strong>{r.who}</strong><small>{r.what} · {r.date}</small></span><b className={r.sign > 0 ? 'in' : 'out'}>{r.sign > 0 ? '+' : '−'}{npr(r.amount)}</b></li>
+  const metrics = [
+    [`Sales in ${month}`, d.sales[last], `12 months: ${npr(d.totals.sales)}`],
+    [`Expenses in ${month}`, d.expensesM[last], `12 months: ${npr(d.totals.expenses)}`],
+    ['Cash and banks', d.cashAndBank, count(d.counts.accounts, 'bank account')],
+    ['To receive', d.receivable, count(d.counts.customers, 'customer')],
+    ['To pay', d.payable, 'You owe today'],
+  ] as const;
+
+  const tasks = [
+    d.ageBuckets[2] > 0 && { title: `${npr(d.ageBuckets[2])} overdue`, detail: 'Owed to you for more than 60 days', href: '/app/finance/to-receive', action: 'Open report', bad: true },
+    ...d.bankRows.filter((r) => r.value < 0).map((r) => ({ title: `${r.name} is below zero`, detail: npr(r.value), href: '/app/finance/bank-accounts', action: 'Check', bad: true })),
+    d.ageBuckets[1] > 0 && { title: `${npr(d.ageBuckets[1])} waiting`, detail: 'Owed to you for 31 to 60 days', href: '/app/finance/to-receive', action: 'Follow up', bad: false },
+    d.payable > 0 && { title: `${npr(d.payable)} to pay`, detail: 'Money you owe today', href: '/app/finance/to-give', action: 'Open report', bad: false },
+  ].filter(Boolean) as { title: string; detail: string; href: string; action: string; bad: boolean }[];
+
+  return (
+    <>
+      <ul className={s.metrics}>
+        {metrics.map(([label, value, note]) => <li key={label}><span>{label}</span><strong>{npr(value)}</strong><small>{note}</small></li>)}
+      </ul>
+
+      <div className={s.split}>
+        <Panel className={s.wide} title="Sales and purchases" sub={`Last 12 months · Sales ${npr(d.totals.sales)} · Purchases ${npr(d.totals.purchases)}`}>
+          <MonthChart kind="bars" months={d.months} a={{ name: 'Sales', values: d.sales }} b={{ name: 'Purchases', values: d.purchases }} />
+        </Panel>
+        <Panel className={s.narrow} title="Needs your attention">
+          {!tasks.length ? <p className={s.empty}>Nothing needs your attention.</p> : (
+            <ul className={`${s.list} ${s.tasks}`}>
+              {tasks.map((t) => (
+                <li key={t.title}>
+                  <span className={t.bad ? `${s.dot} ${s.bad}` : s.dot} aria-hidden="true" />
+                  <div><strong>{t.title}</strong><small>{t.detail}</small></div>
+                  <a href={t.href}>{t.action}</a>
+                </li>
               ))}
             </ul>
           )}
         </Panel>
       </div>
 
-      <h2 className="section">Money</h2>
-      <div className="dash-grid">
-        <Panel title="In cash and banks" sub="Where your money is today" right={<strong className="big in">{npr(d.cashAndBank)}</strong>}>
-          {!d.bankRows.length ? <p className="muted">No cash or bank balance yet.</p> : d.bankRows.map((r) => (
-            <div key={r.name} className="bar-row"><span>{r.name}</span><div className="bar"><i style={{ width: `${(Math.abs(r.value) / bankMax) * 100}%`, background: r.value < 0 ? '#ef4444' : '#14b8a6' }} /></div><b>{npr(r.value)}</b></div>
-          ))}
-        </Panel>
-
-        <Panel title="Receivable ageing" sub="How long what you are owed has been waiting">
-          <div className="age">
-            {(['0–30 days', '31–60 days', '60+ days'] as const).map((label, i) => (
-              <div key={label} className="age-box" style={{ background: ['#0f766e', '#d97706', '#dc2626'][i], flexGrow: Math.max(d.ageBuckets[i], ageTotal * 0.12) || 1 }}>
-                <small>{pct(d.ageBuckets[i], ageTotal)}</small><strong>{npr(d.ageBuckets[i])}</strong><span>{label}</span>
-              </div>
+      <Panel title="Recent activity" sub={`Bills and expenses recorded: ${d.counts.entries}`}>
+        {!d.recent.length ? <p className={s.empty}>Nothing recorded yet. Add entries in Finance.</p> : (
+          <ul className={`${s.list} ${s.activity}`}>
+            {d.recent.map((r, i) => (
+              <li key={i}>
+                <div><strong>{r.who}</strong><small>{r.what} · {r.date}</small></div>
+                <b className={r.sign > 0 ? s.in : s.out}>{r.sign > 0 ? '+' : '−'}{npr(r.amount)}</b>
+              </li>
             ))}
-          </div>
+          </ul>
+        )}
+      </Panel>
+
+      <div className={s.pair}>
+        <Panel title="Cash and bank accounts" sub="Where your money is today" right={<span className={s.total}>{npr(d.cashAndBank)}</span>}>
+          {!d.bankRows.length ? <p className={s.empty}>No cash or bank balance yet.</p> : <Bars rows={d.bankRows} />}
         </Panel>
 
-        <Panel title="Receivable and payable" sub="What is owed to you and by you">
-          <div className="money-row"><Money label="To receive" value={d.receivable} tone="in" /><Money label="To pay" value={d.payable} tone="out" /></div>
-          <p className="muted">Net (receivable − payable) <b className={net >= 0 ? 'in' : 'out'}>{npr(net)}</b></p>
-          <Trend labels={d.months} a={d.receivableTrend} b={d.payableTrend} nameA="To receive" nameB="To pay" />
-        </Panel>
-
-        <Panel title="Received and paid" sub="What came in and what went out · last 12 months">
-          <div className="money-row"><Money label="Received" value={d.totals.received} tone="in" /><Money label="Paid" value={d.totals.paid} tone="out" /></div>
-          <p className="muted">Net movement <b className={d.totals.received - d.totals.paid >= 0 ? 'in' : 'out'}>{npr(d.totals.received - d.totals.paid)}</b></p>
-          <Trend labels={d.months} a={d.received} b={d.paid} nameA="Received" nameB="Paid" />
-        </Panel>
-      </div>
-
-      <h2 className="section">Expenses and customers</h2>
-      <div className="dash-grid">
-        <Panel title="Expense diagram" sub="Expenses by category · last 12 months"><Donut rows={d.expenseRows} /></Panel>
-        <Panel title="Top customers" sub="Sales · last 12 months">
-          {!d.topCustomers.length ? <p className="muted">No sales yet.</p> : (
+        <Panel title="Receivable ageing" sub="How long what you are owed has been waiting" right={<span className={s.total}>{npr(ageTotal)}</span>}>
+          {!ageTotal ? <p className={s.empty}>Nobody owes you money.</p> : (
             <>
-              {d.topCustomers.slice(0, 8).map(([name, v]) => (
-                <div key={name} className="bar-row"><span>{name}</span><div className="bar"><i style={{ width: `${(v / d.topCustomers[0][1]) * 100}%`, background: '#0b79ee' }} /></div><b>{npr(v)}</b><em>{pct(v, topTotal)}</em></div>
-              ))}
-              <div className="bar-row total"><span>All customers</span><span /><b>{npr(topTotal)}</b><em>100%</em></div>
+              <div className={s.age} aria-hidden="true">{ages.map((a) => a.value > 0 && <i key={a.label} className={a.tone} style={{ flex: a.value }} />)}</div>
+              <ul className={`${s.list} ${s.ages}`}>
+                {ages.map((a) => <li key={a.label}><i className={`${s.key} ${a.tone}`} aria-hidden="true" /><span>{a.label} · {pct(a.value, ageTotal)}</span><b>{npr(a.value)}</b></li>)}
+              </ul>
             </>
           )}
         </Panel>
+
+        <Panel title="Receivable and payable" sub={`To receive less to pay: ${npr(net)}`}>
+          <MonthChart kind="lines" months={d.months} a={{ name: 'To receive', values: d.receivableTrend }} b={{ name: 'To pay', values: d.payableTrend }} />
+        </Panel>
+
+        <Panel title="Received and paid" sub={`Last 12 months · In ${npr(d.totals.received)} · Out ${npr(d.totals.paid)} · Net ${npr(d.totals.received - d.totals.paid)}`}>
+          <MonthChart kind="bars" months={d.months} a={{ name: 'Received', values: d.received }} b={{ name: 'Paid', values: d.paid }} />
+        </Panel>
+
+        <Panel title="Expenses by category" sub="Last 12 months" right={<span className={s.total}>{npr(d.totals.expenses)}</span>}>
+          {!expenses.length ? <p className={s.empty}>No expenses yet.</p> : <Bars rows={expenses} of={sum(expenses.map((e) => e.value))} />}
+        </Panel>
+
+        <Panel title="Top customers" sub="Sales in the last 12 months" right={<span className={s.total}>{npr(topTotal)}</span>}>
+          {!d.topCustomers.length ? <p className={s.empty}>No sales yet.</p> : <Bars rows={d.topCustomers.slice(0, 8).map(([name, value]) => ({ name, value }))} of={topTotal} />}
+        </Panel>
       </div>
+    </>
+  );
+}
+
+// A new account: every app is shown, and unlocks once a business is set up
+export function SetupDashboard({ name, apps, error, message }: Messages & { name: string | null; apps: { key: string; name: string }[] }) {
+  return (
+    <div className={s.page}>
+      <ReactLenis root options={{ anchors: true }} />
+      <div className={s.head}><h1>Hello{name ? `, ${name}` : ''}</h1></div>
+      <Notices error={error} message={message} />
+      <p role="status" className={s.banner}>Finish setting up your business to unlock these apps. <Link href="/onboarding">Set up your business</Link></p>
+      <ul className={s.apps}>
+        {apps.map((app) => <li key={app.key}><Link href="/onboarding"><ServiceLogo svc={app} />{app.name}</Link></li>)}
+      </ul>
     </div>
   );
 }
