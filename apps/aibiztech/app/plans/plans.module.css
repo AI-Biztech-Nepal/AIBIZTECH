@@ -1,0 +1,63 @@
+/* Plans page. Sits inside dashboard.module.css's .page, with the light colours of the frame. */
+.status { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 28px; padding: 14px 18px; border: 1px solid #e4e7f0; border-radius: 10px; background: var(--surface); }
+.status strong { display: block; font-size: 14px; }
+.status span { color: var(--muted); }
+.ended { border-color: #e6c583; background: #fcf0d9; }
+.ended strong, .ended span { color: #5c3900; }
+.bar { display: flex; flex: 1 1 220px; gap: 3px; height: 8px; }
+.bar i { flex: 1; border-radius: 2px; background: #d5def2; }
+.bar .used { background: var(--accent); }
+
+.cycle { display: flex; align-self: flex-end; gap: 3px; padding: 3px; border-radius: 8px; background: #e9ecf5; }
+.cycle button { height: 32px; padding: 0 16px; border-radius: 6px; background: transparent; color: var(--text); font-size: 13px; font-weight: 600; }
+.cycle button[aria-pressed='true'] { background: var(--surface); }
+
+/* One sheet: features down the side, plans across. It scrolls sideways on small screens. */
+/* position: relative keeps the visually hidden cell text inside the scrolling box */
+.sheet { position: relative; overflow-x: auto; border: 1px solid #d9ddea; border-radius: 10px; background: var(--surface); }
+.compare { width: 100%; min-width: 860px; border-collapse: separate; border-spacing: 0; table-layout: fixed; text-align: left; }
+.compare th, .compare td { padding: 10px 16px; border-top: 1px solid #edeff6; border-left: 1px solid #edeff6; font-weight: 400; text-align: left; vertical-align: top; }
+.compare tr > :first-child { position: sticky; left: 0; z-index: 1; width: 200px; border-left: 0; background: var(--surface); }
+.compare thead th { height: 1px; padding: 14px 16px 18px; border-top: 3px solid transparent; }
+.compare thead td { border-top: 3px solid transparent; font-size: 14px; font-weight: 700; vertical-align: bottom; }
+.compare .best { background: #f3f7fe; }
+.compare thead th.best { border-top-color: var(--accent); }
+.compare tbody td.best { font-weight: 600; }
+.plan { display: flex; flex-direction: column; gap: 8px; height: 100%; }
+.name { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 6px; font: 700 16px/1.35 var(--font-display), var(--font-body), sans-serif; }
+.name em { color: var(--accent); font: 700 11px/1.4 var(--font-body), sans-serif; font-style: normal; }
+.about { min-height: 40px; color: var(--muted); }
+.amount { display: block; font: 700 19px/1.35 var(--font-display), var(--font-body), sans-serif; }
+.plan small { display: block; color: var(--muted); font-size: 12px; }
+.compare .group th { position: static; padding: 9px 16px; background: #f3f5fa; color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.group span { position: sticky; left: 16px; }
+.yes { color: var(--ok); }
+.no { color: var(--muted); }
+.hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+.button { display: inline-flex; align-items: center; justify-content: center; min-height: 38px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font-size: 13px; font-weight: 600; text-align: center; text-decoration: none; cursor: pointer; }
+.plan .button { width: 100%; margin-top: auto; }
+.button.primary { border-color: var(--accent); background: var(--accent); color: #ffffff; }
+.button:disabled { border-color: #d9ddea; background: #eef0f6; color: var(--muted); opacity: 1; cursor: default; }
+
+.dialog { width: min(440px, calc(100vw - 32px)); padding: 0; border: 0; border-radius: 10px; background: var(--surface); color: var(--text); box-shadow: 0 20px 50px rgba(17, 19, 24, 0.28); }
+.dialog::backdrop { background: rgba(17, 19, 24, 0.5); }
+.dialog form { display: flex; flex-direction: column; gap: 12px; padding: 18px 20px; }
+.dialog h2 { margin: 0; font-size: 16px; }
+.dialog dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 20px; margin: 0; padding: 10px 0; border-block: 1px solid #edeff6; }
+.dialog dd { margin: 0; font-weight: 600; text-align: right; }
+.note { color: var(--muted); }
+.buttons { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
+
+.apps li { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-top: 1px solid #edeff6; }
+.apps b { font-weight: 600; text-align: right; }
+.good { color: #145536; }
+.warn { color: #855000; }
+.bad { color: #8e2129; }
+.terms { display: flex; flex-direction: column; gap: 6px; margin: 0; padding-left: 18px; }
+
+@media (max-width: 520px) {
+  .compare { min-width: 760px; }
+  .compare tr > :first-child { width: 128px; }
+  .compare th, .compare td { padding: 9px 10px; }
+}
