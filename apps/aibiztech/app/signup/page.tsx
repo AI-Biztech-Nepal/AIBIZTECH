@@ -1,28 +1,67 @@
-import { AuthLogo } from '../auth-logo';
+import 'lenis/dist/lenis.css';
+import type { Metadata } from 'next';
+import { Inter, Plus_Jakarta_Sans } from 'next/font/google';
 import Link from 'next/link';
-import { signUp } from '../actions';
-import { Notice, type Search } from '../notice';
-import { PasswordInput } from '../password-input';
-import { Icon } from '../icons';
+import { ReactLenis } from 'lenis/react';
+import { safeNext } from '@/lib/safe-next';
+import { TRIAL_DAYS, trialDates } from '@/lib/signup';
+import type { Search } from '../notice';
+import { SignupForm } from './form';
+import s from './signup.module.css';
+
+export const metadata: Metadata = { title: 'Create your account · AIBIZTECH' };
+
+const body = Inter({ subsets: ['latin'], variable: '--font-body' });
+const display = Plus_Jakarta_Sans({ subsets: ['latin'], weight: ['700', '800'], variable: '--font-display' });
+
+const PROMISES = ['No payment required to start', 'Attendance, Finance and Stock included', 'Upgrade whenever you are ready'];
 
 export default async function SignUp({ searchParams }: { searchParams: Search }) {
-  const { error, next } = await searchParams;
+  const { next } = await searchParams;
+  const invited = safeNext(next).startsWith('/invite/');
+  const trial = trialDates();
+
   return (
-    <main className="card auth">
-      <AuthLogo />
-      <h1>Create Your Account</h1>
-      <Notice error={error} />
-      <form action={signUp}>
-        <input type="hidden" name="next" value={next ?? ''} />
-        <label><span>Your Name <b className="req">*</b></span><span className="ico"><Icon name="user" /><input name="full_name" autoComplete="name" placeholder="Your name" required /></span></label>
-        <label><span>Address <b className="req">*</b></span><span className="ico"><Icon name="address" /><input name="address" autoComplete="street-address" placeholder="Your address" required /></span></label>
-        <label><span>Phone Number <b className="req">*</b></span><span className="ico"><Icon name="phone" /><input name="phone" type="tel" autoComplete="tel" placeholder="98XXXXXXXX" required /></span></label>
-        <label><span>Email <b className="req">*</b></span><span className="ico"><Icon name="email" /><input name="email" type="email" autoComplete="email" placeholder="you@example.com" required /></span></label>
-        <label><span>Password <b className="req">*</b></span><span className="ico"><Icon name="lock" /><PasswordInput name="password" autoComplete="new-password" minLength={8} placeholder="••••••••" /></span><small>At least 8 characters, with letters and numbers.</small></label>
-        <label><span>Confirm Password <b className="req">*</b></span><span className="ico"><Icon name="lockcheck" /><PasswordInput name="confirm_password" autoComplete="new-password" minLength={8} placeholder="••••••••" /></span></label>
-        <button className="primary">Create Account</button>
-      </form>
-      <p className="center">Already have an account? <Link href={next ? `/login?next=${encodeURIComponent(next)}` : '/login'}>Sign in</Link></p>
-    </main>
+    <div className={`${s.page} ${body.variable} ${display.variable}`}>
+      <ReactLenis root options={{ anchors: true }} />
+      <header className={s.header}>
+        {/* The logo file is one tall picture; the mark and the wordmark are shown side by side by cropping it */}
+        <span className={s.logo} role="img" aria-label="AIBIZTECH">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <span className={s.mark}><img src="/logo.png" alt="" /></span>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <span className={s.word}><img src="/logo.png" alt="" /></span>
+        </span>
+        <p>Already have an account? <Link href={next ? `/login?next=${encodeURIComponent(next)}` : '/login'}>Sign in</Link></p>
+      </header>
+
+      <main className={s.main}>
+        <div className={s.column}>
+          <div className={s.intro}>
+            <h1>One Platform. Complete Business Control.</h1>
+            <p>{invited ? 'Create your account to join the business that invited you.' : 'Manage your people, finances and inventory from one intelligent workspace.'}</p>
+          </div>
+
+          {!invited && (
+            <section className={s.trial} aria-labelledby="trial-title">
+              <div className={s.trialHead}>
+                <h2 id="trial-title">Start with {TRIAL_DAYS} Days Free</h2>
+                <p>Finish setup today: <strong>{trial.start}</strong> to <strong>{trial.end}</strong></p>
+              </div>
+              <ol className={s.days}>
+                {trial.days.map((day, i) => (
+                  <li key={day}><span>{i === 0 ? 'Today' : `Day ${i + 1}`}</span>{day}</li>
+                ))}
+              </ol>
+              <ul className={s.promises}>
+                {PROMISES.map((text) => <li key={text}>{text}</li>)}
+              </ul>
+            </section>
+          )}
+
+          <SignupForm next={next ?? ''} invited={invited} termsUrl={process.env.NEXT_PUBLIC_TERMS_URL} privacyUrl={process.env.NEXT_PUBLIC_PRIVACY_URL} />
+        </div>
+      </main>
+    </div>
   );
 }

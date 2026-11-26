@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import { getContext } from '@/lib/supabase';
+import { TRIAL_DAYS } from '@/lib/signup';
 import { addApps } from '../actions';
 import { ServiceLogo } from '../icons';
 import { Notice, type Search } from '../notice';
@@ -20,7 +21,7 @@ export default async function Apps({ searchParams }: { searchParams: Search }) {
     <Shell org={org} orgs={ctx.orgs} page="apps">
       <h1>Apps</h1>
       <Notice error={error} message={message} />
-      <p className="muted">Apps for {org.name}. Tick any you want to add. Each starts with a free 15-day trial.</p>
+      <p className="muted">Apps for {org.name}. Tick any you want to add. Each starts with a free {TRIAL_DAYS}-day trial.</p>
 
       {!!mine.length && (
         <section className="tile">

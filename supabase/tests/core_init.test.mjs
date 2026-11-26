@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
 
 // The storage migration needs Supabase's storage schema, which this stub does not have
-const migration = ['20261027000000_core_init', '20261028000000_org_verification', '20261028000200_notifications', '20261028000300_trials', '20261028000400_members', '20261028000500_invitations']
+const migration = ['20261027000000_core_init', '20261028000000_org_verification', '20261028000200_notifications', '20261028000300_trials', '20261028000400_members', '20261028000500_invitations', '20261126000000_trial_7_days']
   .map((f) => readFileSync(new URL(`../migrations/${f}.sql`, import.meta.url), 'utf8')).join('\n');
 
 // shortcut: minimal stand-in for Supabase's auth schema, switch to `supabase test db` once the CLI is in use
@@ -195,6 +195,11 @@ async function withTrial(endsInterval, fn) {
     await db.exec('rollback');
   }
 }
+
+test('a new trial lasts 7 days', async () => {
+  const { rows } = await db.query(`select extract(epoch from trial_ends_at - enabled_at)::int / 86400 days from core.org_services where org_id = $1`, [org]);
+  assert.equal(rows[0].days, 7);
+});
 
 test('an expired trial removes access, a running one keeps it', async () => {
   const q = `select core.has_service_access($1, 'finance') a, (core.my_context() -> 'orgs' -> 0 -> 'services') s`;

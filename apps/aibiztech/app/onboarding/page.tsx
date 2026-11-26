@@ -12,7 +12,8 @@ export default async function Onboarding({ searchParams }: { searchParams: Searc
   const { data } = await (await createClient()).auth.getUser();
   const m = data.user?.user_metadata ?? {};
   const { data: services } = await (await createClient()).schema('core').from('services').select('key, name').eq('is_active', true).order('name');
-  const mine = { name: m.full_name || '', address: m.address ?? '', phone: m.phone ?? '', email: data.user?.email ?? '' };
+  // The business name from sign-up belongs to the first business only
+  const mine = { name: m.full_name || '', address: m.address ?? '', phone: m.phone ?? '', email: data.user?.email ?? '', business: ctx?.orgs.length ? '' : (m.business_name ?? '') };
 
   return (
     <main className="card form">

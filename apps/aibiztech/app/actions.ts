@@ -6,6 +6,7 @@ import { revalidatePath } from 'next/cache';
 import { createClient, getContext } from '@/lib/supabase';
 import { safeNext } from '@/lib/safe-next';
 import { EMAIL, FIELDS, PHONE, validateDetails, validatePhoto, type Details } from '@/lib/org-details';
+import { TRIAL_DAYS, validateSignup, type SignupState, type SignupValues } from '@/lib/signup';
 
 const str = (f: FormData, k: string) => String(f.get(k) ?? '').trim();
 const fail = (path: string, message: string): never => redirect(`${path}?error=${encodeURIComponent(message)}`);
@@ -22,18 +23,23 @@ export async function signIn(form: FormData) {
   redirect(safeNext(str(form, 'next')));
 }
 
-export async function signUp(form: FormData) {
-  const supabase = await createClient();
+// Problems are returned, not redirected to, so the form keeps what the person typed
+export async function signUp(_: SignupState, form: FormData): Promise<SignupState> {
   const next = safeNext(str(form, 'next')); // an invitation link survives sign-up
-  const password = String(form.get('password'));
-  if (password !== String(form.get('confirm_password'))) fail('/signup', 'Passwords do not match.');
-  if (!/[A-Za-z]/.test(password) || !/\d/.test(password)) fail('/signup', 'Password needs letters and numbers.');
+  const v: SignupValues = {
+    full_name: str(form, 'full_name'), business_name: str(form, 'business_name'), email: str(form, 'email'), phone: str(form, 'phone'),
+    password: String(form.get('password') ?? ''), confirm_password: String(form.get('confirm_password') ?? ''),
+  };
+  const problem = Object.values(validateSignup(v, next.startsWith('/invite/')))[0];
+  if (problem) return { error: problem };
+  const supabase = await createClient();
   const { data, error } = await supabase.auth.signUp({
-    email: str(form, 'email'),
-    password,
-    options: { emailRedirectTo: `${await origin()}/auth/callback?next=${encodeURIComponent(next)}`, data: { full_name: str(form, 'full_name'), address: str(form, 'address'), phone: str(form, 'phone') } },
+    email: v.email,
+    password: v.password,
+    // business_name prefills the setup wizard
+    options: { emailRedirectTo: `${await origin()}/auth/callback?next=${encodeURIComponent(next)}`, data: { full_name: v.full_name, business_name: v.business_name, phone: v.phone } },
   });
-  if (error) fail('/signup', error.message);
+  if (error) return { error: error.message };
   // Email confirmation on: no session until the link is clicked
   if (!data.session) redirect('/login?message=' + encodeURIComponent('Check your email to confirm your account.'));
   redirect(next);
@@ -62,7 +68,7 @@ export async function resetPassword(form: FormData) {
   redirect('/');
 }
 
-// Starts the chosen apps (15-day trial) for a business and makes the person admin in each
+// Starts the chosen apps (on a free trial) for a business and makes the person admin in each
 async function enableApps(supabase: Awaited<ReturnType<typeof createClient>>, org_id: string, user_id: string, keys: string[]) {
   const core = supabase.schema('core');
   const { data: valid } = await core.from('services').select('key').eq('is_active', true).in('key', keys);
@@ -89,7 +95,7 @@ export async function addApps(form: FormData) {
   const problem = await enableApps(supabase, org!.id, ctx!.user_id, keys);
   if (problem) fail('/apps', problem);
   revalidatePath('/', 'layout');
-  redirect('/?message=' + encodeURIComponent('Apps added. Your 15-day trial has started.'));
+  redirect('/?message=' + encodeURIComponent(`Apps added. Your ${TRIAL_DAYS}-day trial has started.`));
 }
 
 export async function createOrganization(form: FormData) {
