@@ -16,7 +16,7 @@ const pct = (n: number, total: number) => (total > 0 ? `${((n / total) * 100).to
 const sum = (list: number[]) => list.reduce((a, v) => a + v, 0);
 const count = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
-function Notices({ error, message }: Messages) {
+export function Notices({ error, message }: Messages) {
   if (error) return <p role="alert" className={s.alert}>{error}</p>;
   return message ? <p role="status" className={s.banner}>{message}</p> : null;
 }

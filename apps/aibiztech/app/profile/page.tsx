@@ -1,9 +1,11 @@
-import { Fragment } from 'react';
+import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import { getContext } from '@/lib/supabase';
-import { updateProfile } from '../actions';
-import { Notice, type Search } from '../notice';
+import type { Search } from '../notice';
 import { Shell } from '../shell';
+import { SettingsView } from './settings-view';
+
+export const metadata: Metadata = { title: 'Settings · AIBIZTECH' };
 
 // Your account: who you are in this business and your role in each app, with a form to change your name and phone
 export default async function Profile({ searchParams }: { searchParams: Search }) {
@@ -17,29 +19,8 @@ export default async function Profile({ searchParams }: { searchParams: Search }
     supabase.schema('core').from('services').select('key, name').eq('is_active', true).order('name'),
   ]);
   return (
-    <Shell org={org} orgs={ctx.orgs} page="profile">
-      <h1>Settings</h1>
-      <Notice error={error} message={message} />
-      <section className="tile">
-        <h2>Account</h2>
-        <dl>
-          <dt>Email</dt><dd>{claims?.claims.email ?? '—'}</dd>
-          {org && <><dt>Organization</dt><dd>{org.name}</dd><dt>Your role</dt><dd className="cap">{org.org_role}</dd></>}
-          {org && services?.filter((s) => org.services[s.key]).map((s) => (
-            <Fragment key={s.key}><dt>{s.name} role</dt><dd className="cap">{org.services[s.key]}</dd></Fragment>
-          ))}
-        </dl>
-      </section>
-      <section className="tile">
-        <h2>Edit profile</h2>
-        <form action={updateProfile}>
-          <div className="grid2">
-            <label>Full name<input name="full_name" defaultValue={ctx.full_name ?? ''} maxLength={120} autoComplete="off" required /></label>
-            <label>Phone<input name="phone" type="tel" defaultValue={profile?.phone ?? ''} pattern="\+?[0-9][0-9 \-]{6,19}" title="Digits, optionally starting with +" autoComplete="off" /></label>
-          </div>
-          <button type="submit">Save</button>
-        </form>
-      </section>
+    <Shell org={org} orgs={ctx.orgs} page="profile" light>
+      <SettingsView name={ctx.full_name ?? ''} email={claims?.claims.email ?? ''} phone={profile?.phone ?? ''} org={org} services={services ?? []} error={error} message={message} />
     </Shell>
   );
 }
