@@ -7,6 +7,7 @@ import { createClient, getContext } from '@/lib/supabase';
 import { safeNext } from '@/lib/safe-next';
 import { EMAIL, FIELDS, PHONE, validateDetails, validatePhoto, type Details } from '@/lib/org-details';
 import { TRIAL_DAYS, validateSignup, type SignupState, type SignupValues } from '@/lib/signup';
+import { signInProblem, type SignInState } from '@/lib/signin';
 
 const str = (f: FormData, k: string) => String(f.get(k) ?? '').trim();
 const fail = (path: string, message: string): never => redirect(`${path}?error=${encodeURIComponent(message)}`);
@@ -16,10 +17,14 @@ async function origin() {
   return `${h.get('x-forwarded-proto') ?? 'http'}://${h.get('host')}`;
 }
 
-export async function signIn(form: FormData) {
+// Problems are returned, so the email stays typed and the ?next= address is not lost after a wrong password
+export async function signIn(_: SignInState, form: FormData): Promise<SignInState> {
+  const email = str(form, 'email');
+  const password = String(form.get('password') ?? '');
+  if (!email || !password) return { error: 'Enter your email and password.' };
   const supabase = await createClient();
-  const { error } = await supabase.auth.signInWithPassword({ email: str(form, 'email'), password: String(form.get('password')) });
-  if (error) fail('/login', error.message);
+  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error) return { error: signInProblem(error) };
   redirect(safeNext(str(form, 'next')));
 }
 

@@ -3,7 +3,7 @@
 import { useActionState, useState, type FormEvent, type InputHTMLAttributes } from 'react';
 import { signUp } from '../actions';
 import { longEnough, mixed, validateSignup, type SignupField, type SignupValues } from '@/lib/signup';
-import s from './signup.module.css';
+import s from '../auth.module.css';
 
 const EMPTY: SignupValues = { full_name: '', business_name: '', email: '', phone: '', password: '', confirm_password: '' };
 

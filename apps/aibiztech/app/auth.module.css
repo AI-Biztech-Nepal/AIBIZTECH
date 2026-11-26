@@ -1,4 +1,4 @@
-/* Sign-up only: scoped here so the module screens that share globals.css keep their look.
+/* Sign-up and sign-in only: scoped here so the module screens that share globals.css keep their look.
    Redefining the colour variables turns the global element styles light inside this page. */
 .page {
   --bg: #f8f9fc;
@@ -113,7 +113,20 @@
 .actions p { flex: 1 1 280px; color: var(--muted); font-size: 13px; }
 .form .submit { height: 44px; padding: 0 28px; border-radius: 6px; font-size: 14px; font-weight: 600; }
 
+/* Sign-in: one narrow column */
+.narrow { padding-top: 72px; }
+.narrow .column { max-width: 400px; gap: 20px; }
+.narrow .intro { gap: 6px; }
+.narrow .intro h1 { font-size: 28px; line-height: 1.25; letter-spacing: -0.02em; }
+.page .narrow .intro p { font-size: 14px; }
+.narrow .form { gap: 16px; }
+.narrow .form .submit { width: 100%; justify-self: stretch; }
+.page .formNotice { padding: 10px 12px; border-radius: 6px; background: #e6f3ec; color: #145536; font-weight: 500; }
+.forgot { align-self: flex-end; margin-top: -8px; font-size: 12px; font-weight: 600; }
+.page .legal { color: var(--muted); font-size: 13px; text-align: center; }
+
 @media (max-width: 520px) {
+  .narrow { padding-top: 28px; }
   .header { padding: 12px 16px; }
   .main { padding: 28px 16px 40px; }
   .intro h1 { font-size: 28px; }
