@@ -4,6 +4,8 @@ import { Shell } from './shell';
 import { DashboardView, SetupDashboard } from './dashboard-view';
 import { loadRaw } from './dashboard-data';
 import { computeDashboard } from '@/lib/books';
+import { subscription } from '@/lib/plans';
+import { TrialEndedView } from './trial-ended-view';
 import type { Search } from './notice';
 
 export default async function Launcher({ searchParams }: { searchParams: Search }) {
@@ -21,6 +23,20 @@ export default async function Launcher({ searchParams }: { searchParams: Search 
   }
 
   const org = ctx.orgs.find((o) => o.id === ctx.active_org_id) ?? ctx.orgs[0];
+
+  // No app is open to this person. If the free trial being over is why, say so instead of showing an empty dashboard.
+  if (!Object.keys(org.services).length) {
+    const { data: rows } = await supabase.schema('core').from('org_services').select('status, trial_ends_at, enabled_at').eq('org_id', org.id);
+    const sub = subscription(rows ?? []);
+    if (sub.kind === 'ended') {
+      return (
+        <Shell org={org} orgs={ctx.orgs} page="home" light>
+          <TrialEndedView orgName={org.name} ended={sub.ended} isAdmin={org.org_role !== 'member'} contact={process.env.NEXT_PUBLIC_SALES_CONTACT} />
+        </Shell>
+      );
+    }
+  }
+
   const { data: services } = await supabase.schema('core').from('services').select('key, name').eq('is_active', true);
   const deniedName = services?.find((s) => s.key === denied)?.name;
 

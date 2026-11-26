@@ -83,8 +83,16 @@
 .changes strong { width: 120px; }
 .changes span { flex: 1 1 240px; color: var(--muted); }
 
+/* Trial ended: the same list, with prices */
+.grow { flex: 1 1 320px; }
+.changes .picked { background: #f3f7fe; }
+.cost { min-width: 150px; text-align: right; }
+.cost b, .cost small { display: block; }
+.cost small { color: var(--muted); font-size: 12px; }
+
 @media (max-width: 520px) {
   .cardHead, .facts div, .changes li { padding-inline: 14px; }
+  .cost { text-align: left; }
   .compare { min-width: 760px; }
   .compare tr > :first-child { width: 128px; }
   .compare th, .compare td { padding: 9px 10px; }

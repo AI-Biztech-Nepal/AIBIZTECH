@@ -37,6 +37,7 @@ export function PortalFrame({ org, orgs = [], services, person, email, page, ble
   const isAdmin = !!org && org.org_role !== 'member';
   const status = org?.verification_status;
   const statusLabel = status === 'verified' ? 'Verified' : status === 'rejected' ? 'Rejected' : 'Awaiting verification';
+  const apps = appsInOrder(services, org);
 
   const item = (href: string, icon: string, label: string, active = false, extra?: ReactNode) => (
     <Link href={href} className={cls(s.item, active && s.active)} aria-current={active ? 'page' : undefined} aria-label={label} title={label}>
@@ -66,9 +67,10 @@ export function PortalFrame({ org, orgs = [], services, person, email, page, ble
             {isAdmin && item('/team', 'team', 'Team Members', page === 'team')}
           </div>
 
-          <div className={s.group}>
+          {/* A member with no open app gets no empty heading */}
+          {(isAdmin || apps.length > 0) && <div className={s.group}>
             <div className={s.groupTitle}>Modules</div>
-            {appsInOrder(services, org).map((svc) => {
+            {apps.map((svc) => {
               const on = !!org?.services[svc.key];
               // HRIS and Marketing open their own menu here
               if (on && svc.key === 'attendance') return <AppMenu key={svc.key} service="attendance" icon="attendance" name={svc.name} home="/" nodes={ATTENDANCE_MENU} isAdmin={org?.services.attendance === 'admin'} />;
@@ -95,7 +97,7 @@ export function PortalFrame({ org, orgs = [], services, person, email, page, ble
               );
             })}
             {isAdmin && item('/apps', 'plus', 'Add apps', page === 'apps')}
-          </div>
+          </div>}
 
           <div className={s.group}>
             <div className={s.groupTitle}>Account</div>
