@@ -45,15 +45,18 @@ function sample(now: Date): Raw {
 export default function DashboardPreview() {
   if (process.env.NODE_ENV === 'production') notFound();
   const now = new Date();
+  const date = (options: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat('en-GB', { ...options, timeZone: 'Asia/Kathmandu' }).format(now);
   return (
-    <PortalFrame preview light org={ORG} orgs={[ORG]} services={APPS} person="Sample Owner" email="owner@example.com" page="home">
+    <PortalFrame preview light org={ORG} orgs={[ORG]} services={APPS} person="Sample Owner" email="owner@example.com" page="home" phoneDate={date({ weekday: 'short', day: 'numeric', month: 'short' })}>
       <DashboardView
         orgName={ORG.name}
-        today={new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Kathmandu' }).format(now)}
+        today={date({ weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
         access={ORG.services}
         isAdmin
         verification={{ status: 'verified', note: null }}
         d={computeDashboard(sample(now), now)}
+        stock={{ vehicles: 42, lowParts: 5 }}
+        trialLeft={5}
         message="Preview with made-up figures. Links to other pages need a signed-in account."
       />
     </PortalFrame>

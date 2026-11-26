@@ -4,6 +4,8 @@ import type { ReactNode } from 'react';
 import { ReactLenis } from 'lenis/react';
 import { npr, type computeDashboard } from '@/lib/books';
 import { MonthChart } from './dashboard-chart';
+import type { StockNow } from './dashboard-data';
+import { ShowAll } from './dashboard-show-all';
 import { ServiceLogo } from './icons';
 import s from './dashboard.module.css';
 
@@ -47,6 +49,36 @@ function Bars({ rows, of }: { rows: { name: string; value: number }[]; of?: numb
   );
 }
 
+type Task = { title: string; detail: string; href: string; action: string; bad: boolean; phone?: boolean };
+
+const partsTask = (low: number): Task => ({ title: `${count(low, 'spare part')} low`, detail: 'At or below the alert level', href: '/stock/spare-parts', action: 'Restock', bad: false, phone: true });
+
+// Rows marked `phone` show on phones only, so wider screens still say "nothing" when those are all there is
+function Tasks({ tasks }: { tasks: Task[] }) {
+  const everywhere = tasks.some((t) => !t.phone);
+  return (
+    <>
+      {!everywhere && <p className={tasks.length ? `${s.empty} ${s.wideOnly}` : s.empty}>Nothing needs your attention.</p>}
+      {!!tasks.length && (
+        <ul className={everywhere ? `${s.list} ${s.tasks}` : `${s.list} ${s.tasks} ${s.phoneOnly}`}>
+          {tasks.map((t) => (
+            <li key={t.title} className={t.phone ? s.phoneOnly : undefined}>
+              <span className={t.bad ? `${s.dot} ${s.bad}` : s.dot} aria-hidden="true" />
+              <div><strong>{t.title}</strong><small>{t.detail}</small></div>
+              <a href={t.href}>{t.action}</a>
+            </li>
+          ))}
+        </ul>
+      )}
+    </>
+  );
+}
+
+// Counted on phones only; wider screens keep the money figures
+function VehiclesFigure({ stock }: { stock: StockNow }) {
+  return <li className={s.phoneOnly}><span>Vehicles in stock</span><strong>{stock.vehicles.toLocaleString('en-IN')}</strong></li>;
+}
+
 type Props = Messages & {
   orgName: string;
   today: string;
@@ -54,47 +86,56 @@ type Props = Messages & {
   isAdmin: boolean;
   verification: { status: string; note: string | null };
   d: D | null; // the Finance figures, when there are any
+  stock?: StockNow | null; // shown on phones
+  trialLeft?: number; // days left of a running free trial, for those who can choose a plan
 };
 
-export function DashboardView({ orgName, today, access, isAdmin, verification, d, error, message }: Props) {
+export function DashboardView({ orgName, today, access, isAdmin, verification, d, stock, trialLeft, error, message }: Props) {
   const money = access.finance && access.finance !== 'viewer';
   const actions = [
     access.attendance && ['Add employee', '/app/attendance/employees'],
-    money && ['Money received', '/app/finance/quick-payment?type=in'],
-    money && ['Money paid', '/app/finance/quick-payment?type=out'],
+    money && ['Money received', '/app/finance/quick-payment?type=in', 'in'],
+    money && ['Money paid', '/app/finance/quick-payment?type=out', 'out'],
     access.stock && ['Add vehicle', '/stock/inventory'],
     access.stock && ['Record sale', '/stock/sales'],
   ].filter(Boolean) as string[][];
 
   return (
-    <div className={s.page}>
+    <div className={`${s.page} ${s.home}`}>
       <ReactLenis root options={{ anchors: true }} />
       <div className={s.head}>
-        <div>
+        <div className={s.title}>
           <h1>Dashboard</h1>
           <p className={s.sub}>{today} · {orgName}</p>
         </div>
-        {!!actions.length && <div className={s.actions}>{actions.map(([label, href]) => <a key={label} href={href}>{label}</a>)}</div>}
+        {!!actions.length && <div className={s.actions}>{actions.map(([label, href, pay]) => <a key={label} href={href} data-pay={pay}>{label}</a>)}</div>}
       </div>
 
+      {trialLeft !== undefined && (
+        <Link href="/plans" className={`${s.trial} ${s.phoneOnly}`}><span>Free trial · {count(trialLeft, 'day')} left</span><span>Plans</span></Link>
+      )}
       <Notices error={error} message={message} />
       {verification.status === 'pending' && <p role="status" className={s.banner}>Your organization is awaiting verification. Apps unlock once it is verified.</p>}
       {verification.status === 'rejected' && <p role="alert" className={s.alert}>Verification was rejected{verification.note ? `: ${verification.note}` : '.'} Contact support.</p>}
 
-      {d ? <Money d={d} /> : (
-        <section className={s.panel}>
-          <h2>No money figures to show</h2>
-          <p className={s.sub}>
-            {access.finance ? 'Finance could not be reached just now. Reload the page to try again.' : 'Sales, cash and balances appear here when you have access to Finance.'}
-            {!access.finance && isAdmin && <> <Link href="/apps">Add apps</Link></>}
-          </p>
-        </section>
+      {d ? <Money d={d} stock={stock} /> : (
+        <>
+          {stock && <ul className={`${s.metrics} ${s.phoneOnly}`}><VehiclesFigure stock={stock} /></ul>}
+          {!!stock?.lowParts && <Panel className={s.phoneOnly} title="Needs your attention"><Tasks tasks={[partsTask(stock.lowParts)]} /></Panel>}
+          <section className={s.panel}>
+            <h2>No money figures to show</h2>
+            <p className={s.sub}>
+              {access.finance ? 'Finance could not be reached just now. Reload the page to try again.' : 'Sales, cash and balances appear here when you have access to Finance.'}
+              {!access.finance && isAdmin && <> <Link href="/apps">Add apps</Link></>}
+            </p>
+          </section>
+        </>
       )}
     </div>
   );
 }
 
-function Money({ d }: { d: D }) {
+function Money({ d, stock }: { d: D; stock?: StockNow | null }) {
   const last = d.months.length - 1;
   const month = d.months[last];
   const net = d.receivable - d.payable;
@@ -118,34 +159,28 @@ function Money({ d }: { d: D }) {
     ...d.bankRows.filter((r) => r.value < 0).map((r) => ({ title: `${r.name} is below zero`, detail: npr(r.value), href: '/app/finance/bank-accounts', action: 'Check', bad: true })),
     d.ageBuckets[1] > 0 && { title: `${npr(d.ageBuckets[1])} waiting`, detail: 'Owed to you for 31 to 60 days', href: '/app/finance/to-receive', action: 'Follow up', bad: false },
     d.payable > 0 && { title: `${npr(d.payable)} to pay`, detail: 'Money you owe today', href: '/app/finance/to-give', action: 'Open report', bad: false },
-  ].filter(Boolean) as { title: string; detail: string; href: string; action: string; bad: boolean }[];
+    !!stock?.lowParts && partsTask(stock.lowParts),
+  ].filter(Boolean) as Task[];
 
   return (
     <>
       <ul className={s.metrics}>
         {metrics.map(([label, value, note]) => <li key={label}><span>{label}</span><strong>{npr(value)}</strong><small>{note}</small></li>)}
+        {stock && <VehiclesFigure stock={stock} />}
       </ul>
 
       <div className={s.split}>
-        <Panel className={s.wide} title="Sales and purchases" sub={`Last 12 months · Sales ${npr(d.totals.sales)} · Purchases ${npr(d.totals.purchases)}`}>
+        <Panel className={`${s.wide} ${s.later}`} title="Sales and purchases" sub={`Last 12 months · Sales ${npr(d.totals.sales)} · Purchases ${npr(d.totals.purchases)}`}>
           <MonthChart kind="bars" months={d.months} a={{ name: 'Sales', values: d.sales }} b={{ name: 'Purchases', values: d.purchases }} />
         </Panel>
         <Panel className={s.narrow} title="Needs your attention">
-          {!tasks.length ? <p className={s.empty}>Nothing needs your attention.</p> : (
-            <ul className={`${s.list} ${s.tasks}`}>
-              {tasks.map((t) => (
-                <li key={t.title}>
-                  <span className={t.bad ? `${s.dot} ${s.bad}` : s.dot} aria-hidden="true" />
-                  <div><strong>{t.title}</strong><small>{t.detail}</small></div>
-                  <a href={t.href}>{t.action}</a>
-                </li>
-              ))}
-            </ul>
-          )}
+          <Tasks tasks={tasks} />
         </Panel>
       </div>
 
-      <Panel title="Recent activity" sub={`Bills and expenses recorded: ${d.counts.entries}`}>
+      <ShowAll className={`${s.showAll} ${s.phoneOnly}`} />
+
+      <Panel className={s.later} title="Recent activity" sub={`Bills and expenses recorded: ${d.counts.entries}`}>
         {!d.recent.length ? <p className={s.empty}>Nothing recorded yet. Add entries in Finance.</p> : (
           <ul className={`${s.list} ${s.activity}`}>
             {d.recent.map((r, i) => (
@@ -158,7 +193,7 @@ function Money({ d }: { d: D }) {
         )}
       </Panel>
 
-      <div className={s.pair}>
+      <div className={`${s.pair} ${s.later}`}>
         <Panel title="Cash and bank accounts" sub="Where your money is today" right={<span className={s.total}>{npr(d.cashAndBank)}</span>}>
           {!d.bankRows.length ? <p className={s.empty}>No cash or bank balance yet.</p> : <Bars rows={d.bankRows} />}
         </Panel>

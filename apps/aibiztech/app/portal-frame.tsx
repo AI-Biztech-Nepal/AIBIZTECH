@@ -25,6 +25,7 @@ type Props = {
   bleed?: boolean; // an app's own page fills the whole area
   light?: boolean; // redesigned portal pages; module screens keep their own look
   preview?: boolean; // look only: switching business and signing out do nothing
+  phoneDate?: string; // set by the dashboard: its phone look, with this date in the header and a bar along the bottom
   children: ReactNode;
 };
 
@@ -33,11 +34,12 @@ const initialsOf = (name: string) => name.split(/\s+/).map((w) => w[0]).slice(0,
 
 // The frame around every signed-in page: side panel on the left, business and account menus on top.
 // Apps come from core.services, so a new service (or one turned on for a business) shows up without touching this file.
-export function PortalFrame({ org, orgs = [], services, person, email, page, bleed = false, light = false, preview = false, children }: Props) {
+export function PortalFrame({ org, orgs = [], services, person, email, page, bleed = false, light = false, preview = false, phoneDate, children }: Props) {
   const isAdmin = !!org && org.org_role !== 'member';
   const status = org?.verification_status;
   const statusLabel = status === 'verified' ? 'Verified' : status === 'rejected' ? 'Rejected' : 'Awaiting verification';
   const apps = appsInOrder(services, org);
+  const phone = !!org && !!phoneDate;
 
   const item = (href: string, icon: string, label: string, active = false, extra?: ReactNode) => (
     <Link href={href} className={cls(s.item, active && s.active)} aria-current={active ? 'page' : undefined} aria-label={label} title={label}>
@@ -46,7 +48,7 @@ export function PortalFrame({ org, orgs = [], services, person, email, page, ble
   );
 
   return (
-    <div className={cls(s.frame, fontVariables)}>
+    <div className={cls(s.frame, fontVariables, phone && s.tabbed)}>
       <aside className={s.sidebar} data-lenis-prevent>
         <div className={s.brand}>
           {/* The logo file is one tall picture; the mark and the wordmark are shown side by side by cropping it */}
@@ -110,11 +112,17 @@ export function PortalFrame({ org, orgs = [], services, person, email, page, ble
       </aside>
 
       <div className={s.top}>
+        {phone && (
+          <Link href="/" className={s.phoneMark} aria-label="AIBIZTECH home">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <span className={s.mark}><img src="/logo.png" alt="" /></span>
+          </Link>
+        )}
         <MenuButton className={s.menuButton} />
         <details className={s.drop}>
           <summary className={s.business}>
             <span className={s.square} aria-hidden="true">{initialsOf(org?.name ?? person)}</span>
-            <span className={s.businessName}>{org?.name ?? 'No business yet'}</span>
+            <span className={s.businessName}>{org?.name ?? 'No business yet'}{phone && <small className={s.date}>{phoneDate}</small>}</span>
           </summary>
           <div className={s.panel} data-lenis-prevent>
             {orgs.length > 0 && <small>Switch business</small>}
@@ -147,9 +155,20 @@ export function PortalFrame({ org, orgs = [], services, person, email, page, ble
       </div>
 
       <main className={cls(s.content, bleed && s.bleed, light && s.light)}>{children}</main>
+
+      {phone && (
+        <nav className={s.tabs} aria-label="Shortcuts">
+          <Link href="/" aria-current="page"><Icon name="dashboard" /><span>Home</span></Link>
+          {TABS.filter(([key]) => org.services[key]).map(([key, label, href]) => <a key={key} href={href}><Icon name={key} /><span>{label}</span></a>)}
+          <MenuButton className={s.more} label="More" />
+        </nav>
+      )}
     </div>
   );
 }
+
+// The phone bar's apps: key (also the icon's name), short label, first page
+const TABS = [['attendance', 'HRIS', '/app/attendance'], ['finance', 'Finance', '/app/finance/company-dashboard'], ['stock', 'Stock', '/stock']];
 
 // The apps in the side panel, in this order, with Attendance Nepal shown as HRIS
 const APP_ORDER = ['attendance', 'finance', 'marketing', 'stock'];

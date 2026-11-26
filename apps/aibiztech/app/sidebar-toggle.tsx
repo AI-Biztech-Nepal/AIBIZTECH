@@ -30,14 +30,22 @@ export function CollapseButton({ className }: { className: string }) {
   );
 }
 
-export function MenuButton({ className }: { className: string }) {
+// With a label it is the "More" button of the phone dashboard's bottom bar
+export function MenuButton({ className, label }: { className: string; label?: string }) {
   const [open, setOpen] = useState(false);
   const path = usePathname();
   useEffect(() => { setOpen(false); }, [path]);
   useEffect(() => { root().toggleAttribute('data-sidebar-open', open); }, [open]);
+  // Any link closes it, also the one for the page you are already on
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: Event) => { if ((e.target as Element).closest('a')) setOpen(false); };
+    document.addEventListener('click', close);
+    return () => document.removeEventListener('click', close);
+  }, [open]);
   return (
-    <button type="button" className={className} onClick={() => setOpen(!open)} aria-expanded={open} aria-label="Menu">
-      <Icon name="menu" size={20} />
+    <button type="button" className={className} onClick={() => setOpen(!open)} aria-expanded={open} aria-label={label ? undefined : 'Menu'}>
+      <Icon name={label ? 'more' : 'menu'} size={20} />{label && <span>{label}</span>}
     </button>
   );
 }

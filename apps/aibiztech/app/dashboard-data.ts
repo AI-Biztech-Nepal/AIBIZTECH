@@ -15,6 +15,21 @@ async function rows<T>(supabase: SupabaseClient, table: string, cols: string, or
   return out;
 }
 
+export type StockNow = { vehicles: number; lowParts: number };
+
+// Vehicles not yet sold, and spare parts at or below their alert level; null when Stock cannot be reached
+export async function loadStock(supabase: SupabaseClient, org: string): Promise<StockNow | null> {
+  const stock = supabase.schema('stock');
+  const [vehicles, parts] = await Promise.all([
+    stock.from('vehicles').select('id', { count: 'exact', head: true }).eq('company_id', org).or('status.is.null,status.neq.sold'),
+    // shortcut: looks at the first 1000 parts that have an alert level; count in the database if a business has more
+    stock.from('spare_parts').select('quantity, min_stock_alert').eq('company_id', org).not('min_stock_alert', 'is', null).limit(1000),
+  ]);
+  if (vehicles.error || parts.error) return null;
+  const low = (parts.data as { quantity: number | null; min_stock_alert: number }[]).filter((p) => (p.quantity ?? 0) <= p.min_stock_alert);
+  return { vehicles: vehicles.count ?? 0, lowParts: low.length };
+}
+
 export async function loadRaw(supabase: SupabaseClient, org: string): Promise<Raw | null> {
   try {
     const [txs, cl, vl, accounts, transfers, parties, categories] = await Promise.all([

@@ -35,6 +35,7 @@ const paths: Record<string, ReactNode> = {
   app: <><rect x="3" y="3" width="18" height="18" rx="4" /><path d="M8 12h8M12 8v8" /></>,
   panel: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /></>,
   menu: <path d="M4 7h16M4 12h16M4 17h16" />,
+  more: <><circle cx="5" cy="12" r="1.4" /><circle cx="12" cy="12" r="1.4" /><circle cx="19" cy="12" r="1.4" /></>,
 };
 
 export function Icon({ name, size = 20 }: { name: string; size?: number }) {

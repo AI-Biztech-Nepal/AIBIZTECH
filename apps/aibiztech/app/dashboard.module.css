@@ -104,3 +104,34 @@
   .rows li { grid-template-columns: minmax(0, 1fr) auto; row-gap: 4px; }
   .rows .track { grid-column: 1 / -1; grid-row: 2; }
 }
+
+/* The dashboard on a phone: figures, quick actions and what needs attention; charts and reports on request */
+.trial { display: flex; justify-content: space-between; align-items: center; gap: 12px; min-height: 44px; padding: 0 14px; border-radius: 8px; background: #e9f0fc; color: #163f8c; font-weight: 600; text-decoration: none; }
+.page .showAll { justify-self: stretch; height: 44px; padding: 0 14px; border: 1px solid #c9cedd; border-radius: 8px; background: var(--surface); color: var(--text); font-size: 13px; font-weight: 600; }
+
+@media (min-width: 521px) {
+  .page .phoneOnly { display: none; }
+}
+
+@media (max-width: 520px) {
+  .page .wideOnly { display: none; }
+  .home { gap: 12px; }
+  .home .head, .home .split { display: contents; }
+  /* the header already shows the business and the date */
+  .home .title { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .home > *, .home .split > * { order: 3; }
+  .home .trial, .home .banner, .home .alert { order: 0; }
+  .home .metrics { order: 1; }
+  .home .actions { order: 2; }
+  .home .showAll { order: 4; }
+  .home .later { order: 5; }
+  .home:not(:has(.showAll[aria-expanded='true'])) .later { display: none; }
+  .home .wide, .home .narrow { flex: none; }
+  .home .metrics li { flex-basis: 130px; padding: 11px 12px; }
+  .home .metrics strong { font-size: 17px; }
+  .home .metrics small { display: none; }
+  /* two to a row, money first; an odd one takes the whole row */
+  .home .actions a { flex: 1 1 calc(50% - 4px); justify-content: center; order: 1; height: 46px; padding: 0 8px; border-color: #8e96aa; border-radius: 8px; background: var(--surface); color: var(--text); text-align: center; }
+  .home .actions a[data-pay] { order: 0; }
+  .home .actions a[data-pay='in'] { border-color: var(--accent); background: var(--accent); color: #ffffff; }
+}
