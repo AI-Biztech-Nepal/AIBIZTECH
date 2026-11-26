@@ -1,11 +1,10 @@
 import 'lenis/dist/lenis.css';
 import { ReactLenis } from 'lenis/react';
-import { appStatus, nepalDate, subscription, type Access, type Subscription } from '@/lib/plans';
+import { appStatus, nepalDate, subscription, type Subscription } from '@/lib/plans';
 import page from '../dashboard.module.css';
+import type { AppRow } from './load';
 import { PlanTable } from './plan-table';
 import s from './plans.module.css';
-
-export type AppRow = Access & { service_key: string; name: string };
 
 // Where the business stands now. Days are counted on the server from the trial's own dates.
 function Status({ sub }: { sub: Subscription }) {

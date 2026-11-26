@@ -52,6 +52,9 @@ export type Subscription =
   | { kind: 'ended'; ended: Date }
   | { kind: 'trial'; started: Date; ends: Date; day: number; days: number; left: number };
 
+// Can the business use this app right now?
+export const isOpen = (row: Access, now = new Date()) => row.status === 'active' || (row.status === 'trial' && new Date(row.trial_ends_at) > now);
+
 const DAY = 864e5;
 const daysUntil = (end: Date, now: Date) => Math.ceil((end.getTime() - now.getTime()) / DAY);
 export const nepalDate = (d: Date) => new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kathmandu' }).format(d);

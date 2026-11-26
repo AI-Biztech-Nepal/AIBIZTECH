@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { appStatus, COMPARISON, contactHref, PLANS, priceText, subscription, type Access } from './plans.ts';
+import { appStatus, COMPARISON, contactHref, isOpen, PLANS, priceText, subscription, type Access } from './plans.ts';
 
 const now = new Date('2026-11-26T10:00:00Z');
 const at = (days: number) => new Date(now.getTime() + days * 864e5).toISOString();
@@ -30,6 +30,10 @@ test('each app says where it stands', () => {
   assert.deepEqual(appStatus(trial(6, 1), now), { text: 'Trial, 1 day left', tone: 'warn' });
   assert.deepEqual(appStatus(trial(9, -1), now), { text: 'Trial ended 25 Nov 2026', tone: 'bad' });
   assert.equal(appStatus({ ...trial(1, 1), status: 'suspended' }, now).tone, 'bad');
+});
+
+test('only paid apps and running trials are open', () => {
+  assert.deepEqual([trial(2, 5), trial(9, -1), { ...trial(9, -1), status: 'active' }, { ...trial(1, 5), status: 'suspended' }].map((r) => isOpen(r, now)), [true, false, true, false]);
 });
 
 test('no paid price is shown until one is set', () => {

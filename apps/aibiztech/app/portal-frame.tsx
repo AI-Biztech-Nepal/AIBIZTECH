@@ -12,7 +12,7 @@ import { CollapseButton, MenuButton } from './sidebar-toggle';
 import { fontVariables } from './fonts';
 import s from './frame.module.css';
 
-export type Page = 'home' | 'admin' | 'team' | 'apps' | 'plans' | 'profile' | 'frame';
+export type Page = 'home' | 'admin' | 'team' | 'apps' | 'plans' | 'billing' | 'profile' | 'frame';
 export type Service = { key: string; name: string; base_url: string };
 
 type Props = {
@@ -100,6 +100,7 @@ export function PortalFrame({ org, orgs = [], services, person, email, page, ble
           <div className={s.group}>
             <div className={s.groupTitle}>Account</div>
             {isAdmin && item('/plans', 'spark', 'Subscription & Plans', page === 'plans')}
+            {isAdmin && item('/billing', 'history', 'Billing History', page === 'billing')}
             {item('/profile', 'settings', 'Settings', page === 'profile')}
           </div>
         </nav>
