@@ -3,12 +3,12 @@
 import { useRef, useState, type ChangeEvent, type FormEvent, type InputHTMLAttributes, type KeyboardEvent, type ReactNode } from 'react';
 import { useFormStatus } from 'react-dom';
 import { createOrganization } from '../actions';
-import { ServiceLogo } from '../icons';
 import { FIELDS, MAX_PHOTO_BYTES, PAN, validatePhoto, type Details } from '@/lib/org-details';
 import { TRIAL_DAYS } from '@/lib/signup';
+import { inModuleOrder, MODULES } from './modules';
 import s from './onboarding.module.css';
 
-const STEPS = ['Business details', 'Apps', 'Review'];
+const STEPS = ['Business details', 'Modules', 'Review'];
 const LAST = STEPS.length - 1;
 const blank = Object.fromEntries(FIELDS.map((f) => [f, ''])) as Details;
 
@@ -23,11 +23,12 @@ type Props = {
   another?: boolean; // this person already has a business
   error?: string;
   preview?: boolean; // look only: nothing is sent to the server
+  startAt?: number; // the preview can open on a later step
 };
 
 // Entries live only in this component's state, so leaving the flow (success, error redirect, reload) starts clean
-export function Wizard({ initial, services, another = false, error, preview = false }: Props) {
-  const [step, setStep] = useState(0);
+export function Wizard({ initial, services, another = false, error, preview = false, startAt = 0 }: Props) {
+  const [step, setStep] = useState(startAt);
   // Organization details come from sign-up; the owner is the person who signed up, so they start prefilled
   const { business, ...me } = initial;
   const [v, setV] = useState<Details>({
@@ -41,12 +42,13 @@ export function Wizard({ initial, services, another = false, error, preview = fa
   const [tried, setTried] = useState(false);
   const [photo, setPhoto] = useState({ name: '', problem: '' });
   const [picked, setPicked] = useState<string[]>([]);
-  const [pickError, setPickError] = useState('');
+  const [needPick, setNeedPick] = useState(false); // Continue was pressed with nothing chosen
   const [note, setNote] = useState('');
   const toggle = (k: string) => {
-    setPickError('');
+    setNeedPick(false);
     setPicked((p) => (p.includes(k) ? p.filter((x) => x !== k) : [...p, k]));
   };
+  const choices = inModuleOrder(services);
   const form = useRef<HTMLFormElement>(null);
   const set = (f: keyof Details) => (e: { target: { value: string } }) => setV((p) => ({ ...p, [f]: e.target.value }));
 
@@ -64,10 +66,7 @@ export function Wizard({ initial, services, another = false, error, preview = fa
       const first = Object.entries(problems).find(([, problem]) => problem)?.[0];
       if (first) return (form.current?.elements.namedItem(first) as HTMLInputElement).focus();
     }
-    if (step === 1) {
-      if (!picked.length) return setPickError('Tick at least one app to continue.');
-      setPickError('');
-    }
+    if (step === 1 && !picked.length) return setNeedPick(true);
     setStep(step + 1);
   }
 
@@ -109,7 +108,7 @@ export function Wizard({ initial, services, another = false, error, preview = fa
     another
       ? ['Add another business', 'Each business is its own organization with its own apps, team and PAN.']
       : ['Welcome to your business workspace.', 'Let’s get your business organized. Set up your workspace in just a few steps.'],
-    ['Which apps do you need?', `Tick the ones you want. Each starts with a free ${TRIAL_DAYS}-day trial, and you can add more later.`],
+    ['Choose your modules', `Pick one or more. Each is free for ${TRIAL_DAYS} days, and you can add more later.`],
     ['Check and create', 'Make sure these details are right.'],
   ][step];
 
@@ -157,27 +156,38 @@ export function Wizard({ initial, services, another = false, error, preview = fa
             </div>
           </section>
 
-          <section className={s.card} hidden={step !== 1} aria-labelledby="apps-title">
-            <h2 id="apps-title">Apps</h2>
-            <div className={s.body}>
-              <div className="app-picker">
-                {services.map((svc) => (
-                  <label key={svc.key} className={`pick${picked.includes(svc.key) ? ' on' : ''}`}>
-                    <input type="checkbox" name="apps" value={svc.key} checked={picked.includes(svc.key)} onChange={() => toggle(svc.key)} />
-                    <ServiceLogo svc={svc} />
-                    <span>{svc.name}</span>
-                  </label>
-                ))}
-              </div>
-              {pickError && <p role="alert" className={s.problem}>{pickError}</p>}
-            </div>
+          <section className={s.choose} hidden={step !== 1} aria-label="Modules">
+            <ul className={s.modules}>
+              {choices.map((svc) => {
+                const on = picked.includes(svc.key);
+                const info = MODULES[svc.key];
+                return (
+                  <li key={svc.key}>
+                    <label className={[s.module, on && s.on, !info?.points && s.short].filter(Boolean).join(' ')}>
+                      <span className={s.about}>
+                        <input type="checkbox" name="apps" value={svc.key} checked={on} onChange={() => toggle(svc.key)} aria-labelledby={`${svc.key}-name`} aria-describedby={`${svc.key}-about`} />
+                        <span className={s.words}>
+                          <span id={`${svc.key}-name`} className={s.name}>{svc.name}</span>
+                          <span id={`${svc.key}-about`} className={s.desc}>{info?.about}</span>
+                          <span className={s.state} aria-hidden="true">{on ? 'Selected' : 'Not selected'}</span>
+                        </span>
+                      </span>
+                      {info?.points && <span className={s.points}>{info.points.map((point) => <span key={point}>{point}</span>)}</span>}
+                    </label>
+                  </li>
+                );
+              })}
+            </ul>
+            {needPick
+              ? <p key="need" className={s.problem} role="alert">Select at least one module to continue.</p>
+              : <p key="count" className={s.count} role="status">{picked.length ? `${picked.length} ${picked.length === 1 ? 'module' : 'modules'} selected` : 'Select at least one module to continue.'}</p>}
           </section>
 
           <section className={s.card} hidden={step !== 2} aria-labelledby="review-title">
             <h2 id="review-title">Review</h2>
             <div className={s.body}>
               <dl>
-                {row('Business', v.name)}{row('Business address', v.address)}{row('Apps', services.filter((svc) => picked.includes(svc.key)).map((svc) => svc.name).join(', '))}
+                {row('Business', v.name)}{row('Business address', v.address)}{row('Modules', choices.filter((svc) => picked.includes(svc.key)).map((svc) => svc.name).join(', '))}
                 {row('Owner', v.owner_name)}{row('Owner address', ownerAddress)}{row('Owner phone', v.owner_phone)}{row('Owner email', v.owner_email)}
                 {row('PAN', v.pan_no)}{row('PAN photo', photo.name)}
               </dl>
