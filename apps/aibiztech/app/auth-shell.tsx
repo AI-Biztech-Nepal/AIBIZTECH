@@ -7,8 +7,8 @@ import s from './auth.module.css';
 const body = Inter({ subsets: ['latin'], variable: '--font-body' });
 const display = Plus_Jakarta_Sans({ subsets: ['latin'], weight: ['700', '800'], variable: '--font-display' });
 
-// The charcoal header and ruled page shared by sign-up and sign-in
-export function AuthShell({ aside, narrow = false, children }: { aside: ReactNode; narrow?: boolean; children: ReactNode }) {
+// The charcoal header and light page shared by sign-up, sign-in and setup (setup is wide and unruled)
+export function AuthShell({ aside, narrow = false, wide = false, children }: { aside: ReactNode; narrow?: boolean; wide?: boolean; children: ReactNode }) {
   return (
     <div className={`${s.page} ${body.variable} ${display.variable}`}>
       <ReactLenis root options={{ anchors: true }} />
@@ -23,7 +23,7 @@ export function AuthShell({ aside, narrow = false, children }: { aside: ReactNod
         <p>{aside}</p>
       </header>
 
-      <main className={`${s.main}${narrow ? ` ${s.narrow}` : ''}`}>
+      <main className={[s.main, narrow && s.narrow, wide && s.wide].filter(Boolean).join(' ')}>
         <div className={s.column}>{children}</div>
       </main>
     </div>

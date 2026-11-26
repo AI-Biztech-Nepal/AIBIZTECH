@@ -1,7 +1,12 @@
+import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import { createClient, getContext } from '@/lib/supabase';
-import { Notice, type Search } from '../notice';
+import { TRIAL_DAYS } from '@/lib/signup';
+import { AuthShell } from '../auth-shell';
+import type { Search } from '../notice';
 import { Wizard } from './wizard';
+
+export const metadata: Metadata = { title: 'Set up your workspace · AIBIZTECH' };
 
 export default async function Onboarding({ searchParams }: { searchParams: Search }) {
   const { error } = await searchParams;
@@ -16,11 +21,8 @@ export default async function Onboarding({ searchParams }: { searchParams: Searc
   const mine = { name: m.full_name || '', address: m.address ?? '', phone: m.phone ?? '', email: data.user?.email ?? '', business: ctx?.orgs.length ? '' : (m.business_name ?? '') };
 
   return (
-    <main className="card form">
-      <h1>{ctx?.orgs.length ? 'Add another business' : 'Set up your organization'}</h1>
-      <p>Each business is its own organization with its own apps, team and PAN.</p>
-      <Notice error={error} />
-      <Wizard key={error ?? ''} initial={mine} services={services ?? []} />
-    </main>
+    <AuthShell wide aside={`Your ${TRIAL_DAYS}-day free trial starts when you finish setup`}>
+      <Wizard key={error ?? ''} initial={mine} services={services ?? []} another={!!ctx?.orgs.length} error={error} />
+    </AuthShell>
   );
 }

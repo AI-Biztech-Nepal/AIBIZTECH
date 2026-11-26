@@ -113,6 +113,10 @@
 .actions p { flex: 1 1 280px; color: var(--muted); font-size: 13px; }
 .form .submit { height: 44px; padding: 0 28px; border-radius: 6px; font-size: 14px; font-weight: 600; }
 
+/* Setup: room for the step list, no ruled lines behind the forms */
+.wide { padding-top: 40px; background-image: none; }
+.wide .column { max-width: 1072px; }
+
 /* Sign-in: one narrow column */
 .narrow { padding-top: 72px; }
 .narrow .column { max-width: 400px; gap: 20px; }
