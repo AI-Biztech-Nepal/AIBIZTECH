@@ -89,7 +89,7 @@ export function PortalFrame({ org, orgs = [], services, person, email, page, ble
               if (svc.key === 'finance' && merged) return null;
               if (on && svc.key === 'marketing') return <Fragment key={svc.key}>{item('/app/marketing', 'megaphone', svc.name)}</Fragment>;
               // Finance runs inside AIBIZTECH (served at /finance); other apps are opened through single sign-on
-              if (on && svc.key === 'finance') return <AppMenu key={svc.key} service="finance" icon="finance" name={auto ? 'Old Finance' : svc.name} home="/company-dashboard" nodes={FINANCE_MENU} isAdmin />;
+              if (on && svc.key === 'finance') return <AppMenu key={svc.key} service="finance" icon="finance" name={auto ? 'General Finance' : svc.name} home="/company-dashboard" nodes={FINANCE_MENU} isAdmin />;
               return (
                 <Fragment key={svc.key}>
                   {on ? item(`/app/${svc.key}`, serviceIcon(svc.key, svc.name), svc.name) : item(org ? '/' : '/onboarding', serviceIcon(svc.key, svc.name), svc.name, false, <Icon name="lockmini" size={14} />)}

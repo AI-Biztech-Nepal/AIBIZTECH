@@ -1,6 +1,7 @@
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { getContext } from '@/lib/supabase';
+import { askBusinessType } from '@/lib/ask-business-type';
 import { AppFrame } from '../../../app-frame';
 import { Shell } from '../../../shell';
 
@@ -19,6 +20,8 @@ export default async function AppPage({ params, searchParams }: Props) {
   if (!ctx) redirect('/login');
   const org = ctx.orgs.find((o) => o.id === ctx.active_org_id) ?? ctx.orgs[0];
   if (!org) redirect('/onboarding');
+  if (service !== 'attendance') await askBusinessType(supabase, org);
+
   // The Marketing screens are part of Stock Manager, so they open with the business's Stock Manager access
   const key = service === 'marketing' ? 'stock' : service;
   if (!org.services[key]) redirect('/?error=' + encodeURIComponent('You do not have access to that app.'));

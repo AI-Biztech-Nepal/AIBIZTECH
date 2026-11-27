@@ -4,7 +4,7 @@
 import { ALL_FEATURES_ON } from "./permissions";
 
 const GENERAL = { "stock.vehicles": false, "stock.sanakhat": false, "stock.job_cards": false, "stock.spare_parts": false, "stock.auto_finance": false };
-const KIND_FEATURES = { general: GENERAL, workshop: { ...GENERAL, "stock.job_cards": true, "stock.spare_parts": true } };
+const KIND_FEATURES = { general: GENERAL };
 
 export const rememberKind = (kind) => {
   if (kind === "auto" || KIND_FEATURES[kind]) localStorage.setItem("gng_kind", kind);

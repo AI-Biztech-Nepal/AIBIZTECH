@@ -253,6 +253,19 @@ export async function acceptInvitation(form: FormData) {
   redirect('/');
 }
 
+export async function setBusinessType(form: FormData) {
+  const { supabase, ctx } = await getContext();
+  const id = str(form, 'org_id');
+  const type = str(form, 'business_type');
+  const org = ctx?.orgs.find((o) => o.id === id);
+  if (!org || org.org_role === 'member') fail('/', 'Only owners and admins can set the kind of business.');
+  if (!isBusinessType(type)) fail('/business-type', 'Choose your kind of business.');
+  const { error } = await supabase.schema('core').from('organizations').update({ business_type: type }).eq('id', id);
+  if (error) fail('/business-type', error.message);
+  revalidatePath('/', 'layout');
+  redirect('/');
+}
+
 // Admins edit contact details. PAN and the owner's details are not here: changing the PAN restarts verification.
 export async function updateOrganization(form: FormData) {
   const { supabase, ctx } = await getContext();

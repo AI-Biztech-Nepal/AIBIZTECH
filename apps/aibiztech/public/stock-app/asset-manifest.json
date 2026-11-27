@@ -1,7 +1,7 @@
 {
   "files": {
     "main.css": "/stock-app/static/css/main.9fbb76a2.css",
-    "main.js": "/stock-app/static/js/main.ddda4f5f.js",
+    "main.js": "/stock-app/static/js/main.27d72d69.js",
     "static/js/1413.49c05d87.chunk.js": "/stock-app/static/js/1413.49c05d87.chunk.js",
     "static/js/1280.68d56fdb.chunk.js": "/stock-app/static/js/1280.68d56fdb.chunk.js",
     "static/js/6838.0212bbf2.chunk.js": "/stock-app/static/js/6838.0212bbf2.chunk.js",
@@ -60,6 +60,6 @@
   },
   "entrypoints": [
     "static/css/main.9fbb76a2.css",
-    "static/js/main.ddda4f5f.js"
+    "static/js/main.27d72d69.js"
   ]
 }

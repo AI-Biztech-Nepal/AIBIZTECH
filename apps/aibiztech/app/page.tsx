@@ -3,6 +3,7 @@ import { getContext } from '@/lib/supabase';
 import { Shell } from './shell';
 import { businessKind } from '@/lib/business-kind-load';
 import { hasOldFinance } from '@/lib/old-finance';
+import { askBusinessType } from '@/lib/ask-business-type';
 import { DashboardView, SetupDashboard } from './dashboard-view';
 import { loadRaw, loadStock } from './dashboard-data';
 import { computeDashboard } from '@/lib/books';
@@ -41,6 +42,8 @@ export default async function Launcher({ searchParams }: { searchParams: Search 
       </Shell>
     );
   }
+
+  if (!error && !denied && !message) await askBusinessType(supabase, org);
 
   // A vehicle business (with nothing in the general Finance app) has Stock Manager's dashboard as its dashboard
   if (org.services.stock && !error && !denied && !message && (await businessKind(supabase, org.id)) === 'auto' && !(await hasOldFinance(supabase, org.id))) redirect('/app/stock');

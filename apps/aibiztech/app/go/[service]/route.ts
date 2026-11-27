@@ -24,7 +24,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ serv
   // Stock Manager is served by the portal itself, at /stock-app
   const base = service === 'stock' ? new URL('/stock-app', req.url).toString() : svc.base_url.replace(/\/$/, '');
   // Stock Manager is told what kind of business this is, so it shows the vehicle screens or the general ones
-  const kind = service === 'stock' ? `&kind=${await businessKind(supabase, org.id)}` : '';
+  const kind = service === 'stock' ? `&kind=${(await businessKind(supabase, org.id)) ?? 'general'}` : '';
   const marker = `${embed ? 'embed=1' : 'from=aibiztech'}${kind}`;
   const joiner = to.includes('?') ? '&' : '?';
 
