@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { getContext } from '@/lib/supabase';
 import { signSsoToken } from '@/lib/sso';
+import { STOCK_IS_LIVE_APP, STOCK_LIVE_URL } from '@/lib/stock-live';
 
 // Open app: checks the person may use the service, then hands them to it already signed in
 export async function GET(req: NextRequest, { params }: { params: Promise<{ service: string }> }) {
@@ -20,7 +21,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ serv
   const asked = req.nextUrl.searchParams.get('to') ?? '/';
   const to = asked.startsWith('/') && !asked.startsWith('//') ? asked : '/';
   const embed = req.nextUrl.searchParams.get('embed') === '1';
-  const base = svc.base_url.replace(/\/$/, '');
+  const base = service === 'stock' && STOCK_IS_LIVE_APP ? STOCK_LIVE_URL : svc.base_url.replace(/\/$/, '');
   const marker = embed ? 'embed=1' : 'from=aibiztech';
   const joiner = to.includes('?') ? '&' : '?';
 
