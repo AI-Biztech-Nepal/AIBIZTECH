@@ -17,6 +17,13 @@ const config: NextConfig = {
   // Old addresses of the apps now live under /app
   redirects: async () => [
     ...(ATTENDANCE_URL ? [] : [{ source: '/attendance/:path*', destination: '/app/attendance/:path*', permanent: false }]),
+    // The live Stock Manager (lib/stock-live.ts): every /stock link opens the same page of it inside the portal
+    ...(process.env.STOCK_LIVE_APP === '1'
+      ? [
+          { source: '/stock', destination: '/app/stock', permanent: false },
+          { source: '/stock/:path*', destination: '/app/stock/:path*', permanent: false },
+        ]
+      : []),
   ],
   rewrites: async () => ({
     beforeFiles: ATTENDANCE_URL

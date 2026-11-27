@@ -1,5 +1,6 @@
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
+import { STOCK_IS_LIVE_APP, STOCK_LIVE_URL } from '@/lib/stock-live';
 import { getContext } from '@/lib/supabase';
 import { AppFrame } from '../../../app-frame';
 import { Shell } from '../../../shell';
@@ -23,7 +24,8 @@ export default async function AppPage({ params, searchParams }: Props) {
   if (!org.services[service]) redirect('/?error=' + encodeURIComponent('You do not have access to that app.'));
 
   // Stock Manager is part of the portal now (/stock), not a frame
-  if (service === 'stock' || service === 'marketing') redirect(`/${service}${path.length ? '/' + path.map(encodeURIComponent).join('/') : ''}`);
+  const liveStock = service === 'stock' && STOCK_IS_LIVE_APP;
+  if ((service === 'stock' && !liveStock) || service === 'marketing') redirect(`/${service}${path.length ? '/' + path.map(encodeURIComponent).join('/') : ''}`);
   const { data: svc } = await supabase.schema('core').from('services').select('name, base_url').eq('key', service).eq('is_active', true).maybeSingle();
   if (!svc) redirect('/?error=' + encodeURIComponent('That app is not available.'));
 
@@ -46,6 +48,7 @@ export default async function AppPage({ params, searchParams }: Props) {
     const host = (await headers()).get('host') ?? '';
     let base = svc.base_url.replace(/\/$/, '');
     try { if (new URL(base).host === host) base = LIVE[service] ?? base; } catch { base = LIVE[service] ?? base; }
+    if (liveStock) base = STOCK_LIVE_URL;
     const sso = !!process.env.SSO_SECRET && (process.env.SSO_SERVICES ?? '').split(',').map((s) => s.trim()).includes(service);
     // With single sign-on the portal hands the app a signed pass; otherwise the app's own login shows inside the frame
     src = sso ? `/go/${service}?to=${encodeURIComponent(target + search)}&embed=1` : `${base}${target}${search}${search ? '&' : '?'}embed=1`;
