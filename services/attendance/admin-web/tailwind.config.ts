@@ -10,9 +10,10 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        ink: '#0f172a',
-        sidebar: '#0f172a',
-        'sidebar-active': '#1e293b',
+        // The AIBIZTECH portal's charcoal (apps/aibiztech/app/frame.module.css), so no navy next to its side panel
+        ink: '#1e2128',
+        sidebar: '#1e2128',
+        'sidebar-active': '#343946',
         accent: {
           DEFAULT: themed('accent'),
           light: themed('accent-light'),
