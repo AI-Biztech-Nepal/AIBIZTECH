@@ -129,6 +129,10 @@
   color-scheme: light;
   font-family: var(--font-body), system-ui, sans-serif;
 }
+/* Marketing's pages use the shared module classes, which were drawn for the dark look */
+.content.light :global(.tile) { border-color: #e4e7f0; }
+.content.light :global(.secondary) { border: 1px solid #c9cedd; background: var(--surface); color: var(--text); }
+.content.light :global(.out) { color: var(--error); }
 
 /* Collapsed side panel: icons only (wide screens) */
 @media (min-width: 861px) {

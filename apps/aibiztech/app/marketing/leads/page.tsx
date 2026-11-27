@@ -13,7 +13,7 @@ export default async function Leads({ searchParams }: { searchParams: Promise<{ 
   if (tab !== 'all') q = q.eq('status', tab);
   const { data: leads, error: loadError } = await q;
   return (
-    <Shell org={org} orgs={ctx.orgs} page="frame">
+    <Shell org={org} orgs={ctx.orgs} page="frame" light>
       <h1>Leads</h1>
       <p>Accept a lead to put the person in the CRM, or reject it with a reason. A lead is never deleted.</p>
       <Notice error={error ?? setupError ?? loadError?.message} message={message} />

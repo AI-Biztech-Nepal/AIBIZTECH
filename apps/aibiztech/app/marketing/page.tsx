@@ -12,7 +12,7 @@ export default async function MarketingHome() {
   const by = (s: string) => (people ?? []).filter((p) => (p.lead_status ?? 'new') === s).length;
   const due = (follow ?? []).filter((f) => (f.due_at ?? '').slice(0, 10) <= today).length;
   return (
-    <Shell org={org} orgs={ctx.orgs} page="frame">
+    <Shell org={org} orgs={ctx.orgs} page="frame" light>
       <h1>Marketing</h1>
       {setupError && <p className="error">{setupError}</p>}
       <div className="panels">

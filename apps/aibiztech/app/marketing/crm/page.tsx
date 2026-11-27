@@ -21,7 +21,7 @@ export default async function Crm({ searchParams }: { searchParams: Promise<{ er
   for (const t of touches ?? []) if (t.customer_id && !last.has(t.customer_id)) last.set(t.customer_id, t);
   const today = new Date().toISOString().slice(0, 10);
   return (
-    <Shell org={org} orgs={ctx.orgs} page="frame">
+    <Shell org={org} orgs={ctx.orgs} page="frame" light>
       <h1>CRM</h1>
       <Notice error={error ?? setupError ?? loadError?.message} message={message} />
 
