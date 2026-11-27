@@ -55,8 +55,8 @@ export default async function AppPage({ params, searchParams }: Props) {
   }
 
   return (
-    <Shell org={org} orgs={ctx.orgs} page="frame" bleed compact={key === 'stock'}>
-      <AppFrame key={`${org.id}:${src}`} src={src} title={svc.name} />
+    <Shell org={org} orgs={ctx.orgs} page="frame" bleed>
+      <AppFrame key={`${org.id}:${src}`} src={src} title={svc.name} app={key} />
     </Shell>
   );
 }

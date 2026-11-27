@@ -6,6 +6,7 @@ import { FINANCE_MENU } from '@/lib/finance-menu';
 import { signOut, switchOrg } from './actions';
 import { Icon, serviceIcon } from './icons';
 import { SidebarMemory } from './sidebar-memory';
+import { StockDashboardLink, StockModules, StockSettings } from './stock-nav';
 import { CollapseButton, MenuButton } from './sidebar-toggle';
 import { fontVariables } from './fonts';
 import s from './frame.module.css';
@@ -21,7 +22,7 @@ type Props = {
   email: string;
   page: Page;
   bleed?: boolean; // an app's own page fills the whole area
-  compact?: boolean; // the app inside has its own menu: show this side panel as icons only
+  oldFinance?: boolean; // a business with Stock Manager that also has records in the earlier Finance app
   light?: boolean; // redesigned portal pages; module screens keep their own look
   preview?: boolean; // look only: switching business and signing out do nothing
   phoneDate?: string; // set by the dashboard: a charcoal header on phones, with this date in it
@@ -33,13 +34,17 @@ const initialsOf = (name: string) => name.split(/\s+/).map((w) => w[0]).slice(0,
 
 // The frame around every signed-in page: side panel on the left, business and account menus on top.
 // Apps come from core.services, so a new service (or one turned on for a business) shows up without touching this file.
-export function PortalFrame({ org, orgs = [], services, person, email, page, bleed = false, compact = false, light = false, preview = false, phoneDate, children }: Props) {
+export function PortalFrame({ org, orgs = [], services, person, email, page, bleed = false, oldFinance = false, light = false, preview = false, phoneDate, children }: Props) {
   const isAdmin = !!org && org.org_role !== 'member';
   const status = org?.verification_status;
   const statusLabel = status === 'verified' ? 'Verified' : status === 'rejected' ? 'Rejected' : 'Awaiting verification';
   const apps = appsInOrder(services, org);
   const phone = !!org && !!phoneDate;
   const bar = page !== 'frame'; // portal pages get a bar along the bottom on phones; module screens keep their own look
+  // With Stock Manager, its screens are the business's dashboard, finance and marketing: one menu entry for each
+  const stock = !!org?.services.stock;
+  const merged = stock && !oldFinance;
+  const who = `${org?.id ?? ''}:${email}`;
 
   const item = (href: string, icon: string, label: string, active = false, extra?: ReactNode) => (
     <Link href={href} className={cls(s.item, active && s.active)} aria-current={active ? 'page' : undefined} aria-label={label} title={label}>
@@ -48,7 +53,7 @@ export function PortalFrame({ org, orgs = [], services, person, email, page, ble
   );
 
   return (
-    <div className={cls(s.frame, fontVariables, phone && s.phoneHead, bar && s.tabbed, compact && s.compact)}>
+    <div className={cls(s.frame, fontVariables, phone && s.phoneHead, bar && s.tabbed)}>
       <aside className={s.sidebar} data-lenis-prevent>
         <div className={s.brand}>
           {/* The logo file is one tall picture; the mark and the wordmark are shown side by side by cropping it */}
@@ -64,7 +69,7 @@ export function PortalFrame({ org, orgs = [], services, person, email, page, ble
         <nav className={s.nav} aria-label="Main">
           <div className={s.group}>
             <div className={s.groupTitle}>Workspace</div>
-            {item('/', 'dashboard', 'Dashboard', page === 'home')}
+            {merged ? <StockDashboardLink who={who} /> : item('/', 'dashboard', 'Dashboard', page === 'home')}
             {isAdmin && item('/admin', 'admin', 'My Business', page === 'admin')}
             {isAdmin && item('/team', 'team', 'Team Members', page === 'team')}
           </div>
@@ -76,12 +81,13 @@ export function PortalFrame({ org, orgs = [], services, person, email, page, ble
               const on = !!org?.services[svc.key];
               // HRIS and Marketing open their own menu here
               if (on && svc.key === 'attendance') return <AppMenu key={svc.key} service="attendance" icon="attendance" name={svc.name} home="/" nodes={ATTENDANCE_MENU} isAdmin={org?.services.attendance === 'admin'} />;
-              // Stock Manager (and its Marketing screens) keeps its own menu inside the page, with every screen and the
-              // person's permissions, so the portal shows a single link to each
-              if (on && svc.key === 'stock') return <Fragment key={svc.key}>{item('/app/stock', 'stock', svc.name)}</Fragment>;
+              // Stock Manager's pages sit straight in this panel, Marketing among them
+              if (on && svc.key === 'stock') return <StockModules key={svc.key} who={who} withDashboard={!merged} />;
+              if (svc.key === 'marketing' && stock) return null;
+              if (svc.key === 'finance' && merged) return null;
               if (on && svc.key === 'marketing') return <Fragment key={svc.key}>{item('/app/marketing', 'megaphone', svc.name)}</Fragment>;
               // Finance runs inside AIBIZTECH (served at /finance); other apps are opened through single sign-on
-              if (on && svc.key === 'finance') return <AppMenu key={svc.key} service="finance" icon="finance" name={svc.name} home="/company-dashboard" nodes={FINANCE_MENU} isAdmin />;
+              if (on && svc.key === 'finance') return <AppMenu key={svc.key} service="finance" icon="finance" name={stock ? 'Old Finance' : svc.name} home="/company-dashboard" nodes={FINANCE_MENU} isAdmin />;
               return (
                 <Fragment key={svc.key}>
                   {on ? item(`/app/${svc.key}`, serviceIcon(svc.key, svc.name), svc.name) : item(org ? '/' : '/onboarding', serviceIcon(svc.key, svc.name), svc.name, false, <Icon name="lockmini" size={14} />)}
@@ -95,7 +101,7 @@ export function PortalFrame({ org, orgs = [], services, person, email, page, ble
             <div className={s.groupTitle}>Account</div>
             {isAdmin && item('/plans', 'spark', 'Subscription & Plans', page === 'plans')}
             {isAdmin && item('/billing', 'history', 'Billing History', page === 'billing')}
-            {item('/profile', 'settings', 'Settings', page === 'profile')}
+            {stock ? <StockSettings who={who} onProfile={page === 'profile'} /> : item('/profile', 'settings', 'Settings', page === 'profile')}
           </div>
         </nav>
         <SidebarMemory />

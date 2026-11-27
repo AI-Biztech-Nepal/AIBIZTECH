@@ -7,6 +7,7 @@ import { accessLevel, canAccessPath, marketingTabsFor, itemsMode } from "../util
 import FinanceNavGroup from "./FinanceNavGroup";
 import SidebarProfile from "./SidebarProfile";
 import NavGroup from "./NavGroup";
+import { PORTAL_PANEL, buildPortalMenu, usePortalPanel } from "../utils/portalMenu";
 import { isSanakhatOverdue, sanakhatPendingDays } from "../utils/helpers";
 import { UserPlus,
   LayoutDashboard, Bike, Package, Wrench, Sparkles, Settings, Menu, X, Bell,
@@ -178,6 +179,10 @@ export default function Layout() {
     if (!user || user.role === "platform_owner") return;
     api.get("/brand").then(r => setBrand(r.data)).catch(() => {});
   }, [user]);
+
+  // In the portal, its side panel shows this app's menu (see utils/portalMenu.js)
+  usePortalPanel(PORTAL_PANEL ? buildPortalMenu({ items: visibleNavItems, marketingNav: MARKETING_NAV, serviceTabs: SERVICE_TABS,
+    role: user?.role, features, terms, newLeads, pathname, search }) : [], `${pathname}${search}`, navigate);
 
   // A plain render function, not a component: declared inside Layout, a component would be a new type on every render
   // and the whole sidebar would remount (losing taps on its buttons) whenever the polled data refreshed.
@@ -372,11 +377,11 @@ export default function Layout() {
 
   return (
     <div className="app-shell flex h-app overflow-hidden bg-slate-50 pl-safe pr-safe">
-      {/* Desktop Sidebar */}
-      {renderSidebar()}
+      {/* Desktop Sidebar (inside the portal, the portal's side panel is the only one) */}
+      {!PORTAL_PANEL && renderSidebar()}
 
       {/* Mobile Overlay */}
-      {sidebarOpen && (
+      {!PORTAL_PANEL && sidebarOpen && (
         <div className="lg:hidden fixed inset-0 z-40 bg-black/50" onClick={() => setSidebarOpen(false)}>
           <div onClick={(e) => e.stopPropagation()}>
             {renderSidebar(true)}
@@ -388,13 +393,13 @@ export default function Layout() {
       <div className="flex-1 flex flex-col min-w-0">
         {/* Header */}
         <header className="sticky top-0 z-30 bg-white border-b border-slate-200 shadow-sm h-14 sm:h-16 box-content pt-safe flex items-center px-4 lg:px-6 gap-4">
-          <button
+          {!PORTAL_PANEL && <button
             className="lg:hidden w-11 h-11 -ml-2.5 rounded-lg flex items-center justify-center text-slate-500 hover:bg-slate-50 hover:text-slate-900 transition-colors"
             onClick={() => setSidebarOpen(true)}
             data-testid="mobile-menu-button"
           >
             <Menu size={20} />
-          </button>
+          </button>}
           {/* The page's name sits here, level with the bell: plain bold text, no icon or logo beside it. */}
           {pathname.startsWith("/sanakhat") ? (
             <h1 className="flex-1 min-w-0 text-2xl font-bold text-slate-900 truncate" data-testid="header-title">Sanakhat</h1>

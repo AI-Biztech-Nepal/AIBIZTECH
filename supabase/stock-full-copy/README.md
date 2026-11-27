@@ -13,6 +13,9 @@ the earlier partial pages. Source copied: Auto-Stock-Manager `2c1df2b`.
 - Screens: built into the portal at /stock-app (services/stock/scripts/build-embedded.sh), shown in the portal page area
   like Finance, signed in by the portal. The portal passes /api to the server named in STOCK_SERVER (default: the live
   server). The earlier portal pages (app/stock, app/marketing and their libraries) are removed.
+- One side panel: the app draws none of its own inside the portal. It sends its menu (by role and staff access) to the
+  portal's panel (app/stock-nav.tsx, utils/portalMenu.js). Dashboard, Finance, Marketing and Settings appear once. A
+  business with records in the earlier Finance app (5 on 2026-11-27) keeps it as "Old Finance" plus the portal Dashboard.
 - Tried on one Mac: portal build + copied server + these tables + made-up data, every screen clicked through.
 
 ## Not done yet

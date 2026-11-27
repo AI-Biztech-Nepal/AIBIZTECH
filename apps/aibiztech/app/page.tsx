@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { getContext } from '@/lib/supabase';
 import { Shell } from './shell';
+import { hasOldFinance } from '@/lib/old-finance';
 import { DashboardView, SetupDashboard } from './dashboard-view';
 import { loadRaw, loadStock } from './dashboard-data';
 import { computeDashboard } from '@/lib/books';
@@ -39,6 +40,9 @@ export default async function Launcher({ searchParams }: { searchParams: Search 
       </Shell>
     );
   }
+
+  // With Stock Manager (and nothing in the earlier Finance app), its dashboard is the business's dashboard
+  if (org.services.stock && !error && !denied && !message && !(await hasOldFinance(supabase, org.id))) redirect('/app/stock');
 
   // The business's money dashboard, from its Finance books, and what Stock holds (each only when the business has that app)
   const [{ data: services }, raw, stock] = await Promise.all([
