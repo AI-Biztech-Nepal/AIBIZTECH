@@ -145,6 +145,17 @@
   :global(html[data-sidebar-collapsed]) .group { padding-top: 8px; border-top: 1px solid #3a3f4c; }
 }
 
+/* Beside an app that has its own menu: icons only, and no room taken by the collapse button */
+@media (min-width: 861px) {
+  .frame.compact { --side: 64px; }
+  .compact .brand { flex-direction: column; }
+  .compact :is(.word, .label, .groupTitle, .sub, .collapse) { display: none; }
+  .compact .sidebar .item { justify-content: center; padding: 0; }
+  .compact .menu > summary::after { content: none; }
+  .compact .appTitle { justify-content: center; }
+  .compact .group { padding-top: 8px; border-top: 1px solid #3a3f4c; }
+}
+
 /* Phones: the side panel opens under the top bar */
 .phoneMark, .date, .tabs { display: none; }
 @media (max-width: 860px) {

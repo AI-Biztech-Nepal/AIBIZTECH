@@ -13,7 +13,7 @@ const CHECK_INTERVAL_MS = 5 * 60 * 1000;
 // the real static file here (the SPA catch-all rewrite only applies to paths with no
 // matching file), and the no-store + cache-buster keep every proxy layer honest.
 async function currentBuildId() {
-  const res = await fetch(`/asset-manifest.json?ts=${Date.now()}`, { cache: "no-store" });
+  const res = await fetch(`${process.env.PUBLIC_URL || ""}/asset-manifest.json?ts=${Date.now()}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`asset-manifest ${res.status}`);
   const manifest = await res.json();
   return manifest.files?.["main.js"] || JSON.stringify(manifest.files || manifest);

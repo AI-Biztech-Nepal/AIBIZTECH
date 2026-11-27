@@ -2,8 +2,6 @@ import Link from 'next/link';
 import { Fragment, type ReactNode } from 'react';
 import type { Org } from '@/lib/supabase';
 import { ATTENDANCE_MENU, type MenuNode } from '@/lib/attendance-menu';
-import { STOCK_MENU, STOCK_SERVICE_MENU } from '@/lib/stock-menu';
-import { MARKETING_MENU } from '@/lib/marketing-menu';
 import { FINANCE_MENU } from '@/lib/finance-menu';
 import { signOut, switchOrg } from './actions';
 import { Icon, serviceIcon } from './icons';
@@ -23,6 +21,7 @@ type Props = {
   email: string;
   page: Page;
   bleed?: boolean; // an app's own page fills the whole area
+  compact?: boolean; // the app inside has its own menu: show this side panel as icons only
   light?: boolean; // redesigned portal pages; module screens keep their own look
   preview?: boolean; // look only: switching business and signing out do nothing
   phoneDate?: string; // set by the dashboard: a charcoal header on phones, with this date in it
@@ -34,7 +33,7 @@ const initialsOf = (name: string) => name.split(/\s+/).map((w) => w[0]).slice(0,
 
 // The frame around every signed-in page: side panel on the left, business and account menus on top.
 // Apps come from core.services, so a new service (or one turned on for a business) shows up without touching this file.
-export function PortalFrame({ org, orgs = [], services, person, email, page, bleed = false, light = false, preview = false, phoneDate, children }: Props) {
+export function PortalFrame({ org, orgs = [], services, person, email, page, bleed = false, compact = false, light = false, preview = false, phoneDate, children }: Props) {
   const isAdmin = !!org && org.org_role !== 'member';
   const status = org?.verification_status;
   const statusLabel = status === 'verified' ? 'Verified' : status === 'rejected' ? 'Rejected' : 'Awaiting verification';
@@ -49,7 +48,7 @@ export function PortalFrame({ org, orgs = [], services, person, email, page, ble
   );
 
   return (
-    <div className={cls(s.frame, fontVariables, phone && s.phoneHead, bar && s.tabbed)}>
+    <div className={cls(s.frame, fontVariables, phone && s.phoneHead, bar && s.tabbed, compact && s.compact)}>
       <aside className={s.sidebar} data-lenis-prevent>
         <div className={s.brand}>
           {/* The logo file is one tall picture; the mark and the wordmark are shown side by side by cropping it */}
@@ -77,20 +76,10 @@ export function PortalFrame({ org, orgs = [], services, person, email, page, ble
               const on = !!org?.services[svc.key];
               // HRIS and Marketing open their own menu here
               if (on && svc.key === 'attendance') return <AppMenu key={svc.key} service="attendance" icon="attendance" name={svc.name} home="/" nodes={ATTENDANCE_MENU} isAdmin={org?.services.attendance === 'admin'} />;
-              if (on && svc.key === 'marketing') return <AppMenu key={svc.key} service="marketing" icon="megaphone" name={svc.name} home="/" nodes={MARKETING_MENU} isAdmin={org?.services.marketing === 'admin'} />;
-              if (on && svc.key === 'stock') {
-                const stockAdmin = org?.services.stock === 'admin';
-                // Sales, EMI, Service and Sanakhat sit beside Stock Manager in the side panel, not inside it
-                return (
-                  <Fragment key={svc.key}>
-                    <AppMenu service="stock" icon="stock" name={svc.name} home="/" nodes={STOCK_MENU} isAdmin={stockAdmin} />
-                    {item('/stock/sales', 'task', 'Sales')}
-                    {stockAdmin && item('/stock/emi', 'card', 'EMI')}
-                    <AppMenu service="stock" icon="wrench" name="Service" home="/jobs" nodes={STOCK_SERVICE_MENU} isAdmin={stockAdmin} />
-                    {stockAdmin && item('/stock/sanakhat', 'doc', 'Sanakhat')}
-                  </Fragment>
-                );
-              }
+              // Stock Manager (and its Marketing screens) keeps its own menu inside the page, with every screen and the
+              // person's permissions, so the portal shows a single link to each
+              if (on && svc.key === 'stock') return <Fragment key={svc.key}>{item('/app/stock', 'stock', svc.name)}</Fragment>;
+              if (on && svc.key === 'marketing') return <Fragment key={svc.key}>{item('/app/marketing', 'megaphone', svc.name)}</Fragment>;
               // Finance runs inside AIBIZTECH (served at /finance); other apps are opened through single sign-on
               if (on && svc.key === 'finance') return <AppMenu key={svc.key} service="finance" icon="finance" name={svc.name} home="/company-dashboard" nodes={FINANCE_MENU} isAdmin />;
               return (
@@ -170,7 +159,7 @@ export function PortalFrame({ org, orgs = [], services, person, email, page, ble
 }
 
 // The phone bar's apps: key (also the icon's name), short label, first page
-const TABS = [['attendance', 'HRIS', '/app/attendance'], ['finance', 'Finance', '/app/finance/company-dashboard'], ['stock', 'Stock', '/stock']];
+const TABS = [['attendance', 'HRIS', '/app/attendance'], ['finance', 'Finance', '/app/finance/company-dashboard'], ['stock', 'Stock', '/app/stock']];
 
 // The apps in the side panel, in this order, with Attendance Nepal shown as HRIS
 const APP_ORDER = ['attendance', 'finance', 'marketing', 'stock'];

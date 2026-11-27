@@ -24,7 +24,7 @@ type Props = {
 };
 
 // Each app's first page
-const HOME: Record<string, string> = { attendance: '/app/attendance', finance: '/app/finance/company-dashboard', stock: '/stock', marketing: '/marketing' };
+const HOME: Record<string, string> = { attendance: '/app/attendance', finance: '/app/finance/company-dashboard', stock: '/app/stock', marketing: '/app/marketing' };
 
 export function AppsView({ orgName, access, services, rows, failed = false, error, message, preview = false, now = new Date() }: Props) {
   const all = inModuleOrder(services).map((svc) => ({ ...svc, row: rows.find((r) => r.service_key === svc.key) }));

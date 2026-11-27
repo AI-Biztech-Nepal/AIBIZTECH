@@ -51,7 +51,7 @@ function Bars({ rows, of }: { rows: { name: string; value: number }[]; of?: numb
 
 type Task = { title: string; detail: string; href: string; action: string; bad: boolean; phone?: boolean };
 
-const partsTask = (low: number): Task => ({ title: `${count(low, 'spare part')} low`, detail: 'At or below the alert level', href: '/stock/spare-parts', action: 'Restock', bad: false, phone: true });
+const partsTask = (low: number): Task => ({ title: `${count(low, 'spare part')} low`, detail: 'At or below the alert level', href: '/app/stock/inventory?tab=spare-parts', action: 'Restock', bad: false, phone: true });
 
 // Rows marked `phone` show on phones only, so wider screens still say "nothing" when those are all there is
 function Tasks({ tasks }: { tasks: Task[] }) {
@@ -96,8 +96,8 @@ export function DashboardView({ orgName, today, access, isAdmin, verification, d
     access.attendance && ['Add employee', '/app/attendance/employees'],
     money && ['Money received', '/app/finance/quick-payment?type=in', 'in'],
     money && ['Money paid', '/app/finance/quick-payment?type=out', 'out'],
-    access.stock && ['Add vehicle', '/stock/inventory'],
-    access.stock && ['Record sale', '/stock/sales'],
+    access.stock && ['Add vehicle', '/app/stock/inventory'],
+    access.stock && ['Record sale', '/app/stock/sales'],
   ].filter(Boolean) as string[][];
 
   return (

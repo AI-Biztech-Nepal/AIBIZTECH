@@ -10,10 +10,16 @@ the earlier partial pages. Source copied: Auto-Stock-Manager `2c1df2b`.
   The earlier `stock` schema is kept as `stock_before_full_copy`. Tried on a throwaway Postgres together with the copied
   server (`PG_SCHEMA=stock`).
 
+- Screens: built into the portal at /stock-app (services/stock/scripts/build-embedded.sh), shown in the portal page area
+  like Finance, signed in by the portal. The portal passes /api to the server named in STOCK_SERVER (default: the live
+  server). The earlier portal pages (app/stock, app/marketing and their libraries) are removed.
+- Tried on one Mac: portal build + copied server + these tables + made-up data, every screen clicked through.
+
 ## Not done yet
-1. Screens: build `services/stock/frontend` into the portal (as Finance is, under its own path), one sign-in, one menu.
-2. Replace the portal's earlier pages (`app/stock`, `app/marketing`, dashboard figures) with the copied ones.
-3. Server: run `services/stock/backend` against the portal database, with its own database login. Automatic backups
-   switch themselves off when `PG_SCHEMA` is set; change that first. Check disk space.
-4. Public website: keep its feed, leads and visit tracking working against the new tables.
-5. Data: copy the live rows, compare every table, then switch at a quiet time. Nothing here has touched live data.
+1. Portal dashboard: its stock figures read the stock tables directly; once 01-tables.sql runs they must come from the app.
+2. Server: run services/stock/backend against the portal database with its own database login. Automatic backups switch
+   themselves off when PG_SCHEMA is set; change that first. Check disk space.
+3. Public website: keep its feed, leads and visit tracking working when the server moves.
+4. Data: copy the live rows, compare every table, then switch at a quiet time. Nothing here has touched live data.
+5. EMI: the removed portal pages had an EMI screen; the original app has none.
+6. Changes made to the Auto-Stock-Manager repository after 2c1df2b must be copied into services/stock.
