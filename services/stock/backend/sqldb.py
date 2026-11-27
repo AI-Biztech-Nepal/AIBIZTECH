@@ -40,6 +40,9 @@ class ReturnDocument:
 TABLES = {
     "companies": {"columns": {"id", "name", "created_at"}},
     "users": {"columns": {"id", "company_id", "username", "password_hash", "name", "role", "email_verified_at", "created_at"}},
+    # Settings > Staff & Access (staff_access.py): id is the user's id. Only that module reads it.
+    "staff_access": {"columns": {"id", "company_id", "phone", "address", "pan", "job_title", "work_start", "work_end", "access",
+                                  "status", "updated_at", "portal_email"}},
     "auth_tokens": {"columns": {"id", "user_id", "purpose", "token_hash", "expires_at", "used_at", "created_at"}},
     "vendors": {"columns": {"id", "company_id", "name", "phone", "address", "notes", "vendor_type", "commission_amount", "created_at"}},
     "customers": {"columns": {"id", "company_id", "name", "contact_number", "address", "id_number", "occupation", "budget_min",
@@ -72,8 +75,12 @@ TABLES = {
                            "sold_by_id", "sold_by_name",
                            "lead_source", "lead_note", "referred_by_id", "referred_by_name",
                            "exchange_valuation", "exchange_brand", "exchange_model", "exchange_reg_no", "exchange_year",
-                           "exchange_vehicle_id"},
+                           "exchange_vehicle_id",
+                           # a sale is of one vehicle (vehicle_id) or of one stock item (item_id + how many)
+                           "item_id", "quantity", "cost_at_sale"},
               "bool_cols": {"returned", "helmet_given", "imported", "needs_review"}, "json_cols": {"extra_expenses"}},
+    "items": {"columns": {"id", "company_id", "name", "sku", "category", "serial_number", "cost", "price", "quantity", "status",
+                           "notes", "vendor_id", "created_by", "created_at", "updated_at"}},
     "bookings": {"columns": {"id", "company_id", "vehicle_id", "customer_id", "booking_amount", "payment_method", "booking_date",
                               "receipt_no", "expected_sale_date", "agreed_price", "status", "notes", "sale_id", "cancelled_at",
                               "refund_amount", "retained_amount", "cancel_notes", "created_by", "created_at", "updated_at"}},
@@ -102,7 +109,7 @@ TABLES = {
                                  "customer_phone", "vehicle_name"}},
     "emi_payments": {"columns": {"id", "company_id", "emi_id", "amount", "payment_date", "notes", "recorded_by", "created_at"}},
     "vehicle_photos": {"columns": {"id", "company_id", "vehicle_id", "filename", "content_type", "data", "uploaded_at", "size",
-                                    "sort_order", "storage_path"}},
+                                    "sort_order", "storage_path", "item_id"}},
     "legal_documents": {"columns": {"id", "company_id", "vehicle_id", "filename", "content_type", "data", "doc_type",
                                      "original_name", "uploaded_at", "size", "storage_path"}},
     "leads": {"columns": {"id", "company_id", "type", "name", "phone", "message", "images", "requested_service", "vehicle_type",
@@ -110,7 +117,7 @@ TABLES = {
                            # who the visitor is, and what was decided about the lead (accepted / rejected + remark)
                            "email", "address", "remark", "decided_by", "decided_at", "customer_id", "vehicle_id",
                            # when staff first opened the lead in the Leads screen (drives the new-lead badge)
-                           "seen_at"}, "json_cols": {"images"}},
+                           "seen_at", "seen_by"}, "json_cols": {"images"}},
     "settings": {"columns": {"id", "company_id", "logo_url", "business_name", "contact_phone", "contact_email", "address",
                               "hero_image_url", "service_image_url", "warranty_days_default"}},
     "sync_logs": {"columns": {"id", "company_id", "pushed_at", "count", "status", "message"}},

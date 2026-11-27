@@ -1,12 +1,12 @@
 import { useEffect, useState, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Phone, MessageCircle, Inbox, Wrench, Repeat, Bike, X, Mail, MapPin, Check, CheckCheck, Ban, Users, ExternalLink, UserPlus, Clock, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import api from "../utils/api";
 import { formatNPR } from "../utils/helpers";
 
 // Sell / Exchange / Book Service forms from the public website land here (POST /public/leads), and so do WhatsApp / Call
-// taps (the website asks who they are first). Every lead is decided once: Add to CRM (the lead is accepted and the person
+// taps (the website asks who they are first). Every lead is decided once: Converted (stored as "accepted": the person
 // goes into the CRM) or Reject (a remark saying why is required).
 // Tabs: "All" lists every lead, newest first, whatever its type or outcome. Each lead also lives in the tab for its type
 // (still waiting for a decision there); rejecting one also puts it in the Rejected tab. A registered account also shows in
@@ -73,7 +73,8 @@ const state = l => (l.status === "accepted" || l.status === "rejected" ? l.statu
 const tabOf = l => (state(l) === "rejected" ? "rejected" : !TYPES[l.type] ? "all" : l.type);
 const tabLabel = key => TABS.find(t => t.key === key)?.label;
 // Where a lead is listed: its home tab, plus Accounts for a registered account that is still pending (it shows there at once).
-const inTab = (l, key) => key === "all" || tabOf(l) === key || (key === "signup" && l.type === "signup" && state(l) === "new");
+// "All" is the website enquiries only: a registered account is not a lead, so it is listed (and counted) under Accounts alone.
+const inTab = (l, key) => (key === "all" ? l.type !== "signup" : tabOf(l) === key) || (key === "signup" && l.type === "signup" && state(l) === "new");
 
 export default function Leads() {
   const navigate = useNavigate();
@@ -81,11 +82,23 @@ export default function Leads() {
   const [rejecting, setRejecting] = useState(null); // { id, remark }: the lead whose reject box is open
   const [busyId, setBusyId] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState("all");
+  // ?type=signup (from the bell) opens on Accounts, even when the Leads page is already open.
+  const { search } = useLocation();
+  const [tab, setTab] = useState(() => { const t = new URLSearchParams(window.location.search).get("type"); return TABS.some(x => x.key === t) ? t : "all"; });
   const [zoom, setZoom] = useState(null);
   // Leads nobody had opened before this visit: they stay "New" (blue) while the page is open. Opening the page marks them
   // seen on the server, so on the next visit they show as "Read" (green).
   const [newIds, setNewIds] = useState(() => new Set());
+
+  // Tell the server these leads were on screen, and show who read them right away (the list was fetched before they were marked).
+  const markSeen = useCallback(async (ids) => {
+    if (!ids.length) return;
+    const seen = await api.post("/leads/seen", { ids }, { suppressErrorToast: true }).catch(() => null);
+    if (seen?.data?.seen_by) {
+      const now = new Date().toISOString();
+      setLeads(ls => ls.map(l => (ids.includes(l.id) ? { ...l, seen_at: now, seen_by: seen.data.seen_by } : l)));
+    }
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -95,17 +108,25 @@ export default function Leads() {
       // Unseen leads are all on screen in the All tab, so they count as seen: this clears the nav badge and the bell, and
       // takes them out of All on the next visit (the list above keeps them there for this one).
       // Done before the ping below so the badge's refetch already sees them as seen.
-      const unseen = data.filter(l => state(l) === "new" && !l.seen_at).map(l => l.id);
-      if (unseen.length) await api.post("/leads/seen", { ids: unseen }, { suppressErrorToast: true }).catch(() => {});
+      // Registered accounts are not on All, so opening All does not clear their notification: opening Accounts does (below).
+      await markSeen(data.filter(l => l.type !== "signup" && state(l) === "new" && !l.seen_at).map(l => l.id));
       window.dispatchEvent(new Event("leads-changed"));
     } catch {
       toast.error("Failed to load leads");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [markSeen]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { const t = new URLSearchParams(search).get("type"); if (TABS.some(x => x.key === t)) setTab(t); }, [search]);
+
+  // Opening the Accounts tab is what reads the registered accounts.
+  useEffect(() => {
+    if (tab !== "signup" || loading) return;
+    const ids = leads.filter(l => l.type === "signup" && state(l) === "new" && !l.seen_at).map(l => l.id);
+    if (ids.length) markSeen(ids).then(() => window.dispatchEvent(new Event("leads-changed")));
+  }, [tab, loading, leads, markSeen]);
 
   const replaceLead = (l) => { setLeads(ls => ls.map(x => (x.id === l.id ? l : x))); window.dispatchEvent(new Event("leads-changed")); };
   const errText = (ex, fallback) => (typeof ex.response?.data?.detail === "string" ? ex.response.data.detail : fallback);
@@ -115,10 +136,10 @@ export default function Leads() {
     try {
       const { data } = await api.post(`/leads/${lead.id}/accept`, null, { suppressErrorToast: true });
       replaceLead(data.lead);
-      toast.success(!data.customer_id ? "Accepted, but it has no phone number, so it was not added to the CRM"
-        : data.customer_created ? `${lead.name} was added to the CRM` : `${lead.name} is already a customer, linked in the CRM`,
+      toast.success(!data.customer_id ? "Marked converted, but it has no phone number, so it was not added to the customer list"
+        : data.customer_created ? `${lead.name} was added to the customer list` : `${lead.name} is already a customer, now linked to this lead`,
       tabOf(data.lead) === tab ? undefined : { description: `Moved to the ${tabLabel(tabOf(data.lead))} tab` });
-    } catch (ex) { toast.error(errText(ex, "Couldn't add that lead to the CRM")); load(); }
+    } catch (ex) { toast.error(errText(ex, "Couldn't convert that lead")); load(); }
     finally { setBusyId(null); }
   };
 
@@ -143,7 +164,7 @@ export default function Leads() {
   const countOf = key => leads.filter(l => inTab(l, key)).length; // the number of cards that tab shows
   const [emptyTitle, emptyText] = leads.length === 0
     ? ["No leads yet", "Sell, exchange and service requests, and people who tap WhatsApp or Call on your website, will appear here as they come in."]
-    : tab === "all" ? ["No leads yet", "Every lead from your website appears here, and also in the tab for its type."]
+    : tab === "all" ? ["No leads yet", "Every enquiry from your website appears here, and also in the tab for its type. Registered accounts are under Accounts."]
     : tab === "rejected" ? ["No rejected leads", "Leads you reject are kept here, with your reason."]
     : tab === "signup" ? ["No registered accounts yet", "People who sign in with Google on your website and add their phone number appear here."]
     : [`Nothing in ${tabLabel(tab)} yet`, "Leads of this type appear here as they come in."];
@@ -163,7 +184,7 @@ export default function Leads() {
           >
             {Icon && <Icon size={15} />}{label}
             {/* Every tab shows how many leads it holds; All is blue while any lead there is still undecided. */}
-            <span data-testid={`leads-count-${key}`} className={`ml-0.5 min-w-[20px] text-center text-xs px-1.5 py-0.5 rounded-full ${tab === key ? "bg-white/25 text-white" : key === "all" && leads.some(x => state(x) === "new") ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600"}`}>{countOf(key)}</span>
+            <span data-testid={`leads-count-${key}`} className={`ml-0.5 min-w-[20px] text-center text-xs px-1.5 py-0.5 rounded-full ${tab === key ? "bg-white/25 text-white" : key === "all" && leads.some(x => x.type !== "signup" && state(x) === "new") ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600"}`}>{countOf(key)}</span>
           </button>
         ))}
       </div>
@@ -209,9 +230,19 @@ export default function Leads() {
                       </p>
                     )}
                   </div>
-                  {state(l) !== "rejected" && (isNew
-                    ? <span data-testid="lead-new" className="inline-flex items-center gap-1 rounded-full bg-blue-600 px-2.5 py-1 text-xs font-bold text-white"><Sparkles size={12} /> New</span>
-                    : <span data-testid="lead-read" className="inline-flex items-center gap-1 rounded-full bg-emerald-600 px-2.5 py-1 text-xs font-bold text-white"><CheckCheck size={13} /> Read</span>)}
+                  {state(l) !== "rejected" && (
+                    <div className="flex flex-col items-end gap-1 text-right">
+                      {isNew
+                        ? <span data-testid="lead-new" className="inline-flex items-center gap-1 rounded-full bg-blue-600 px-2.5 py-1 text-xs font-bold text-white"><Sparkles size={12} /> New</span>
+                        : <span data-testid="lead-read" className="inline-flex items-center gap-1 rounded-full bg-emerald-600 px-2.5 py-1 text-xs font-bold text-white"><CheckCheck size={13} /> Read</span>}
+                      {/* The first person to open the lead (older leads were read before this was recorded: no name, just the time). */}
+                      {l.seen_at && (
+                        <span data-testid="lead-read-by" className="text-[11px] leading-tight text-slate-500">
+                          Read{l.seen_by ? <> by <b className="font-semibold text-slate-700">{l.seen_by}</b></> : ""}<br />{clock(l.seen_at)} · {dateOnly(l.seen_at)}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {(l.requested_service || l.vehicle_type || l.preferred_date) && (
@@ -259,15 +290,15 @@ export default function Leads() {
                   ) : (
                     <div className="mt-3 grid grid-cols-2 gap-2 sm:flex sm:justify-end">
                       <button onClick={() => setRejecting({ id: l.id, remark: "" })} disabled={busyId === l.id} className="h-10 px-5 rounded-lg border border-red-200 bg-white text-red-700 hover:bg-red-50 text-sm font-semibold inline-flex items-center justify-center gap-1.5 disabled:opacity-60" data-testid="lead-reject"><Ban size={15} /> Reject</button>
-                      <button onClick={() => accept(l)} disabled={busyId === l.id} className="h-10 px-5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold inline-flex items-center justify-center gap-1.5 disabled:opacity-60" data-testid="lead-accept"><UserPlus size={16} /> {busyId === l.id ? "Adding..." : "Add to CRM"}</button>
+                      <button onClick={() => accept(l)} disabled={busyId === l.id} className="h-10 px-5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold inline-flex items-center justify-center gap-1.5 disabled:opacity-60" data-testid="lead-accept"><UserPlus size={16} /> {busyId === l.id ? "Converting..." : "Converted"}</button>
                     </div>
                   )
                 ) : l.status === "accepted" ? (
                   <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-emerald-50 px-3 py-2 text-sm" data-testid="lead-outcome">
-                    <span className="inline-flex items-center gap-1 font-semibold text-emerald-800"><Check size={14} /> Accepted</span>
+                    <span className="inline-flex items-center gap-1 font-semibold text-emerald-800"><Check size={14} /> Converted</span>
                     {l.customer_id
-                      ? <button onClick={() => navigate("/marketing?tab=crm")} className="inline-flex items-center gap-1 font-semibold text-blue-700 hover:underline"><Users size={13} /> In the CRM</button>
-                      : <span className="text-xs text-slate-500">Not added to the CRM (no phone number)</span>}
+                      ? <button onClick={() => navigate("/marketing?tab=crm")} className="inline-flex items-center gap-1 font-semibold text-blue-700 hover:underline"><Users size={13} /> In customers</button>
+                      : <span className="text-xs text-slate-500">Not in the customer list (no phone number)</span>}
                     <span className="text-xs text-slate-400 sm:ml-auto">{l.decided_by ? `by ${l.decided_by} · ` : ""}{when(l.decided_at)}</span>
                   </div>
                 ) : (

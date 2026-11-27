@@ -1,12 +1,12 @@
 import "@/App.css";
 import { Suspense, lazy, useEffect } from "react";
-import "./utils/portalFlag";
 import { BrowserRouter, Routes, Route, Navigate, useParams, useLocation } from "react-router-dom";
 import { Toaster } from "sonner";
 import { AuthProvider, useAuth } from "./context/AuthContext";
-import { canAccessPath, ROLE_DEFAULT_PATH } from "./utils/permissions";
+import { canAccessPath, defaultPathFor } from "./utils/permissions";
 import { startUpdateChecker } from "./utils/updateChecker";
 import Layout from "./components/Layout";
+import FeatureOff from "./components/FeatureOff";
 import ImportStock from "./pages/ImportStock";
 
 // Route-level code splitting: previously every page was imported eagerly here,
@@ -22,6 +22,7 @@ const SsoLanding = lazy(() => import("./pages/SsoLanding"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const InventoryHub = lazy(() => import("./pages/InventoryHub"));
 const VehicleDetail = lazy(() => import("./pages/VehicleDetail"));
+const Items = lazy(() => import("./pages/Items"));
 const JobCards = lazy(() => import("./pages/JobCards"));
 const Warranty = lazy(() => import("./pages/Warranty"));
 const SanakhatPortal = lazy(() => import("./pages/SanakhatPortal"));
@@ -64,10 +65,12 @@ const PublicRoute = ({ children }) => {
 // Blocks direct URL navigation into a tab the user's role doesn't grant
 // (nav already hides the link, but that's not a security boundary on its own).
 const RoleRoute = ({ path, children }) => {
-  const { user } = useAuth();
+  const { user, features } = useAuth();
   if (!canAccessPath(user?.role, path)) {
-    return <Navigate to={ROLE_DEFAULT_PATH[user?.role] || "/"} replace />;
+    return <Navigate to={defaultPathFor(user?.role)} replace />;
   }
+  // Allowed for the role, but the organization has the feature switched off: say so instead of an empty or broken page.
+  if (!canAccessPath(user?.role, path, features)) return <FeatureOff />;
   return children;
 };
 
@@ -79,8 +82,9 @@ const SoldStockRedirect = () => {
 
 const HomeRoute = () => {
   const { user } = useAuth();
-  if (user?.role && user.role !== "admin") {
-    return <Navigate to={ROLE_DEFAULT_PATH[user.role] || "/settings"} replace />;
+  // The Dashboard is Admin's, and anyone given it in Staff & Access.
+  if (user?.role && user.role !== "admin" && !canAccessPath(user.role, "/")) {
+    return <Navigate to={defaultPathFor(user.role)} replace />;
   }
   return <Dashboard />;
 };
@@ -94,11 +98,13 @@ function AppRoutes() {
         <Route path="/forgot-password" element={<PublicRoute><ForgotPassword /></PublicRoute>} />
         <Route path="/reset-password" element={<PublicRoute><ResetPassword /></PublicRoute>} />
         <Route path="/verify-email" element={<PublicRoute><VerifyEmail /></PublicRoute>} />
+        {/* One login from the AI Biz Tech Nepal portal (signed-in or not). */}
         <Route path="/sso" element={<SsoLanding />} />
         <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
           <Route index element={<HomeRoute />} />
           <Route path="inventory" element={<RoleRoute path="/inventory"><InventoryHub /></RoleRoute>} />
           <Route path="inventory/:id" element={<RoleRoute path="/inventory/detail"><VehicleDetail /></RoleRoute>} />
+          <Route path="items" element={<RoleRoute path="/items"><Items /></RoleRoute>} />
           <Route path="import-stock" element={<RoleRoute path="/import-stock"><ImportStock /></RoleRoute>} />
           <Route path="jobs" element={<RoleRoute path="/jobs"><JobCards /></RoleRoute>} />
           <Route path="warranty" element={<RoleRoute path="/warranty"><Warranty /></RoleRoute>} />

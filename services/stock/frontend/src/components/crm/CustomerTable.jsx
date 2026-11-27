@@ -4,7 +4,7 @@ import { Eye, Pencil, Phone, MessageCircle, Search, Check, X, ChevronDown, Chevr
 import { formatNPR } from "../../utils/helpers";
 import {
   SOURCES, SOURCE_STYLE, STATUS_BY_KEY, PICKABLE_STATUSES, referredByLabel,
-  shortBS, timeOf, dateTimeTitle, waNumber,
+  waNumber,
 } from "../../utils/crm";
 import { FONT, Avatar, StatusBadge } from "./ui";
 import { BOOK_CARD, BookTableStyle } from "../BookTable";
@@ -41,21 +41,6 @@ function StatusSelect({ c, disabled, onChange }) {
         {PICKABLE_STATUSES.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
       </select>
       <Chevron />
-    </div>
-  );
-}
-
-function AssignSelect({ c, sellers, disabled, onChange }) {
-  const known = sellers.some(s => s.id === c.assigned_to_id);
-  return (
-    <div className="relative w-[134px] max-w-full">
-      <select value={c.assigned_to_id || ""} disabled={disabled} onChange={e => onChange(c, e.target.value)} aria-label={`Assigned to, ${c.name}`} data-testid="crm-assigned"
-        className={`${selectBase} h-7 w-full pl-2 pr-6 rounded-lg border text-xs font-medium truncate ${c.assigned_to_id ? "bg-white border-slate-200 text-slate-800 hover:border-slate-300" : "bg-slate-50 border-dashed border-slate-300 text-slate-400 hover:border-slate-400"}`}>
-        <option value="">Unassigned</option>
-        {c.assigned_to_id && !known && <option value={c.assigned_to_id}>{c.assigned_to_name || "Previous salesperson"}</option>}
-        {sellers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-      </select>
-      <Chevron className="right-1.5 text-slate-400" />
     </div>
   );
 }
@@ -169,27 +154,11 @@ function LeadSourceCell({ c, pending, customers, disabled, onLeadChange, onPickR
   );
 }
 
+// The vehicle from their latest sale; "+N" when they have bought more than one.
 function VehicleCell({ c }) {
-  const text = c.interested_vehicle || c.purchased_vehicle;
-  if (!text) return <span className="text-slate-300">—</span>;
-  return <span className={`block max-w-[124px] truncate ${c.interested_vehicle ? "text-slate-700" : "text-slate-500"}`} title={c.interested_vehicle ? text : `Bought: ${text}`}>{text}</span>;
-}
-
-function NextFollowUp({ c }) {
-  const f = c.next_followup;
-  if (!f) return <span className="text-slate-300">—</span>;
-  const late = new Date(f.due_at).getTime() < Date.now();
-  return (
-    <div className={late ? "text-red-600" : "text-slate-700"} title={`${f.purpose} · ${dateTimeTitle(f.due_at)}`}>
-      <div className="font-semibold leading-4">{shortBS(f.due_at)}</div>
-      <div className="text-[11px] leading-4 opacity-75">{timeOf(f.due_at)}</div>
-    </div>
-  );
-}
-
-function LastContact({ c }) {
-  if (!c.last_contact_at) return <span className="text-slate-300">—</span>;
-  return <span className="text-slate-600 whitespace-nowrap" title={dateTimeTitle(c.last_contact_at)}>{shortBS(c.last_contact_at)}</span>;
+  if (!c.purchased_vehicle && c.interested_vehicle) return <span className="block max-w-[150px] truncate text-slate-500" title={`Interested in ${c.interested_vehicle}`}>{c.interested_vehicle}</span>;
+  if (!c.purchased_vehicle) return <span className="text-slate-300">—</span>;
+  return <span className="block max-w-[150px] truncate text-slate-800 font-medium" title={c.purchased_vehicle}>{c.purchased_vehicle}{c.purchases > 1 && <span className="text-xs text-slate-400"> +{c.purchases - 1}</span>}</span>;
 }
 
 function Amount({ c }) {
@@ -229,6 +198,7 @@ function CustomerName({ c, onShowReferred }) {
       <div className="min-w-0 flex-1">
         <button type="button" title={`Open ${c.name}'s profile`} data-testid="crm-customer"
           className="block max-w-[118px] truncate text-left font-semibold text-slate-900 group-hover/name:text-blue-700 group-hover/name:underline focus-visible:outline-none focus-visible:underline">{c.name}</button>
+        {c.from_website && <span title="Added from the website Leads tab" data-testid="crm-website-badge" className="mr-1 text-[10px] font-bold px-1.5 py-px rounded-full bg-indigo-100 text-indigo-700">Website lead</span>}
         {c.referral_count > 0 && (
           <button type="button" onClick={e => { e.stopPropagation(); onShowReferred(c); }} title="Show everyone they referred" data-testid="crm-referred-badge"
             className="text-[10px] font-bold px-1.5 py-px rounded-full bg-amber-50 text-amber-700 hover:bg-amber-100">Referred {c.referral_count}</button>
@@ -240,7 +210,7 @@ function CustomerName({ c, onShowReferred }) {
 }
 
 export default function CustomerTable({
-  rows, customers, sellers, wide, sort, onSort, total, count, savingId,
+  rows, customers, sellers, wide, leads = false, sort, onSort, total, count, savingId,
   onSaveLead, onStatus, onAssign, onView, onEdit, onContact, onShowReferred,
 }) {
   // A Referral / Other being filled in: { id, source, note }. Saved only once the name or detail is given.
@@ -276,7 +246,7 @@ export default function CustomerTable({
         {rows.map((c, i) => {
           const busy = savingId === c.id;
           return (
-            <div key={c.id} className={`bg-white border rounded-2xl p-4 shadow-[0_1px_3px_rgba(15,23,42,0.06)] ${c.source ? "border-slate-200/80" : "border-amber-300"}`} data-testid="crm-card">
+            <div key={c.id} className={`border rounded-2xl p-4 shadow-[0_1px_3px_rgba(15,23,42,0.06)] ${c.from_website ? "bg-indigo-50/60 border-indigo-300" : c.source ? "bg-white border-slate-200/80" : "bg-white border-amber-300"}`} data-testid="crm-card">
               <div className="flex items-start justify-between gap-3">
                 <div className="group/name min-w-0 flex-1 cursor-pointer rounded-lg -m-1 p-1 hover:bg-blue-50" onClick={() => onView(c)} data-testid="crm-customer-cell"><CustomerName c={c} onShowReferred={onShowReferred} /></div>
                 <div className="text-sm text-right"><Amount c={c} /></div>
@@ -285,20 +255,15 @@ export default function CustomerTable({
                 <span className="tabular-nums">#{i + 1}{c.address ? ` · ${c.address}` : ""}</span>
                 {c.contact_number && <span className="font-medium text-slate-700 tabular-nums">{c.contact_number}</span>}
               </div>
-              {(c.interested_vehicle || c.purchased_vehicle) && (
-                <p className="mt-1.5 text-xs text-slate-600 truncate"><span className="text-slate-400">{c.interested_vehicle ? "Interested in " : "Bought "}</span>{c.interested_vehicle || c.purchased_vehicle}</p>
+              {!c.purchased_vehicle && c.interested_vehicle && <p className="mt-1.5 text-xs text-slate-600 truncate"><span className="text-slate-400">Interested in </span>{c.interested_vehicle}</p>}
+              {c.purchased_vehicle && (
+                <p className="mt-1.5 text-xs text-slate-600 truncate"><span className="text-slate-400">Bought </span>{c.purchased_vehicle}{c.sale_price > 0 && <> · {formatNPR(c.sale_price)}</>}{c.sold_by_name && <span className="text-slate-400"> · by {c.sold_by_name}</span>}</p>
               )}
               <dl className="mt-3 grid grid-cols-[92px_1fr] items-start gap-x-3 gap-y-2.5 text-xs">
                 <dt className="pt-1 font-semibold text-slate-400 uppercase tracking-wider whitespace-nowrap">Lead source</dt>
                 <dd><LeadSourceCell c={c} disabled={busy} {...cell} /></dd>
                 <dt className="pt-0.5 font-semibold text-slate-400 uppercase tracking-wider whitespace-nowrap">Status</dt>
                 <dd><StatusSelect c={c} disabled={busy} onChange={onStatus} /></dd>
-                <dt className="pt-1 font-semibold text-slate-400 uppercase tracking-wider whitespace-nowrap">Assigned to</dt>
-                <dd><AssignSelect c={c} sellers={sellers} disabled={busy} onChange={onAssign} /></dd>
-                <dt className="font-semibold text-slate-400 uppercase tracking-wider whitespace-nowrap">Last contact</dt>
-                <dd className="text-slate-600"><LastContact c={c} /></dd>
-                <dt className="font-semibold text-slate-400 uppercase tracking-wider whitespace-nowrap">Next follow-up</dt>
-                <dd><NextFollowUp c={c} /></dd>
               </dl>
               <div className="mt-3 pt-3 border-t border-slate-100"><Actions c={c} onView={onView} onEdit={onEdit} onContact={onContact} /></div>
             </div>
@@ -316,19 +281,19 @@ export default function CustomerTable({
     <div className={BOOK_CARD} data-testid="crm-table-wrap">
       <BookTableStyle />
       <div className="overflow-x-auto">
-      <table className="w-full min-w-[1320px]" data-testid="crm-table">
+      <table className={`w-full ${leads ? "min-w-[1140px]" : "min-w-[1380px]"}`} data-testid="crm-table">
         <thead>
           <tr>
             <th scope="col" className="sticky left-0 z-20 bg-slate-50 w-10 min-w-[40px] text-left">SN</th>
             {th("name", "Customer", "sticky left-10 z-20 bg-slate-50 min-w-[180px] shadow-[2px_0_4px_-2px_rgba(15,23,42,0.15)]")}
             {th(null, "Contact")}
             {th(null, "Address")}
-            {th("vehicle", "Interested Vehicle")}
+            {th("vehicle", "Vehicle")}
+            {!leads && th("price", "Price", "", true)}
             {th("lead", "Lead Source")}
+            {th(null, "Referred By")}
+            {!leads && th("soldby", "Sold By")}
             {th("status", "Lead Status")}
-            {th("lastcontact", "Last Contact")}
-            {th("nextfollowup", "Next Follow-up")}
-            {th("assigned", "Assigned To")}
             {th("amount", "Transaction Amount", "", true)}
             {th(null, "Actions", "sticky right-0 z-20 bg-slate-50 shadow-[-2px_0_4px_-2px_rgba(15,23,42,0.15)]")}
           </tr>
@@ -337,17 +302,17 @@ export default function CustomerTable({
           {rows.map((c, i) => {
             const busy = savingId === c.id;
             return (
-              <tr key={c.id} className={`group h-[58px] ${c.source ? "bg-white" : "bg-amber-50"}`} data-testid="crm-row">
-                <td className={`sticky left-0 z-10 bg-inherit px-2.5 text-slate-400 tabular-nums ${c.source ? "" : "shadow-[inset_3px_0_0_0_#f59e0b]"}`}>{i + 1}</td>
+              <tr key={c.id} className={`group h-[58px] ${c.from_website ? "bg-indigo-50" : c.source ? "bg-white" : "bg-amber-50"}`} data-testid="crm-row">
+                <td className={`sticky left-0 z-10 bg-inherit px-2.5 text-slate-400 tabular-nums ${c.from_website ? "shadow-[inset_3px_0_0_0_#6366f1]" : c.source ? "" : "shadow-[inset_3px_0_0_0_#f59e0b]"}`}>{i + 1}</td>
                 <td onClick={() => onView(c)} data-testid="crm-customer-cell" className="group/name sticky left-10 z-10 bg-inherit cursor-pointer shadow-[2px_0_4px_-2px_rgba(15,23,42,0.15)]"><CustomerName c={c} onShowReferred={onShowReferred} /></td>
                 <td className="px-2.5 whitespace-nowrap font-medium text-slate-700 tabular-nums">{c.contact_number || <span className="text-slate-300">—</span>}</td>
                 <td className="px-2.5 max-w-[110px] truncate text-slate-600" title={c.address}>{c.address || <span className="text-slate-300">—</span>}</td>
                 <td className="px-2.5"><VehicleCell c={c} /></td>
+                {!leads && <td className="px-2.5 text-right whitespace-nowrap font-medium text-slate-800">{c.sale_price > 0 ? formatNPR(c.sale_price) : <span className="text-slate-300">—</span>}</td>}
                 <td className="px-2.5"><LeadSourceCell c={c} disabled={busy} {...cell} /></td>
+                <td className="px-2.5 max-w-[140px] truncate text-slate-700" title={referredByLabel(c)}>{referredByLabel(c) || <span className="text-slate-300">—</span>}</td>
+                {!leads && <td className="px-2.5 whitespace-nowrap text-slate-700">{c.sold_by_name || <span className="text-slate-300">—</span>}</td>}
                 <td className="px-2.5"><StatusSelect c={c} disabled={busy} onChange={onStatus} /></td>
-                <td className="px-2.5"><LastContact c={c} /></td>
-                <td className="px-2.5"><NextFollowUp c={c} /></td>
-                <td className="px-2.5"><AssignSelect c={c} sellers={sellers} disabled={busy} onChange={onAssign} /></td>
                 <td className="px-2.5 text-right"><Amount c={c} /></td>
                 <td className="sticky right-0 z-10 bg-inherit px-2.5 shadow-[-2px_0_4px_-2px_rgba(15,23,42,0.15)]"><Actions c={c} onView={onView} onEdit={onEdit} onContact={onContact} /></td>
               </tr>
@@ -356,7 +321,7 @@ export default function CustomerTable({
         </tbody>
         <tfoot>
           <tr>
-            <td colSpan={10} className="text-gray-600">Total · {count.toLocaleString()} customer{count === 1 ? "" : "s"}</td>
+            <td colSpan={leads ? 8 : 10} className="text-gray-600">Total · {count.toLocaleString()} customer{count === 1 ? "" : "s"}</td>
             <td className="text-right text-slate-900 whitespace-nowrap" style={FONT}>{formatNPR(total)}</td>
             <td />
           </tr>
@@ -371,7 +336,9 @@ export default function CustomerTable({
 export const SORTERS = {
   newest: c => c.created_at || "",
   name: c => c.name.toLowerCase(),
-  vehicle: c => (c.interested_vehicle || c.purchased_vehicle || "").toLowerCase(),
+  vehicle: c => (c.purchased_vehicle || "").toLowerCase(),
+  price: c => c.sale_price || 0,
+  soldby: c => (c.sold_by_name || "").toLowerCase(),
   lead: c => (c.source || "~").toLowerCase(),
   status: c => c.lead_status,
   lastcontact: c => c.last_contact_at || "",
@@ -379,4 +346,4 @@ export const SORTERS = {
   assigned: c => (c.assigned_to_name || "").toLowerCase(),
   amount: c => c.amount,
 };
-export const FIRST_DIR = { name: "asc", vehicle: "asc", lead: "asc", status: "asc", lastcontact: "desc", nextfollowup: "asc", assigned: "asc", amount: "desc" };
+export const FIRST_DIR = { name: "asc", vehicle: "asc", lead: "asc", soldby: "asc", price: "desc", status: "asc", lastcontact: "desc", nextfollowup: "asc", assigned: "asc", amount: "desc" };

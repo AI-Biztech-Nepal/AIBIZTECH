@@ -127,7 +127,7 @@ export default function SaleFormBody({ f, booking = null, sale = null, readOnly 
                     <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide" data-testid="witness-details-panel">Witness details <span className="normal-case font-medium text-blue-600/80">· for the sale deed</span></p>
                     {DEED_ROWS.map(({ label, ph: hint, wkey, wid }) => (
                       <div key={wkey} className="min-w-0">
-                        <label htmlFor={wid} className={LBL}>{label}{!existing && wkey !== "witness_id_number" && <span className="text-red-600"> *</span>}</label>
+                        <label htmlFor={wid} className={LBL}>{label}</label>
                         <input id={wid} aria-label={`Witness ${label}`} value={form[wkey]} onChange={e => set({ [wkey]: e.target.value })} placeholder={ph(hint)} className={`${BOX} ${bad(wid) ? BAD : OK}`} data-testid={wkey.replace(/_/g, "-")} />
                       </div>
                     ))}
@@ -185,9 +185,10 @@ export default function SaleFormBody({ f, booking = null, sale = null, readOnly 
         </div>
       </section>
 
-      {/* Booking: just the tick, to say the vehicle is booked. It changes nothing else in the form. Ticked, Save books the vehicle
-          (reserved, shown as Booked on the Sales page) instead of recording a sale; the deposit and how it was paid are filled
-          in afterwards from the booking's details (Edit). Not offered on a recorded sale or when the sale completes a booking. */}
+      {/* Booking: the tick, to say the vehicle is booked; ticked, it opens one box for the booking amount (the deposit) and
+          changes nothing else in the form. Save then books the vehicle (reserved, shown as Booked on the Sales page) instead of
+          recording a sale. The amount may be left empty and entered later from the booking's details (Edit). Not offered on a
+          recorded sale or when the sale completes a booking. */}
       {!existing && !booking && (
         <section id="sv-section-booking" className={SECTION} data-testid="booking-section">
           {/* The title is a heading like "Sale" and "Notes" (same size and weight as H2), with the tick in front of it. */}
@@ -200,6 +201,14 @@ export default function SaleFormBody({ f, booking = null, sale = null, readOnly 
               <label htmlFor="sv-booking" className="cursor-pointer select-none">Booking</label>
             </h3>
           </div>
+          {form.booking && (
+            <div className={`${GRID} mt-4`} data-testid="booking-fields">
+              <div>
+                <label htmlFor="sv-booking-amount" className={LBL}>Booking Amount (NPR)</label>
+                <Money id="sv-booking-amount" testid="booking-amount-input" placeholder="e.g. 20000" value={form.booking_amount} onChange={v => set({ booking_amount: v })} />
+              </div>
+            </div>
+          )}
         </section>
       )}
 

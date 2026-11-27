@@ -347,7 +347,10 @@ create table if not exists "public"."sales" (
   "prev_purchase_price" double precision,
   "prev_purchase_date" varchar(20),
   "prev_accessories_cost" double precision,
-  "prev_sanakhat_cost" double precision
+  "prev_sanakhat_cost" double precision,
+  "item_id" varchar(36),
+  "quantity" integer,
+  "cost_at_sale" double precision
 );
 alter table "public"."sales" enable row level security;  -- the public API key can read nothing; the backend connects directly
 alter table "public"."sales" add column if not exists "id" varchar(36);
@@ -406,6 +409,9 @@ alter table "public"."sales" add column if not exists "prev_purchase_price" doub
 alter table "public"."sales" add column if not exists "prev_purchase_date" varchar(20);
 alter table "public"."sales" add column if not exists "prev_accessories_cost" double precision;
 alter table "public"."sales" add column if not exists "prev_sanakhat_cost" double precision;
+alter table "public"."sales" add column if not exists "item_id" varchar(36);
+alter table "public"."sales" add column if not exists "quantity" integer;
+alter table "public"."sales" add column if not exists "cost_at_sale" double precision;
 create index if not exists "idx_sales_company_id" on "public"."sales" ("company_id");
 create index if not exists "idx_sales_vehicle_id" on "public"."sales" ("vehicle_id");
 create index if not exists "idx_sales_customer_id" on "public"."sales" ("customer_id");
@@ -821,7 +827,8 @@ create table if not exists "public"."vehicle_photos" (
   "storage_path" varchar(500),
   "uploaded_at" varchar(40),
   "size" integer,
-  "sort_order" integer
+  "sort_order" integer,
+  "item_id" varchar(36)
 );
 alter table "public"."vehicle_photos" enable row level security;  -- the public API key can read nothing; the backend connects directly
 alter table "public"."vehicle_photos" add column if not exists "id" varchar(36);
@@ -834,6 +841,7 @@ alter table "public"."vehicle_photos" add column if not exists "storage_path" va
 alter table "public"."vehicle_photos" add column if not exists "uploaded_at" varchar(40);
 alter table "public"."vehicle_photos" add column if not exists "size" integer;
 alter table "public"."vehicle_photos" add column if not exists "sort_order" integer;
+alter table "public"."vehicle_photos" add column if not exists "item_id" varchar(36);
 create index if not exists "idx_vehicle_photos_company_id" on "public"."vehicle_photos" ("company_id");
 create index if not exists "idx_vehicle_photos_vehicle_id" on "public"."vehicle_photos" ("vehicle_id");
 create index if not exists "idx_vehicle_photos_uploaded_at" on "public"."vehicle_photos" ("uploaded_at");
@@ -887,7 +895,8 @@ create table if not exists "public"."leads" (
   "decided_at" varchar(40),
   "customer_id" varchar(36),
   "vehicle_id" varchar(36),
-  "seen_at" varchar(40)
+  "seen_at" varchar(40),
+  "seen_by" varchar(100)
 );
 alter table "public"."leads" enable row level security;  -- the public API key can read nothing; the backend connects directly
 alter table "public"."leads" add column if not exists "id" varchar(36);
@@ -910,6 +919,7 @@ alter table "public"."leads" add column if not exists "decided_at" varchar(40);
 alter table "public"."leads" add column if not exists "customer_id" varchar(36);
 alter table "public"."leads" add column if not exists "vehicle_id" varchar(36);
 alter table "public"."leads" add column if not exists "seen_at" varchar(40);
+alter table "public"."leads" add column if not exists "seen_by" varchar(100);
 create index if not exists "idx_leads_company_id" on "public"."leads" ("company_id");
 create index if not exists "idx_leads_created_at" on "public"."leads" ("created_at");
 
@@ -923,7 +933,12 @@ create table if not exists "public"."settings" (
   "address" varchar(500),
   "hero_image_url" varchar(1000),
   "service_image_url" varchar(1000),
-  "warranty_days_default" integer
+  "warranty_days_default" integer,
+  "business_type" varchar(20),
+  "site_url" varchar(300),
+  "site_sync_url" varchar(300),
+  "site_sync_key" varchar(120),
+  "site_key" varchar(40)
 );
 alter table "public"."settings" enable row level security;  -- the public API key can read nothing; the backend connects directly
 alter table "public"."settings" add column if not exists "id" varchar(36);
@@ -936,6 +951,11 @@ alter table "public"."settings" add column if not exists "address" varchar(500);
 alter table "public"."settings" add column if not exists "hero_image_url" varchar(1000);
 alter table "public"."settings" add column if not exists "service_image_url" varchar(1000);
 alter table "public"."settings" add column if not exists "warranty_days_default" integer;
+alter table "public"."settings" add column if not exists "business_type" varchar(20);
+alter table "public"."settings" add column if not exists "site_url" varchar(300);
+alter table "public"."settings" add column if not exists "site_sync_url" varchar(300);
+alter table "public"."settings" add column if not exists "site_sync_key" varchar(120);
+alter table "public"."settings" add column if not exists "site_key" varchar(40);
 create index if not exists "idx_settings_company_id" on "public"."settings" ("company_id");
 
 create table if not exists "public"."sync_logs" (
@@ -1073,6 +1093,71 @@ alter table "public"."page_views" add column if not exists "created_at" varchar(
 create index if not exists "idx_page_views_company_id" on "public"."page_views" ("company_id");
 create index if not exists "idx_page_views_created_at" on "public"."page_views" ("created_at");
 
+create table if not exists "public"."staff_access" (
+  "id" varchar(36) not null primary key,
+  "company_id" varchar(36) not null,
+  "phone" varchar(50),
+  "address" varchar(500),
+  "pan" varchar(50),
+  "job_title" varchar(100),
+  "work_start" varchar(5),
+  "work_end" varchar(5),
+  "access" text,
+  "status" varchar(10),
+  "updated_at" varchar(40),
+  "portal_email" varchar(255)
+);
+alter table "public"."staff_access" enable row level security;  -- the public API key can read nothing; the backend connects directly
+alter table "public"."staff_access" add column if not exists "id" varchar(36);
+alter table "public"."staff_access" add column if not exists "company_id" varchar(36);
+alter table "public"."staff_access" add column if not exists "phone" varchar(50);
+alter table "public"."staff_access" add column if not exists "address" varchar(500);
+alter table "public"."staff_access" add column if not exists "pan" varchar(50);
+alter table "public"."staff_access" add column if not exists "job_title" varchar(100);
+alter table "public"."staff_access" add column if not exists "work_start" varchar(5);
+alter table "public"."staff_access" add column if not exists "work_end" varchar(5);
+alter table "public"."staff_access" add column if not exists "access" text;
+alter table "public"."staff_access" add column if not exists "status" varchar(10);
+alter table "public"."staff_access" add column if not exists "updated_at" varchar(40);
+alter table "public"."staff_access" add column if not exists "portal_email" varchar(255);
+
+create table if not exists "public"."items" (
+  "id" varchar(36) not null primary key,
+  "company_id" varchar(36) not null,
+  "name" varchar(255),
+  "sku" varchar(100),
+  "category" varchar(100),
+  "serial_number" varchar(100),
+  "cost" double precision,
+  "price" double precision,
+  "quantity" integer,
+  "status" varchar(20) default 'available',
+  "notes" text,
+  "vendor_id" varchar(36),
+  "created_by" varchar(100),
+  "created_at" varchar(40),
+  "updated_at" varchar(40)
+);
+alter table "public"."items" enable row level security;  -- the public API key can read nothing; the backend connects directly
+alter table "public"."items" add column if not exists "id" varchar(36);
+alter table "public"."items" add column if not exists "company_id" varchar(36);
+alter table "public"."items" add column if not exists "name" varchar(255);
+alter table "public"."items" add column if not exists "sku" varchar(100);
+alter table "public"."items" add column if not exists "category" varchar(100);
+alter table "public"."items" add column if not exists "serial_number" varchar(100);
+alter table "public"."items" add column if not exists "cost" double precision;
+alter table "public"."items" add column if not exists "price" double precision;
+alter table "public"."items" add column if not exists "quantity" integer;
+alter table "public"."items" add column if not exists "status" varchar(20) default 'available';
+alter table "public"."items" add column if not exists "notes" text;
+alter table "public"."items" add column if not exists "vendor_id" varchar(36);
+alter table "public"."items" add column if not exists "created_by" varchar(100);
+alter table "public"."items" add column if not exists "created_at" varchar(40);
+alter table "public"."items" add column if not exists "updated_at" varchar(40);
+create index if not exists "idx_items_company_id" on "public"."items" ("company_id");
+create index if not exists "idx_items_status" on "public"."items" ("status");
+create index if not exists "idx_items_sku" on "public"."items" ("sku");
+
 create table if not exists "public"."fin_parties" (
   "id" varchar(36) not null primary key,
   "company_id" varchar(36) not null,
@@ -1105,6 +1190,7 @@ create table if not exists "public"."fin_bank_accounts" (
   "address" varchar(300),
   "created_at" varchar(40),
   "updated_at" varchar(40),
+  "opening_balance" double precision not null default 0,
   constraint "uq_fin_accounts_name" unique ("company_id", "name")
 );
 alter table "public"."fin_bank_accounts" enable row level security;  -- the public API key can read nothing; the backend connects directly
@@ -1117,6 +1203,7 @@ alter table "public"."fin_bank_accounts" add column if not exists "account_holde
 alter table "public"."fin_bank_accounts" add column if not exists "address" varchar(300);
 alter table "public"."fin_bank_accounts" add column if not exists "created_at" varchar(40);
 alter table "public"."fin_bank_accounts" add column if not exists "updated_at" varchar(40);
+alter table "public"."fin_bank_accounts" add column if not exists "opening_balance" double precision default 0;
 
 create table if not exists "public"."fin_account_transfers" (
   "id" varchar(36) not null primary key,
@@ -1344,6 +1431,7 @@ create table if not exists "public"."fin_cash_account" (
   "account_holder_name" varchar(150),
   "address" varchar(300),
   "updated_at" varchar(40),
+  "opening_balance" double precision not null default 0,
   constraint "uq_fin_cash_company" unique ("company_id")
 );
 alter table "public"."fin_cash_account" enable row level security;  -- the public API key can read nothing; the backend connects directly
@@ -1355,6 +1443,7 @@ alter table "public"."fin_cash_account" add column if not exists "account_number
 alter table "public"."fin_cash_account" add column if not exists "account_holder_name" varchar(150);
 alter table "public"."fin_cash_account" add column if not exists "address" varchar(300);
 alter table "public"."fin_cash_account" add column if not exists "updated_at" varchar(40);
+alter table "public"."fin_cash_account" add column if not exists "opening_balance" double precision default 0;
 
 create table if not exists "public"."fin_quotations" (
   "id" varchar(36) not null primary key,
@@ -1459,6 +1548,8 @@ do $$ begin alter table "public"."facebook_pages" add constraint "fk_facebook_pa
 do $$ begin alter table "public"."offer_prizes" add constraint "fk_offer_prizes_company" foreign key ("company_id") references "public"."companies" ("id"); exception when duplicate_object then null; end $$;
 do $$ begin alter table "public"."offer_codes" add constraint "fk_offer_codes_company" foreign key ("company_id") references "public"."companies" ("id"); exception when duplicate_object then null; end $$;
 do $$ begin alter table "public"."page_views" add constraint "fk_page_views_company" foreign key ("company_id") references "public"."companies" ("id"); exception when duplicate_object then null; end $$;
+do $$ begin alter table "public"."items" add constraint "fk_items_vendor" foreign key ("vendor_id") references "public"."vendors" ("id") ON DELETE SET NULL; exception when duplicate_object then null; end $$;
+do $$ begin alter table "public"."items" add constraint "fk_items_company" foreign key ("company_id") references "public"."companies" ("id"); exception when duplicate_object then null; end $$;
 do $$ begin alter table "public"."fin_parties" add constraint "fk_fin_parties_company" foreign key ("company_id") references "public"."companies" ("id"); exception when duplicate_object then null; end $$;
 do $$ begin alter table "public"."fin_bank_accounts" add constraint "fk_fin_accounts_company" foreign key ("company_id") references "public"."companies" ("id"); exception when duplicate_object then null; end $$;
 do $$ begin alter table "public"."fin_account_transfers" add constraint "fk_fin_transfers_company" foreign key ("company_id") references "public"."companies" ("id"); exception when duplicate_object then null; end $$;
