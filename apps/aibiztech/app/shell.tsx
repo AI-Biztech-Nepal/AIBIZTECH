@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { createClient, type Org } from '@/lib/supabase';
+import { businessKind } from '@/lib/business-kind-load';
 import { hasOldFinance } from '@/lib/old-finance';
 import { PortalFrame, type Page } from './portal-frame';
 
@@ -11,11 +12,12 @@ export async function Shell({ org, orgs, page, bleed, light, phoneDate, children
     supabase.auth.getClaims(),
   ]);
   const email = claims?.claims.email ?? '';
-  const oldFinance = org?.services.stock ? await hasOldFinance(supabase, org.id) : false;
+  const auto = org?.services.stock ? (await businessKind(supabase, org.id)) === 'auto' : false;
+  const oldFinance = org && auto ? await hasOldFinance(supabase, org.id) : false;
   const person = (claims?.claims.user_metadata as { full_name?: string } | undefined)?.full_name || email.split('@')[0] || 'Account';
 
   return (
-    <PortalFrame org={org} orgs={orgs} services={services} person={person} email={email} page={page} bleed={bleed} oldFinance={oldFinance} light={light} phoneDate={phoneDate}>
+    <PortalFrame org={org} orgs={orgs} services={services} person={person} email={email} page={page} bleed={bleed} auto={auto} oldFinance={oldFinance} light={light} phoneDate={phoneDate}>
       {children}
     </PortalFrame>
   );

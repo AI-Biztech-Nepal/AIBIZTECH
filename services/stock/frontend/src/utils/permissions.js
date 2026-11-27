@@ -138,6 +138,7 @@ export function featureOn(features, key) {
 const PATH_FEATURES = [
   ["/jobs", "stock.job_cards"], ["/warranty", "stock.warranty"], ["/sanakhat", "stock.sanakhat"],
   ["/spare-parts", "stock.spare_parts"], ["/ai", "stock.ai_assistant"], ["/bookings", "stock.bookings"],
+  ["/finance", "stock.auto_finance"], // on unless the portal says this is not a vehicle business (utils/businessKind.js)
 ];
 export function featureForPath(path) {
   const hit = PATH_FEATURES.find(([p]) => path === p || path.startsWith(p + "/"));

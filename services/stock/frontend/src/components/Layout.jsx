@@ -3,7 +3,7 @@ import { Outlet, NavLink, useNavigate, useLocation } from "react-router-dom";
 import { toast } from "sonner";
 import api from "../utils/api";
 import { useAuth } from "../context/AuthContext";
-import { accessLevel, canAccessPath, marketingTabsFor, itemsMode } from "../utils/permissions";
+import { accessLevel, canAccessPath, marketingTabsFor, itemsMode, featureOn } from "../utils/permissions";
 import FinanceNavGroup from "./FinanceNavGroup";
 import SidebarProfile from "./SidebarProfile";
 import NavGroup from "./NavGroup";
@@ -71,7 +71,7 @@ export default function Layout() {
   const handleLogout = () => { logout(); navigate("/login"); };
   // Admin's people live in Finance's Ledger now, so the main Ledger item goes for admin; stock and parts supervisors
   // (who can't open Finance) keep it as their way to Staff / Vendors. The /ledger page itself still works.
-  const visibleNavItems = navItems.filter(({ path }) => canAccessPath(user?.role, path, features) && (path !== "/sanakhat" || user?.role === "sanakhat_officer" || canAccessPath(user?.role, "/sales") || accessLevel(user?.role, "sanakhat") !== "none") && (path !== "/ledger" || (user?.role && user.role !== "admin" && !canAccessPath(user.role, "/finance"))));
+  const visibleNavItems = navItems.filter(({ path }) => canAccessPath(user?.role, path, features) && (path !== "/sanakhat" || user?.role === "sanakhat_officer" || canAccessPath(user?.role, "/sales") || accessLevel(user?.role, "sanakhat") !== "none") && (path !== "/ledger" || !featureOn(features, "stock.auto_finance") || (user?.role && user.role !== "admin" && !canAccessPath(user.role, "/finance"))));
 
   // Missing-data notifications: flags active-stock vehicles missing a photo or a
   // registration number so gaps get caught without staff having to go hunting for

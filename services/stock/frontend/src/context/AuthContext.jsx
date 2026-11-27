@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import api from "../utils/api";
 import { ALL_FEATURES_ON, GENERIC_TERMS, VEHICLE_TERMS, itemsMode, setAccessOverrides } from "../utils/permissions";
+import { forKind } from "../utils/businessKind";
 import { forgetAll } from "../utils/listCache";
 
 const AuthContext = createContext(null);
@@ -50,13 +51,15 @@ export const AuthProvider = ({ children }) => {
     let live = true;
     api.get("/features").then((r) => {
       if (!live) return;
-      const f = r.data?.features ?? null;
+      const said = r.data?.features ?? null;
+      const f = forKind(said);
       setFeatures(f);
       const own = r.data?.access || {};
       applyAccess(own);
       try { storage.set("gng_access", own); } catch { /* applies this session */ }
-      setTerms(r.data?.terms || (itemsMode(f) ? GENERIC_TERMS : VEHICLE_TERMS));
-      try { storage.set("gng_features", f); storage.set("gng_terms", r.data?.terms || null); } catch { /* storage full or blocked: the answer still applies this session */ }
+      const words = (f === said && r.data?.terms) || (itemsMode(f) ? GENERIC_TERMS : VEHICLE_TERMS);
+      setTerms(words);
+      try { storage.set("gng_features", f); storage.set("gng_terms", words); } catch { /* storage full or blocked: the answer still applies this session */ }
     }).catch(() => {}); // old server without the endpoint, or offline: keep what we had; the server's 403s still apply
     return () => { live = false; };
   }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -74,9 +77,9 @@ export const AuthProvider = ({ children }) => {
   const login = (userData, authToken) => {
     forgetAll();
     setUser(userData);
-    setFeatures(null);
+    setFeatures(forKind(null));
     applyAccess({});
-    setTerms(VEHICLE_TERMS);
+    setTerms(itemsMode(forKind(null)) ? GENERIC_TERMS : VEHICLE_TERMS);
     storage.remove("gng_features");
     storage.remove("gng_terms");
     storage.remove("gng_access");

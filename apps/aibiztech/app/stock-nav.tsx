@@ -89,7 +89,8 @@ export function StockModules({ who, withDashboard }: { who: string; withDashboar
   return (
     <>
       {menu.filter((n) => n.key !== 'settings' && (withDashboard || n.key !== 'dashboard')).map((n) => (
-        <Node key={n.key} node={n.key === 'dashboard' ? { ...n, label: 'Stock Dashboard' } : n} here={here} icon={ICONS[n.key] ?? 'app'} />
+        // beside the general Finance, which has its own Ledger, the stock app's people list is named for what it holds
+        <Node key={n.key} node={n.key === 'dashboard' ? { ...n, label: 'Stock Dashboard' } : n.key === 'ledger' ? { ...n, label: 'Customers & Staff' } : n} here={here} icon={ICONS[n.key] ?? 'app'} />
       ))}
     </>
   );

@@ -8,6 +8,7 @@ import { safeNext } from '@/lib/safe-next';
 import { EMAIL, FIELDS, PHONE, validateDetails, validatePhoto, type Details } from '@/lib/org-details';
 import { TRIAL_DAYS, validateSignup, type SignupState, type SignupValues } from '@/lib/signup';
 import { signInProblem, type SignInState } from '@/lib/signin';
+import { isBusinessType } from '@/lib/business-kind';
 
 const str = (f: FormData, k: string) => String(f.get(k) ?? '').trim();
 const fail = (path: string, message: string): never => redirect(`${path}?error=${encodeURIComponent(message)}`);
@@ -121,6 +122,13 @@ export async function createOrganization(form: FormData) {
   if (error) {
     if (error.code !== '23505') fail('/onboarding', error.message);
     fail('/onboarding', error.message.includes('pan_no') ? 'An organization with this PAN is already registered.' : 'That name is already taken. Try another.');
+  }
+
+  // The kind of business picks its stock and finance screens; it can be changed later in My Business
+  const type = str(form, 'business_type');
+  if (isBusinessType(type)) {
+    const { error: typeError } = await supabase.schema('core').from('organizations').update({ business_type: type }).eq('id', orgId);
+    if (typeError) console.error('Could not save the kind of business:', typeError.message);
   }
 
   // The organization exists by now; a failed photo upload must not lose it, so the owner can add the photo later
@@ -250,7 +258,8 @@ export async function updateOrganization(form: FormData) {
   const { supabase, ctx } = await getContext();
   const id = str(form, 'org_id');
   if (ctx!.orgs.find((o) => o.id === id)?.org_role === 'member') fail('/admin', 'Only owners and admins can edit the organization.');
-  const v = { name: str(form, 'name'), address: str(form, 'address'), phone: str(form, 'phone'), email: str(form, 'email') };
+  const type = str(form, 'business_type');
+  const v = { name: str(form, 'name'), address: str(form, 'address'), phone: str(form, 'phone'), email: str(form, 'email'), ...(isBusinessType(type) ? { business_type: type } : {}) };
   if (!v.name || !v.address) fail('/admin', 'Name and address are required.');
   if (!PHONE.test(v.phone)) fail('/admin', 'Enter a valid phone number (digits, optional + and dashes).');
   if (!EMAIL.test(v.email)) fail('/admin', 'Enter a valid email address.');

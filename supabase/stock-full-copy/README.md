@@ -16,6 +16,10 @@ the earlier partial pages. Source copied: Auto-Stock-Manager `2c1df2b`.
 - One side panel: the app draws none of its own inside the portal. It sends its menu (by role and staff access) to the
   portal's panel (app/stock-nav.tsx, utils/portalMenu.js). Dashboard, Finance, Marketing and Settings appear once. A
   business with records in the earlier Finance app (5 on 2026-11-27) keeps it as "Old Finance" plus the portal Dashboard.
+- Each business gets its version (apps/aibiztech/lib/business-kind.ts): stock.vehicles switch on, or business_type
+  "vehicles" => vehicle screens and Stock Manager's own Finance; otherwise generic Items and the portal's general Finance
+  (workshop also keeps job cards and spare parts). Sign-up asks the kind; My Business can change it. The app hides the
+  screens (utils/businessKind.js); its server does not refuse them. Workshop job screens still use vehicle wording.
 - Tried on one Mac: portal build + copied server + these tables + made-up data, every screen clicked through.
 
 ## Not done yet

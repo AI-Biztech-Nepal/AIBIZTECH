@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { getContext } from '@/lib/supabase';
 import { signSsoToken } from '@/lib/sso';
+import { businessKind } from '@/lib/business-kind-load';
 
 // Open app: checks the person may use the service, then hands them to it already signed in
 export async function GET(req: NextRequest, { params }: { params: Promise<{ service: string }> }) {
@@ -22,7 +23,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ serv
   const embed = req.nextUrl.searchParams.get('embed') === '1';
   // Stock Manager is served by the portal itself, at /stock-app
   const base = service === 'stock' ? new URL('/stock-app', req.url).toString() : svc.base_url.replace(/\/$/, '');
-  const marker = embed ? 'embed=1' : 'from=aibiztech';
+  // Stock Manager is told what kind of business this is, so it shows the vehicle screens or the general ones
+  const kind = service === 'stock' ? `&kind=${await businessKind(supabase, org.id)}` : '';
+  const marker = `${embed ? 'embed=1' : 'from=aibiztech'}${kind}`;
   const joiner = to.includes('?') ? '&' : '?';
 
   // Single sign-on only for apps that have the /sso page (listed in SSO_SERVICES, e.g. "attendance,stock"); the rest open as they are

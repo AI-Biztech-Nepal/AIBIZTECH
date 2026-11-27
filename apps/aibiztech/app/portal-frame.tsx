@@ -22,7 +22,8 @@ type Props = {
   email: string;
   page: Page;
   bleed?: boolean; // an app's own page fills the whole area
-  oldFinance?: boolean; // a business with Stock Manager that also has records in the earlier Finance app
+  auto?: boolean; // a vehicle business with Stock Manager: its Finance is the one inside Stock Manager
+  oldFinance?: boolean; // such a business that also has records in the general Finance app
   light?: boolean; // redesigned portal pages; module screens keep their own look
   preview?: boolean; // look only: switching business and signing out do nothing
   phoneDate?: string; // set by the dashboard: a charcoal header on phones, with this date in it
@@ -34,16 +35,17 @@ const initialsOf = (name: string) => name.split(/\s+/).map((w) => w[0]).slice(0,
 
 // The frame around every signed-in page: side panel on the left, business and account menus on top.
 // Apps come from core.services, so a new service (or one turned on for a business) shows up without touching this file.
-export function PortalFrame({ org, orgs = [], services, person, email, page, bleed = false, oldFinance = false, light = false, preview = false, phoneDate, children }: Props) {
+export function PortalFrame({ org, orgs = [], services, person, email, page, bleed = false, auto = false, oldFinance = false, light = false, preview = false, phoneDate, children }: Props) {
   const isAdmin = !!org && org.org_role !== 'member';
   const status = org?.verification_status;
   const statusLabel = status === 'verified' ? 'Verified' : status === 'rejected' ? 'Rejected' : 'Awaiting verification';
   const apps = appsInOrder(services, org);
   const phone = !!org && !!phoneDate;
   const bar = page !== 'frame'; // portal pages get a bar along the bottom on phones; module screens keep their own look
-  // With Stock Manager, its screens are the business's dashboard, finance and marketing: one menu entry for each
+  // One menu entry for each thing. Marketing is Stock Manager's. A vehicle business also takes its Dashboard and Finance
+  // from Stock Manager; every other business keeps the general ones.
   const stock = !!org?.services.stock;
-  const merged = stock && !oldFinance;
+  const merged = stock && auto && !oldFinance;
   const who = `${org?.id ?? ''}:${email}`;
 
   const item = (href: string, icon: string, label: string, active = false, extra?: ReactNode) => (
@@ -87,7 +89,7 @@ export function PortalFrame({ org, orgs = [], services, person, email, page, ble
               if (svc.key === 'finance' && merged) return null;
               if (on && svc.key === 'marketing') return <Fragment key={svc.key}>{item('/app/marketing', 'megaphone', svc.name)}</Fragment>;
               // Finance runs inside AIBIZTECH (served at /finance); other apps are opened through single sign-on
-              if (on && svc.key === 'finance') return <AppMenu key={svc.key} service="finance" icon="finance" name={stock ? 'Old Finance' : svc.name} home="/company-dashboard" nodes={FINANCE_MENU} isAdmin />;
+              if (on && svc.key === 'finance') return <AppMenu key={svc.key} service="finance" icon="finance" name={auto ? 'Old Finance' : svc.name} home="/company-dashboard" nodes={FINANCE_MENU} isAdmin />;
               return (
                 <Fragment key={svc.key}>
                   {on ? item(`/app/${svc.key}`, serviceIcon(svc.key, svc.name), svc.name) : item(org ? '/' : '/onboarding', serviceIcon(svc.key, svc.name), svc.name, false, <Icon name="lockmini" size={14} />)}

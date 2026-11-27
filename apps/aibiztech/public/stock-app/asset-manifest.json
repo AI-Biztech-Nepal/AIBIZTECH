@@ -1,13 +1,13 @@
 {
   "files": {
     "main.css": "/stock-app/static/css/main.9fbb76a2.css",
-    "main.js": "/stock-app/static/js/main.39c236ed.js",
+    "main.js": "/stock-app/static/js/main.ddda4f5f.js",
     "static/js/1413.49c05d87.chunk.js": "/stock-app/static/js/1413.49c05d87.chunk.js",
     "static/js/1280.68d56fdb.chunk.js": "/stock-app/static/js/1280.68d56fdb.chunk.js",
     "static/js/6838.0212bbf2.chunk.js": "/stock-app/static/js/6838.0212bbf2.chunk.js",
     "static/js/9740.351a31d1.chunk.js": "/stock-app/static/js/9740.351a31d1.chunk.js",
     "static/js/8895.314a7655.chunk.js": "/stock-app/static/js/8895.314a7655.chunk.js",
-    "static/js/5306.b91b2697.chunk.js": "/stock-app/static/js/5306.b91b2697.chunk.js",
+    "static/js/5306.9979c6ea.chunk.js": "/stock-app/static/js/5306.9979c6ea.chunk.js",
     "static/js/7545.e05a386d.chunk.js": "/stock-app/static/js/7545.e05a386d.chunk.js",
     "static/js/2665.f4a3cf6a.chunk.js": "/stock-app/static/js/2665.f4a3cf6a.chunk.js",
     "static/js/8939.52cbe84c.chunk.js": "/stock-app/static/js/8939.52cbe84c.chunk.js",
@@ -60,6 +60,6 @@
   },
   "entrypoints": [
     "static/css/main.9fbb76a2.css",
-    "static/js/main.39c236ed.js"
+    "static/js/main.ddda4f5f.js"
   ]
 }

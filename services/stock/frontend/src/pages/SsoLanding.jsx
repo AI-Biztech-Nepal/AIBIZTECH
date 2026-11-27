@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import api from "../utils/api";
 import { useAuth } from "../context/AuthContext";
+import { rememberKind } from "../utils/businessKind";
 
 const PORTAL_URL = process.env.REACT_APP_PORTAL_URL || "https://aibiztech.vercel.app";
 
@@ -18,6 +19,7 @@ export default function SsoLanding() {
     started.current = true;
     const token = new URLSearchParams(window.location.hash.slice(1)).get("token");
     const asked = new URLSearchParams(window.location.search).get("to") || "/";
+    rememberKind(new URLSearchParams(window.location.search).get("kind")); // before signing in: it decides which screens show
     const to = asked.startsWith("/") && !asked.startsWith("//") && !asked.startsWith("/sso") ? asked : "/";
     window.history.replaceState(null, "", window.location.pathname + window.location.search);
     if (!token) { navigate("/login", { replace: true }); return; }
