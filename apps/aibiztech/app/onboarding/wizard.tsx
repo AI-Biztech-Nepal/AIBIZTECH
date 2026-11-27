@@ -5,6 +5,7 @@ import { useFormStatus } from 'react-dom';
 import { createOrganization } from '../actions';
 import { FIELDS, MAX_PHOTO_BYTES, PAN, validatePhoto, type Details } from '@/lib/org-details';
 import { TRIAL_DAYS } from '@/lib/signup';
+import { BUSINESS_TYPES } from '@/lib/business-kind';
 import { inModuleOrder, MODULES } from './modules';
 import s from './onboarding.module.css';
 
@@ -42,6 +43,7 @@ export function Wizard({ initial, services, another = false, error, preview = fa
   const [tried, setTried] = useState(false);
   const [photo, setPhoto] = useState({ name: '', problem: '' });
   const [picked, setPicked] = useState<string[]>([]);
+  const [type, setType] = useState('');
   const [needPick, setNeedPick] = useState(false); // Continue was pressed with nothing chosen
   const [note, setNote] = useState('');
   const toggle = (k: string) => {
@@ -55,6 +57,7 @@ export function Wizard({ initial, services, another = false, error, preview = fa
   // What stops the first step, in the order the fields appear
   const problems = {
     name: v.name.trim() ? '' : 'Enter your business name.',
+    business_type: type ? '' : 'Choose your kind of business.',
     address: v.address.trim() ? '' : 'Enter the business address.',
     pan_no: PAN.test(v.pan_no) ? '' : 'PAN must be exactly 9 digits.',
     pan_photo: photo.problem,
@@ -144,6 +147,16 @@ export function Wizard({ initial, services, another = false, error, preview = fa
             <h2 id="business-title">Business details</h2>
             <div className={`${s.body} ${s.grid}`}>
               {field('name', 'Business name', { autoComplete: 'organization', placeholder: 'Your company or business name' })}
+              <div className={s.field}>
+                <label htmlFor="business_type">Kind of business</label>
+                <select id="business_type" name="business_type" value={type} onChange={(e) => setType(e.target.value)} aria-invalid={tried && !!problems.business_type} required>
+                  <option value="" disabled>Choose…</option>
+                  {BUSINESS_TYPES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+                </select>
+                {tried && problems.business_type
+                  ? <span className={s.problem} role="alert">{problems.business_type}</span>
+                  : <span className={s.hint}>Decides which stock and finance screens you get.</span>}
+              </div>
               {field('address', 'Business address', { autoComplete: 'street-address', maxLength: 200 })}
               {field('pan_no', 'PAN number', { inputMode: 'numeric', maxLength: 9, placeholder: '9 digits', onChange: (e) => setV((p) => ({ ...p, pan_no: e.target.value.replace(/\D/g, '').slice(0, 9) })) }, panHint)}
               <div className={s.field}>
@@ -187,7 +200,7 @@ export function Wizard({ initial, services, another = false, error, preview = fa
             <h2 id="review-title">Review</h2>
             <div className={s.body}>
               <dl>
-                {row('Business', v.name)}{row('Business address', v.address)}{row('Modules', choices.filter((svc) => picked.includes(svc.key)).map((svc) => svc.name).join(', '))}
+                {row('Business', v.name)}{row('Kind of business', BUSINESS_TYPES.find((t) => t.id === type)?.label ?? '')}{row('Business address', v.address)}{row('Modules', choices.filter((svc) => picked.includes(svc.key)).map((svc) => svc.name).join(', '))}
                 {row('Owner', v.owner_name)}{row('Owner address', ownerAddress)}{row('Owner phone', v.owner_phone)}{row('Owner email', v.owner_email)}
                 {row('PAN', v.pan_no)}{row('PAN photo', photo.name)}
               </dl>

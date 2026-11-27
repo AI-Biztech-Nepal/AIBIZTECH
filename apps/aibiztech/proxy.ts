@@ -31,5 +31,6 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|.*\\.(?:jpg|jpeg|png|svg|webp|ico)$).*)'],
+  // /api is Stock Manager's server (next.config.ts passes it on). It checks its own sign-in.
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|api/|.*\\.(?:jpg|jpeg|png|svg|webp|ico)$).*)'],
 };

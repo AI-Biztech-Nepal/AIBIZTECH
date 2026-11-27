@@ -1,14 +1,13 @@
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { STOCK_IS_LIVE_APP, STOCK_LIVE_URL } from '@/lib/stock-live';
 import { getContext } from '@/lib/supabase';
+import { askBusinessType } from '@/lib/ask-business-type';
 import { AppFrame } from '../../../app-frame';
 import { Shell } from '../../../shell';
 
 // Live addresses used if the saved one is missing or points back at the portal itself
 const LIVE: Record<string, string> = {
   attendance: process.env.ATTENDANCE_LIVE_URL ?? 'https://attendance-nepal.com',
-  stock: process.env.STOCK_LIVE_URL ?? 'https://stock.hamroauto.com.np',
 };
 
 type Props = { params: Promise<{ service: string; path?: string[] }>; searchParams: Promise<Record<string, string | string[] | undefined>> };
@@ -21,12 +20,13 @@ export default async function AppPage({ params, searchParams }: Props) {
   if (!ctx) redirect('/login');
   const org = ctx.orgs.find((o) => o.id === ctx.active_org_id) ?? ctx.orgs[0];
   if (!org) redirect('/onboarding');
-  if (!org.services[service]) redirect('/?error=' + encodeURIComponent('You do not have access to that app.'));
+  if (service !== 'attendance') await askBusinessType(supabase, org);
 
-  // Stock Manager is part of the portal now (/stock), not a frame
-  const liveStock = service === 'stock' && STOCK_IS_LIVE_APP;
-  if ((service === 'stock' && !liveStock) || service === 'marketing') redirect(`/${service}${path.length ? '/' + path.map(encodeURIComponent).join('/') : ''}`);
-  const { data: svc } = await supabase.schema('core').from('services').select('name, base_url').eq('key', service).eq('is_active', true).maybeSingle();
+  // The Marketing screens are part of Stock Manager, so they open with the business's Stock Manager access
+  const key = service === 'marketing' ? 'stock' : service;
+  if (!org.services[key]) redirect('/?error=' + encodeURIComponent('You do not have access to that app.'));
+
+  const { data: svc } = await supabase.schema('core').from('services').select('name, base_url').eq('key', key).eq('is_active', true).maybeSingle();
   if (!svc) redirect('/?error=' + encodeURIComponent('That app is not available.'));
 
   const qs = new URLSearchParams();
@@ -35,7 +35,11 @@ export default async function AppPage({ params, searchParams }: Props) {
   const search = qs.toString() ? `?${qs}` : '';
 
   let src: string;
-  if (service === 'finance') {
+  if (key === 'stock') {
+    // The portal hands the app a signed pass for the person signed in here
+    const page = service === 'marketing' && target === '/' ? '/marketing' : target;
+    src = `/go/stock?to=${encodeURIComponent(page + search)}&embed=1`;
+  } else if (service === 'finance') {
     // Finance is part of the portal itself (static files at /finance)
     src = `/finance${target === '/' ? '' : target}${search}`;
   } else if (service === 'attendance' && process.env.ATTENDANCE_URL) {
@@ -48,7 +52,6 @@ export default async function AppPage({ params, searchParams }: Props) {
     const host = (await headers()).get('host') ?? '';
     let base = svc.base_url.replace(/\/$/, '');
     try { if (new URL(base).host === host) base = LIVE[service] ?? base; } catch { base = LIVE[service] ?? base; }
-    if (liveStock) base = STOCK_LIVE_URL;
     const sso = !!process.env.SSO_SECRET && (process.env.SSO_SERVICES ?? '').split(',').map((s) => s.trim()).includes(service);
     // With single sign-on the portal hands the app a signed pass; otherwise the app's own login shows inside the frame
     src = sso ? `/go/${service}?to=${encodeURIComponent(target + search)}&embed=1` : `${base}${target}${search}${search ? '&' : '?'}embed=1`;
@@ -56,7 +59,7 @@ export default async function AppPage({ params, searchParams }: Props) {
 
   return (
     <Shell org={org} orgs={ctx.orgs} page="frame" bleed>
-      <AppFrame src={src} title={svc.name} />
+      <AppFrame key={`${org.id}:${src}`} src={src} title={svc.name} app={key} />
     </Shell>
   );
 }

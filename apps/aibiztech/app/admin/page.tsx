@@ -17,7 +17,7 @@ export default async function Admin({ searchParams }: { searchParams: Search }) 
 
   const core = supabase.schema('core');
   const [{ data: details }, { data: rows }, { data: services }, { data: enabled }, { data: pending }] = await Promise.all([
-    core.from('organizations').select('name, address, phone, email, owner_name, owner_phone, owner_email, pan_no, created_at, verified_at').eq('id', org.id).single(),
+    core.from('organizations').select('name, business_type, address, phone, email, owner_name, owner_phone, owner_email, pan_no, created_at, verified_at').eq('id', org.id).single(),
     core.rpc('org_members', { p_org: org.id }),
     core.from('services').select('key, name, roles').eq('is_active', true).order('name'),
     core.from('org_services').select('service_key, status, trial_ends_at, enabled_at').eq('org_id', org.id),

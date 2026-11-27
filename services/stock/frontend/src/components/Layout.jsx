@@ -3,14 +3,15 @@ import { Outlet, NavLink, useNavigate, useLocation } from "react-router-dom";
 import { toast } from "sonner";
 import api from "../utils/api";
 import { useAuth } from "../context/AuthContext";
-import { canAccessPath, marketingTabsFor } from "../utils/permissions";
+import { accessLevel, canAccessPath, marketingTabsFor, itemsMode, featureOn } from "../utils/permissions";
 import FinanceNavGroup from "./FinanceNavGroup";
+import SidebarProfile from "./SidebarProfile";
 import NavGroup from "./NavGroup";
-import { PORTAL_URL, openedFromPortal } from "../utils/portalFlag";
+import { PORTAL_PANEL, buildPortalMenu, usePortalPanel } from "../utils/portalMenu";
 import { isSanakhatOverdue, sanakhatPendingDays } from "../utils/helpers";
-import {
-  LayoutDashboard, Bike, Wrench, Sparkles, Settings, LogOut, Menu, X, Bell,
-  BookOpen, Wallet, Boxes, ShoppingBag, Building2, ImageOff, FileWarning, ShieldCheck, Megaphone, Inbox, ChevronDown, Share2, Gift, Eye, HeartHandshake, FileCheck2, ArrowLeft
+import { UserPlus,
+  LayoutDashboard, Bike, Package, Wrench, Sparkles, Settings, Menu, X, Bell,
+  BookOpen, Wallet, Boxes, ShoppingBag, Building2, ImageOff, FileWarning, ShieldCheck, Megaphone, Inbox, ChevronDown, Share2, Gift, Eye, HeartHandshake, FileCheck2
 } from "lucide-react";
 
 // A vehicle needs at least this many photos before it's considered adequately
@@ -40,15 +41,22 @@ const navItems = [
   { path: "/marketing",   label: "Marketing",    icon: Megaphone },
   { path: "/ledger",       label: "Ledger",       icon: BookOpen },
   { path: "/jobs",         label: "Job Cards",    icon: Wrench },
-  { path: "/warranty",     label: "Warranty",     icon: ShieldCheck },
   { path: "/finance",      label: "Finance",      icon: Wallet },
+  { path: "/warranty",     label: "Warranty",     icon: ShieldCheck },
   { path: "/sanakhat",     label: "Sanakhat",     icon: FileCheck2 },  // the Sanakhat Desk account's only page; admin opens the same page
   { path: "/ai",           label: "AI Assistant", icon: Sparkles },
   { path: "/settings",     label: "Settings",     icon: Settings },
 ];
 
+// The page's name in the top bar, for every page that has no heading of its own up there (Inventory, Marketing, Sanakhat and
+// Finance are drawn below). A page keeps its description under it; its buttons stay where they were.
+const PAGE_TITLES = {
+  "/": "Dashboard", "/sales": "Sales", "/jobs": "Job Cards", "/warranty": "Warranty", "/ledger": "Ledger", "/import-stock": "Import Stock",
+  "/ai": "AI Assistant", "/platform": "Companies", "/reports": "Reports & Analytics", "/settings": "Settings",
+};
+
 export default function Layout() {
-  const { user, logout } = useAuth();
+  const { user, logout, features, terms } = useAuth();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const { pathname, search } = useLocation();
@@ -58,26 +66,17 @@ export default function Layout() {
   const [financeOpen, setFinanceOpen] = useState(null);     // ...the Finance dropdown...
   const [reportOpen, setReportOpen] = useState(null);       // ...and the family of reports under its Report item
   const [topbarSlot, setTopbarSlot] = useState(null);     // the top bar's spot for a page's own controls
+  const [titleSlot, setTitleSlot] = useState(null);       // the spot for a heading the page draws itself (Finance: its title changes with the tab)
 
   const handleLogout = () => { logout(); navigate("/login"); };
   // Admin's people live in Finance's Ledger now, so the main Ledger item goes for admin; stock and parts supervisors
   // (who can't open Finance) keep it as their way to Staff / Vendors. The /ledger page itself still works.
-  const visibleNavItems = navItems.filter(({ path }) => canAccessPath(user?.role, path) && (path !== "/sanakhat" || user?.role === "sanakhat_officer" || canAccessPath(user?.role, "/sales")) && (path !== "/ledger" || (user?.role && user.role !== "admin")));
+  const visibleNavItems = navItems.filter(({ path }) => canAccessPath(user?.role, path, features) && (path !== "/sanakhat" || user?.role === "sanakhat_officer" || canAccessPath(user?.role, "/sales") || accessLevel(user?.role, "sanakhat") !== "none") && (path !== "/ledger" || !featureOn(features, "stock.auto_finance") || (user?.role && user.role !== "admin" && !canAccessPath(user.role, "/finance"))));
 
   // Missing-data notifications: flags active-stock vehicles missing a photo or a
   // registration number so gaps get caught without staff having to go hunting for
   // them in Inventory. Only fetched for roles that can actually open Inventory.
   const canSeeInventory = canAccessPath(user?.role, "/inventory");
-  const [profileOpen, setProfileOpen] = useState(false);
-  const profileRef = useRef(null);
-  useEffect(() => {
-    if (!profileOpen) return;
-    const onDown = (e) => { if (!profileRef.current?.contains(e.target)) setProfileOpen(false); };
-    const onEsc = (e) => { if (e.key === "Escape") setProfileOpen(false); };
-    document.addEventListener("pointerdown", onDown);
-    document.addEventListener("keydown", onEsc);
-    return () => { document.removeEventListener("pointerdown", onDown); document.removeEventListener("keydown", onEsc); };
-  }, [profileOpen]);
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifVehicles, setNotifVehicles] = useState([]);
   const notifRef = useRef(null);
@@ -95,6 +94,7 @@ export default function Layout() {
   // Only pending leads nobody has opened yet count: opening the Leads screen marks what it shows as seen.
   // Polled every minute; the Leads screen pings "leads-changed" so the badge clears at once.
   const [newLeads, setNewLeads] = useState(0);
+  const [newAccounts, setNewAccounts] = useState(0); // newly registered accounts: not leads, so no badge or toast, only a bell line
   const lastNewLeads = useRef(null);
   const isAdmin = !user?.role || user.role === "admin";
   useEffect(() => {
@@ -108,6 +108,7 @@ export default function Layout() {
         }
         lastNewLeads.current = n;
         setNewLeads(n);
+        setNewAccounts(r.data.accounts || 0);
       }).catch(() => {});
     };
     load();
@@ -179,16 +180,14 @@ export default function Layout() {
     api.get("/brand").then(r => setBrand(r.data)).catch(() => {});
   }, [user]);
 
+  // In the portal, its side panel shows this app's menu (see utils/portalMenu.js)
+  usePortalPanel(PORTAL_PANEL ? buildPortalMenu({ items: visibleNavItems, marketingNav: MARKETING_NAV, serviceTabs: SERVICE_TABS,
+    role: user?.role, features, terms, newLeads, pathname, search }) : [], `${pathname}${search}`, navigate);
+
   // A plain render function, not a component: declared inside Layout, a component would be a new type on every render
   // and the whole sidebar would remount (losing taps on its buttons) whenever the polled data refreshed.
   const renderSidebar = (mobile = false) => (
     <aside className={`${mobile ? "fixed inset-0 z-50 flex" : "hidden lg:flex"} flex-col bg-slate-900 text-white ${mobile ? "w-64" : "w-64"} h-app`}>
-      {/* Opened from the AIBIZTECH portal: a way back to it */}
-      {openedFromPortal() && (
-        <a href={PORTAL_URL} className="flex items-center gap-2 mx-3 mt-3 px-3 py-2 rounded-lg bg-slate-800 text-blue-300 hover:text-white text-sm font-semibold" data-testid="back-to-aibiztech">
-          <ArrowLeft size={15} /> Back to AIBIZTECH
-        </a>
-      )}
       {/* Logo */}
       <div className="flex items-center gap-3 px-6 py-5 border-b border-slate-700">
         {/* The company's own logo when it has one (on a white tile: logos are drawn for light backgrounds), else the initials tile. */}
@@ -232,11 +231,33 @@ export default function Layout() {
               />
             );
           }
+          if (path === "/inventory" && itemsMode(features)) {
+            // No vehicles for this organization: generic Items take Inventory's place, and Spare Parts (if on) gets its own link.
+            const links = [
+              canAccessPath(user?.role, "/items") && { to: "/items", label: terms.items, icon: Package },
+              canAccessPath(user?.role, "/spare-parts", features) && { to: "/inventory?tab=spare-parts", label: "Spare Parts", icon: Boxes },
+            ].filter(Boolean);
+            return links.map((l) => (
+              <NavLink
+                key={l.to}
+                to={l.to}
+                onClick={() => mobile && setSidebarOpen(false)}
+                className={() => {
+                  const here = l.to === "/items" ? pathname.startsWith("/items") : pathname.startsWith("/inventory");
+                  return `flex items-center gap-3 px-3 py-3 rounded-lg text-sm font-medium transition-all duration-150 ${here ? "bg-blue-600 text-white" : "text-slate-400 hover:text-white hover:bg-slate-800"}`;
+                }}
+                data-testid={`nav-${l.label.toLowerCase().replace(" ", "-")}`}
+              >
+                <l.icon size={17} />
+                {l.label}
+              </NavLink>
+            ));
+          }
           if (path === "/inventory") {
             // Spare Parts lives under Inventory: a dropdown when the role gets both pages, the plain link otherwise.
             const tabs = [
-              { key: "product", label: "Product", icon: Bike, to: "/inventory" },
-              canAccessPath(user?.role, "/spare-parts") && { key: "spare-parts", label: "Spare Parts", icon: Boxes, to: "/inventory?tab=spare-parts" },
+              accessLevel(user?.role, "inventory") !== "none" && { key: "product", label: "Product", icon: Bike, to: "/inventory" },
+              canAccessPath(user?.role, "/spare-parts", features) && { key: "spare-parts", label: "Spare Parts", icon: Boxes, to: "/inventory?tab=spare-parts" },
             ].filter(Boolean);
             if (tabs.length > 1) {
               const onInventory = pathname.startsWith("/inventory");
@@ -259,7 +280,7 @@ export default function Layout() {
           }
           if (path === "/jobs" || path === "/warranty") {
             // Job Cards and Warranty share one Service item, drawn where the first of them the role can open sits.
-            const tabs = SERVICE_TABS.filter(t => canAccessPath(user?.role, t.to));
+            const tabs = SERVICE_TABS.filter(t => canAccessPath(user?.role, t.to, features));
             if (path !== tabs[0].to) return null;
             if (tabs.length > 1) {
               const active = tabs.find(t => pathname.startsWith(t.to));
@@ -279,7 +300,7 @@ export default function Layout() {
               );
             }
           }
-          const subTabs = path === "/marketing" ? marketingTabsFor(user?.role) : [];
+          const subTabs = path === "/marketing" ? marketingTabsFor(user?.role, features) : [];
           const leadsBadge = (
             <span className="ml-auto min-w-[20px] h-5 px-1.5 rounded-full bg-red-500 text-white text-[11px] font-bold flex items-center justify-center" data-testid="nav-leads-badge">{newLeads > 99 ? "99+" : newLeads}</span>
           );
@@ -348,16 +369,19 @@ export default function Layout() {
           );
         })}
       </nav>
+
+      {/* The signed-in account, at the foot of the panel (it is not in the top bar) */}
+      <SidebarProfile user={user} onLogout={handleLogout} onPick={() => mobile && setSidebarOpen(false)} />
     </aside>
   );
 
   return (
     <div className="app-shell flex h-app overflow-hidden bg-slate-50 pl-safe pr-safe">
-      {/* Desktop Sidebar */}
-      {renderSidebar()}
+      {/* Desktop Sidebar (inside the portal, the portal's side panel is the only one) */}
+      {!PORTAL_PANEL && renderSidebar()}
 
       {/* Mobile Overlay */}
-      {sidebarOpen && (
+      {!PORTAL_PANEL && sidebarOpen && (
         <div className="lg:hidden fixed inset-0 z-40 bg-black/50" onClick={() => setSidebarOpen(false)}>
           <div onClick={(e) => e.stopPropagation()}>
             {renderSidebar(true)}
@@ -369,38 +393,35 @@ export default function Layout() {
       <div className="flex-1 flex flex-col min-w-0">
         {/* Header */}
         <header className="sticky top-0 z-30 bg-white border-b border-slate-200 shadow-sm h-14 sm:h-16 box-content pt-safe flex items-center px-4 lg:px-6 gap-4">
-          <button
+          {!PORTAL_PANEL && <button
             className="lg:hidden w-11 h-11 -ml-2.5 rounded-lg flex items-center justify-center text-slate-500 hover:bg-slate-50 hover:text-slate-900 transition-colors"
             onClick={() => setSidebarOpen(true)}
             data-testid="mobile-menu-button"
           >
             <Menu size={20} />
-          </button>
-          {/* On every Marketing tab the page title sits here, level with the bell. */}
+          </button>}
+          {/* The page's name sits here, level with the bell: plain bold text, no icon or logo beside it. */}
           {pathname.startsWith("/sanakhat") ? (
-            <h1 className="flex-1 min-w-0 flex items-center gap-2 text-lg font-bold text-slate-900 truncate" data-testid="header-title">
-              <span className="size-8 shrink-0 rounded-lg bg-gradient-to-br from-blue-600 to-indigo-600 text-white flex items-center justify-center"><FileCheck2 size={17} /></span> Sanakhat
-            </h1>
+            <h1 className="flex-1 min-w-0 text-2xl font-bold text-slate-900 truncate" data-testid="header-title">Sanakhat</h1>
           ) : pathname === "/inventory" ? (() => {
             // Product or Spare Parts, whichever is open (the detail page, /inventory/:id, has its own heading).
-            const parts = new URLSearchParams(search).get("tab") === "spare-parts" && canAccessPath(user?.role, "/spare-parts");
-            const TitleIcon = parts ? Boxes : Bike;
+            const parts = new URLSearchParams(search).get("tab") === "spare-parts" && canAccessPath(user?.role, "/spare-parts", features);
             return (
-              <h1 className="flex-1 min-w-0 flex items-center gap-2 text-lg font-bold text-slate-900 truncate" data-testid="header-title">
-                <TitleIcon size={19} className="shrink-0 text-slate-400" /> {parts ? "Spare Parts" : "Inventory"}
-              </h1>
+              <h1 className="flex-1 min-w-0 text-2xl font-bold text-slate-900 truncate" data-testid="header-title">{parts ? "Spare Parts" : "Inventory"}</h1>
             );
-          })() : pathname === "/sales" ? (
-            <h1 className="flex-1 min-w-0 text-2xl font-bold text-slate-900 truncate" data-testid="header-title">Sales</h1>
+          })() : pathname.startsWith("/items") ? (
+            <h1 className="flex-1 min-w-0 text-2xl font-bold text-slate-900 truncate" data-testid="header-title">{terms.items}</h1>
+          ) : pathname.startsWith("/finance") ? (
+            <div ref={setTitleSlot} className="flex-1 min-w-0 flex items-center gap-3" data-testid="title-slot" />
+          ) : PAGE_TITLES[pathname.replace(/\/+$/, "") || "/"] ? (
+            <h1 className="flex-1 min-w-0 text-2xl font-bold text-slate-900 truncate" data-testid="header-title">{PAGE_TITLES[pathname.replace(/\/+$/, "") || "/"]}</h1>
           ) : pathname.startsWith("/marketing") ? (() => {
             // Named after the tab that is open (Leads, CRM, Share...), like any other page's title.
-            const tabs = marketingTabsFor(user?.role);
+            const tabs = marketingTabsFor(user?.role, features);
             const requested = new URLSearchParams(search).get("tab");
-            const { label: title, icon: TitleIcon } = MARKETING_NAV[tabs.includes(requested) ? requested : tabs[0]] || { label: "Marketing", icon: Megaphone };
+            const { label: title } = MARKETING_NAV[tabs.includes(requested) ? requested : tabs[0]] || { label: "Marketing" };
             return (
-              <h1 className="flex-1 min-w-0 flex items-center gap-2 text-lg font-bold text-slate-900 truncate" data-testid="header-title">
-                <TitleIcon size={19} className="shrink-0 text-slate-400" /> {title}
-              </h1>
+              <h1 className="flex-1 min-w-0 text-2xl font-bold text-slate-900 truncate" data-testid="header-title">{title}</h1>
             );
           })() : <div className="flex-1" />}
           {/* Pages put their date range / view switch / buttons here (wide screens only); see Inventory and Sales. */}
@@ -417,9 +438,9 @@ export default function Layout() {
                 title="Vehicles needing attention"
               >
                 <Bell size={17} />
-                {missingDataVehicles.length + newLeads + (backupProblem ? 1 : 0) > 0 && (
+                {missingDataVehicles.length + newLeads + newAccounts + (backupProblem ? 1 : 0) > 0 && (
                   <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center leading-none" data-testid="notif-bell-badge">
-                    {missingDataVehicles.length + newLeads + (backupProblem ? 1 : 0) > 99 ? "99+" : missingDataVehicles.length + newLeads + (backupProblem ? 1 : 0)}
+                    {missingDataVehicles.length + newLeads + newAccounts + (backupProblem ? 1 : 0) > 99 ? "99+" : missingDataVehicles.length + newLeads + newAccounts + (backupProblem ? 1 : 0)}
                   </span>
                 )}
               </button>
@@ -446,8 +467,13 @@ export default function Layout() {
                         <Inbox size={14} /> {newLeads} new website lead{newLeads > 1 ? "s" : ""}
                       </button>
                     )}
+                    {newAccounts > 0 && (
+                      <button onClick={() => { setNotifOpen(false); navigate("/marketing?tab=leads&type=signup"); }} data-testid="notif-new-accounts" className="w-full text-left px-4 py-2.5 hover:bg-violet-50 bg-violet-50/50 flex items-center gap-2 text-sm font-medium text-violet-700">
+                        <UserPlus size={14} /> {newAccounts} new registered account{newAccounts > 1 ? "s" : ""}
+                      </button>
+                    )}
                     {missingDataVehicles.length === 0 ? (
-                      !backupProblem && newLeads === 0 && <div className="px-4 py-6 text-center text-sm text-slate-400">Nothing needs attention ✅</div>
+                      !backupProblem && newLeads === 0 && newAccounts === 0 && <div className="px-4 py-6 text-center text-sm text-slate-400">Nothing needs attention ✅</div>
                     ) : (
                       missingDataVehicles.map(v => (
                         <button
@@ -482,26 +508,6 @@ export default function Layout() {
               )}
             </div>
           )}
-          <div className="relative" ref={profileRef}>
-            <button type="button" onClick={() => setProfileOpen(o => !o)} aria-label="Account menu" aria-expanded={profileOpen} data-testid="profile-btn"
-              className="touch-manipulation flex items-center gap-2 h-11 pl-1 pr-1 sm:pr-2 rounded-full hover:bg-slate-50 transition-colors">
-              <span className="w-9 h-9 rounded-full bg-blue-600 flex items-center justify-center text-white text-sm font-bold">{user?.name?.[0]?.toUpperCase() || "A"}</span>
-              <span className="hidden sm:block text-sm font-medium text-slate-700">{user?.name}</span>
-              <ChevronDown size={14} className={`hidden sm:block text-slate-400 transition-transform ${profileOpen ? "rotate-180" : ""}`} />
-            </button>
-            {profileOpen && (
-              <div className="absolute right-0 top-full mt-2 w-64 bg-white rounded-xl border border-slate-200 shadow-2xl overflow-hidden z-50" data-testid="profile-menu">
-                <div className="px-4 py-3 border-b border-slate-100">
-                  <div className="text-sm font-semibold text-slate-900 truncate">{user?.name}</div>
-                  <div className="text-xs text-slate-500 truncate">{user?.username}</div>
-                  <div className="mt-1 inline-block text-[11px] font-semibold text-blue-700 bg-blue-50 rounded-full px-2 py-0.5 capitalize">{String(user?.role || "admin").replace(/_/g, " ")}</div>
-                </div>
-                <button type="button" onClick={handleLogout} className="w-full flex items-center gap-2.5 px-4 h-12 text-sm font-semibold text-red-600 hover:bg-red-50" data-testid="profile-logout">
-                  <LogOut size={16} /> Sign out
-                </button>
-              </div>
-            )}
-          </div>
         </header>
 
         {/* Content */}
@@ -509,7 +515,7 @@ export default function Layout() {
           {/* Boundary here (not only at the app root) so a lazy page loading keeps the
               sidebar/header on screen instead of swapping the whole layout for a spinner. */}
           <Suspense fallback={<div className="flex items-center justify-center h-64"><div className="animate-spin w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full" /></div>}>
-            <Outlet context={{ newLeads, topbarSlot }} />
+            <Outlet context={{ newLeads, topbarSlot, titleSlot }} />
           </Suspense>
           <div className="pb-safe" aria-hidden="true" />
         </main>

@@ -28,6 +28,11 @@ import media_storage
 import perf_stats
 import auto_backup
 import crm
+import portal_bridge
+import portal_sso
+import staff_access
+import shop_sync
+import terms
 import assistant_api
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -102,7 +107,7 @@ TENANT_COLLECTIONS = {
     "leads", "legal_documents", "part_transactions", "partners", "sales", "spare_parts",
     "sync_logs", "team_members", "vehicle_photos", "vehicles", "vendor_payments", "vendors",
     "audit_logs", "ai_chat_sessions", "settings", "facebook_pages", "bookings",
-    "offer_prizes", "offer_codes", "page_views", "crm_followups", "crm_interactions",
+    "offer_prizes", "offer_codes", "page_views", "crm_followups", "crm_interactions", "items", "staff_access",
     # Finance books (see finance_books.py); tables are created by migration_add_finance_books.sql.
     "fin_parties", "fin_bank_accounts", "fin_account_transfers", "fin_expense_categories", "fin_items",
     "fin_transactions", "fin_customer_ledger", "fin_vendor_ledger", "fin_statement_imports",
@@ -342,13 +347,20 @@ def create_token(user_id: str, username: str, role: str = "admin", company_id: O
         JWT_SECRET, algorithm="HS256"
     )
 
-async def get_current_user(creds: HTTPAuthorizationCredentials = Depends(security)):
+async def get_current_user(request: Request, creds: HTTPAuthorizationCredentials = Depends(security)):
     try:
         payload = jwt.decode(creds.credentials, JWT_SECRET, algorithms=["HS256"])
     except jwt.ExpiredSignatureError:
         raise HTTPException(401, "Token expired")
     except jwt.InvalidTokenError:
-        raise HTTPException(401, "Invalid token")
+        # Not a Stock token. A portal login always sends X-Org-Id; without it this is just a bad token, as before.
+        org_id = request.headers.get("x-org-id")
+        if not org_id:
+            raise HTTPException(401, "Invalid token")
+        payload = await portal_bridge.resolve(creds.credentials, org_id)
+        await portal_bridge.enforce_feature(request.url.path, payload["company_id"], payload["org_id"])
+        current_company_id.set(payload["company_id"])
+        return payload
     # platform_owner is the one role that legitimately has no company_id -- its endpoints
     # pass explicit company_id filters per call instead of relying on auto-scoping. Any
     # other role showing up here with no company_id means its token was minted while the
@@ -361,8 +373,30 @@ async def get_current_user(creds: HTTPAuthorizationCredentials = Depends(securit
         raise HTTPException(401, "Your session is missing company info -- please log out and log back in.")
     # Every tenant-scoped db.<collection> call for the rest of this request now
     # automatically filters/stamps by this company_id -- see _ScopedCollection above.
+    await portal_bridge.enforce_feature(request.url.path, payload.get("company_id"))  # 403 {"feature"} if this route's feature is off
     current_company_id.set(payload.get("company_id"))
+    # Settings > Staff & Access: a paused login is refused, and per-person access is applied (see staff_access.py).
+    await staff_access.check(db, payload, request.method, request.url.path)
     return payload
+
+@api_router.get("/features")
+async def my_features(cu: dict = Depends(get_current_user)):
+    """Which stock.* features are on for the caller's organization, so screens can hide the rest. features is null when
+    the portal cannot say (not connected, company not linked): show everything, the server still refuses what is off."""
+    features = await portal_bridge.features_for(cu)
+    if shop_sync.is_shop(await _company_site(cu.get("company_id"))):  # a company that sells goods, not vehicles (Settings > Website)
+        features = {**(features or {}), **portal_bridge.ITEMS_ONLY_FEATURES}
+    # This person's own Staff & Access changes (section -> none / view / edit), so the menu shows what they can open.
+    access = {}
+    if staff_access.ready and cu.get("role", "admin") not in ("admin", "platform_owner") and cu.get("user_id"):
+        try:
+            access = (await staff_access.record_for(db, cu["user_id"]) or {}).get("access") or {}
+        except Exception:
+            logger.warning("Could not read staff access for the menu", exc_info=True)  # the server still enforces it
+    return {"features": features, "terms": terms.terms_for(features), "access": access}
+
+# require_feature('stock.x') for Prompt 2: portal logins are checked against core.feature_on, old tokens pass.
+require_feature = portal_bridge.make_feature_guard(get_current_user)
 
 # ── Role-based access control ─────────────────────────────────────────
 # "admin" (Admin) always has full access. Other roles only get what's
@@ -372,10 +406,17 @@ ROLE_PERMISSIONS = {
         # No "create" or "edit" on vehicles (view only, no status changes either -- see
         # require_any("vehicles", {"edit", "edit_status"}) on update_vehicle_status), and no
         # jobs/customers/sales at all -- those pages were pulled from their nav to match.
-        "vehicles": {"view"},
-        "vehicle_media": {"view"},  # read-only, so opening a vehicle's detail page doesn't 403 loading photos/documents
-        "vehicle_photos": {"view"},
-        "expenses": {"view"},
+        "vehicles": {"view", "create", "edit", "edit_status"},
+        "items": {"view", "create", "edit"},
+        "vehicle_media": {"view", "create", "edit"},
+        "vehicle_photos": {"view", "create", "edit"},
+        "expenses": {"view", "create", "edit"},
+        "vendors": {"view", "create", "edit"},
+        "sales": {"view"},
+        "customers": {"view", "create", "edit"},  # Marketing > CRM tab
+        "marketing": {"manage"},  # Marketing > Leads / Offers / Visits tabs
+        "sanakhat": {"view", "edit"},  # Sanakhat desk page
+        "finance": {"manage"},  # Finance page (/fin/* books, quotations, summary)
         "team": {"view", "create", "edit", "delete"},
         "vendor_lookup": {"view", "create"},  # vendor picker + inline "add new vendor" when picking a vehicle's purchase source
         # Warranty tracker: follow up on sold vehicles and void a warranty when the customer
@@ -402,6 +443,7 @@ ROLE_PERMISSIONS = {
         # "create_basic", not "create": create_vehicle strips everything but SOCIAL_MEDIA_VEHICLE_FIELDS
         # and parks the vehicle as Unlisted until an admin fills in purchase/pricing details.
         "vehicles": {"view", "create_basic"},
+        "items": {"view", "create", "edit"},  # lists new stock and its photos; cost stays hidden, deleting stays admin-only
         "vehicle_photos": {"view", "create", "delete"},
         # Legal documents stay admin-only -- view only so the vehicle detail page loads cleanly.
         "vehicle_media": {"view"},
@@ -425,7 +467,7 @@ PARTS_ALLOWED_STATUSES = {"available", "in_repair", "scrap"}
 def require(resource: str, action: str):
     async def _checker(cu: dict = Depends(get_current_user)):
         role = cu.get("role", "admin")
-        if role == "admin":
+        if role == "admin" or cu.get("access_grant"):  # access_grant: given to this person in Staff & Access
             return cu
         if action in ROLE_PERMISSIONS.get(role, {}).get(resource, set()):
             return cu
@@ -435,7 +477,7 @@ def require(resource: str, action: str):
 def require_any(resource: str, actions: set):
     async def _checker(cu: dict = Depends(get_current_user)):
         role = cu.get("role", "admin")
-        if role == "admin":
+        if role == "admin" or cu.get("access_grant"):
             return cu
         if ROLE_PERMISSIONS.get(role, {}).get(resource, set()) & actions:
             return cu
@@ -443,7 +485,8 @@ def require_any(resource: str, actions: set):
     return _checker
 
 async def admin_only(cu: dict = Depends(get_current_user)):
-    if cu.get("role", "admin") != "admin":
+    # access_grant is only ever set for the sections in staff_access.RULES; accounts, settings, deletes etc. are not in them
+    if cu.get("role", "admin") != "admin" and not cu.get("access_grant"):
         raise HTTPException(403, "This section is restricted to Admin accounts")
     return cu
 
@@ -1245,6 +1288,7 @@ async def public_share_page(vid: str, request: Request, p: str = "0", s: str = "
         raise HTTPException(404, "Not found")
     v = await db.vehicles.find_one({"id": vid, "status": "available"}, {"_id": 0})
     if not v: raise HTTPException(404, "This vehicle is no longer available")
+    await portal_bridge.enforce_feature(request.url.path, v.get("company_id"))
     st = await db.settings.find_one({"company_id": v.get("company_id")}, {"_id": 0}) or {}
     photos = await db.vehicle_photos.find({"vehicle_id": vid}, {"_id": 0, "id": 1, "uploaded_at": 1}).sort(PHOTO_ORDER).to_list(20)
     base = _client_base(request)
@@ -1408,6 +1452,10 @@ async def facebook_callback(state: str = "", code: str = "", error: str = ""):
         return back("cancelled")
     current_company_id.set(st["company_id"])
     try:
+        await portal_bridge.enforce_feature("/facebook/callback", st["company_id"])
+    except HTTPException:
+        return back("disabled")
+    try:
         async with httpx.AsyncClient(timeout=20) as http:
             r = await http.get(f"{FB_GRAPH}/oauth/access_token", params={
                 "client_id": FB_APP_ID, "client_secret": FB_APP_SECRET, "redirect_uri": FB_REDIRECT_URI, "code": code})
@@ -1531,9 +1579,6 @@ async def ai_suggestions(req: AISuggestionsRequest, cu: dict = Depends(admin_onl
 
 class LoginRequest(BaseModel):
     username: str; password: str
-
-class SsoRequest(BaseModel):
-    token: str
 
 class RegisterRequest(BaseModel):
     # Same reasoning as SignUpRequest.email: stored in the `username` column, so this only
@@ -1710,6 +1755,31 @@ class BookingCancel(BaseModel):
     refund_amount: float  # handed back to the customer; the rest of the deposit is retained
     notes: Optional[str] = None
 
+# Generic stock items for shops that sell things, not vehicles (Prompt 4). One row per product with a count in `quantity`;
+# an item with a serial_number is a single unit. Vehicles keep their own table untouched.
+ITEMS_DDL = """CREATE TABLE IF NOT EXISTS items (
+  id VARCHAR(36) NOT NULL PRIMARY KEY,
+  company_id VARCHAR(36) NOT NULL,
+  INDEX idx_items_company_id (company_id),
+  name VARCHAR(255),
+  sku VARCHAR(100),
+  category VARCHAR(100),
+  serial_number VARCHAR(100),
+  cost DOUBLE,
+  price DOUBLE,
+  quantity INT,
+  status VARCHAR(20) DEFAULT 'available',
+  notes TEXT,
+  vendor_id VARCHAR(36),
+  created_by VARCHAR(100),
+  created_at VARCHAR(40),
+  updated_at VARCHAR(40),
+  INDEX idx_items_status (status),
+  INDEX idx_items_sku (sku),
+  CONSTRAINT fk_items_vendor FOREIGN KEY (vendor_id) REFERENCES vendors(id) ON DELETE SET NULL,
+  CONSTRAINT fk_items_company FOREIGN KEY (company_id) REFERENCES companies(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"""
+
 BOOKINGS_DDL = """CREATE TABLE IF NOT EXISTS bookings (
   id VARCHAR(36) NOT NULL PRIMARY KEY,
   company_id VARCHAR(36) NOT NULL,
@@ -1754,7 +1824,7 @@ class SaleCreate(BaseModel):
     sale_date: Optional[str] = None
     ownership_transfer_date: Optional[str] = None  # BS date the vehicle "passes" to the buyer's name
     notes: Optional[str] = None
-    # Sale-deed witness block — all four required (validated in create_sale).
+    # Sale-deed witness block — all four optional.
     witness_name: Optional[str] = None
     witness_address: Optional[str] = None
     witness_phone: Optional[str] = None
@@ -1986,6 +2056,11 @@ class SettingsUpdate(BaseModel):
     hero_image_url: Optional[str] = None
     service_image_url: Optional[str] = None
     warranty_days_default: Optional[int] = Field(None, ge=1, le=3650)
+    # Website connection (see shop_sync.py): what the company sells, where its site is, and the key its site's receiver checks.
+    business_type: Optional[str] = Field(None, pattern="^(dealership|shop)$")
+    site_url: Optional[str] = Field(None, max_length=300)
+    site_sync_url: Optional[str] = Field(None, max_length=300)
+    site_sync_key: Optional[str] = Field(None, max_length=120)
 
 class WarrantyVoid(BaseModel):
     reason: str = Field(..., min_length=1, max_length=500)
@@ -2034,56 +2109,12 @@ async def login(request: Request, req: LoginRequest):
     user = await db.users.find_one({"username": req.username})
     if not user or not await verify_pw_async(req.password, user["password_hash"]):
         raise HTTPException(401, "Invalid credentials")
+    if await staff_access.is_paused(db, user):
+        raise HTTPException(403, "Your access is paused. Ask your admin.")
     token = create_token(user.get("id", ""), user["username"], user.get("role", "admin"), user.get("company_id"))
     company = await db.companies.find_one({"id": user.get("company_id")}, {"_id": 0, "name": 1}) if user.get("company_id") else None
     return {"token": token, "username": user["username"], "name": user.get("name", user["username"]),
             "role": user.get("role", "admin"), "company_name": company["name"] if company else None}
-
-# Single sign-on from the AIBIZTECH portal. The portal signs a short-lived pass (HS256, 60 s) with SSO_SECRET, the same
-# value on both sides. A business in the portal becomes one company here (company id = the portal's organization id), and
-# the person is signed in to it. Nothing about existing companies or accounts is changed: an email that already belongs to
-# a different company is refused, not moved.
-SSO_ROLES = {"admin", "stock_supervisor", "parts_supervisor", "social_media"}
-
-@api_router.post("/auth/sso")
-@limiter.limit("20/minute")
-async def sso_login(request: Request, req: SsoRequest):
-    secret = os.environ.get("SSO_SECRET", "").strip()
-    if not secret:
-        raise HTTPException(503, "Single sign-on is not set up on this server.")
-    try:
-        claims = jwt.decode(req.token, secret, algorithms=["HS256"], audience="stock", issuer="aibiztech")
-    except jwt.InvalidTokenError:
-        raise HTTPException(401, "This sign-in link is invalid or has expired. Open Stock Manager again from AIBIZTECH.")
-    email = str(claims.get("email", "")).strip().lower()
-    org_id = str(claims.get("org_id", "")).strip()
-    org_name = str(claims.get("org_name", "")).strip() or "My business"
-    role = claims.get("role")
-    if not email or not org_id:
-        raise HTTPException(401, "This sign-in link is incomplete. Open Stock Manager again from AIBIZTECH.")
-    if role not in SSO_ROLES:
-        raise HTTPException(403, "You do not have a Stock Manager role in this business. Ask the business owner.")
-    now = datetime.now(timezone.utc).isoformat()
-    company = await db.companies.find_one({"id": org_id})
-    if not company:
-        await db.companies.insert_one({"id": org_id, "name": org_name, "created_at": now})
-        await db.settings.insert_one({"id": str(uuid.uuid4()), "company_id": org_id, "business_name": org_name})
-        company = {"id": org_id, "name": org_name}
-    user = await db.users.find_one({"username": email})
-    if user and user.get("company_id") != org_id:
-        raise HTTPException(409, "This email already has a Stock Manager account in another company, so it cannot be used here.")
-    if not user:
-        user = {"id": str(uuid.uuid4()), "username": email,
-                "password_hash": await hash_pw_async(secrets.token_urlsafe(32)),  # nobody knows it: sign-in is through the portal
-                "name": str(claims.get("name") or email), "role": role, "company_id": org_id,
-                "email_verified_at": now, "created_at": now}
-        await db.users.insert_one(user)
-    elif user.get("role") != role:
-        await db.users.update_one({"id": user["id"]}, {"$set": {"role": role}})
-        user["role"] = role
-    token = create_token(user["id"], email, user.get("role", role), org_id)
-    return {"token": token, "username": email, "name": user.get("name", email),
-            "role": user.get("role", role), "company_name": company.get("name")}
 
 @api_router.get("/auth/verify-email")
 @limiter.limit("10/minute")
@@ -2264,6 +2295,18 @@ async def delete_user(uid: str, cu: dict = Depends(admin_only)):
         if remaining_admins == 0:
             raise HTTPException(400, "Cannot delete the only remaining Admin account")
     await db.users.delete_one({"id": uid, **company_scope(cu)})
+    if staff_access.ready:  # a token they already hold must stop working too
+        try:
+            gone = {"access": "{}", "status": "removed", "updated_at": datetime.now(timezone.utc).isoformat()}
+            if staff_access.portal_email_ready:
+                gone["portal_email"] = None  # free the address for a new account
+            if await db.staff_access.find_one({"id": uid}, {"_id": 0, "id": 1}):
+                await db.staff_access.update_one({"id": uid}, {"$set": gone})
+            else:
+                await db.staff_access.insert_one({"id": uid, **gone})
+            staff_access.forget(uid)
+        except Exception:
+            logger.warning("Could not mark the removed login's access", exc_info=True)
     return {"message": "Account deleted"}
 
 # ── PLATFORM (platform_owner only) ──────────────────────────────────────
@@ -3411,7 +3454,7 @@ async def return_vehicle(vid: str, body: VehicleReturnRequest, cu: dict = Depend
         fresh["purchase_price"] = refund_amount  # what the shop paid to take it back
     # Net cost this sale absorbs = its full cost minus what the vehicle is worth on re-entry, so
     # (retained revenue - cost_at_return) is the sale's true profit.
-    cost_at_return = await _vehicle_investment(vid, existing, sale) - fresh.get("purchase_price", existing.get("purchase_price") or 0)
+    cost_at_return = 0.0  # a return's profit is what we kept (retained_amount)
 
     await db.sales.update_one({"id": sale["id"]}, {"$set": {
         "cost_at_return": cost_at_return,
@@ -3490,7 +3533,7 @@ async def delete_vehicle(vid: str, cu: dict = Depends(admin_only)):
     return {"message": "Deleted"}
 
 @api_router.get("/vehicles/{vid}/qr-data")
-async def get_vehicle_qr(vid: str):
+async def get_vehicle_qr(vid: str, request: Request):
     # Unauthenticated -- current_company_id is never set here, so db.vehicles.find_one runs
     # unscoped (see _ScopedCollection._scoped: it only adds a company_id filter when one is
     # set). The "contact" field below must therefore look up THIS vehicle's own company
@@ -3498,6 +3541,7 @@ async def get_vehicle_qr(vid: str):
     # would show whichever company happened to be scoped in some other unrelated request.
     v = await db.vehicles.find_one({"id": vid}, {"_id": 0})
     if not v: raise HTTPException(404, "Not found")
+    await portal_bridge.enforce_feature(request.url.path, v.get("company_id"))
     settings = await db.settings.find_one({"company_id": v.get("company_id")}, {"_id": 0}) or {}
     contact = settings.get("business_name") or "Auto Stock Manager"
     if settings.get("contact_phone"):
@@ -3621,8 +3665,9 @@ async def create_job(job: JobCardCreate, cu: dict = Depends(require("jobs", "cre
             if w["status"] in ("awaiting", "active"):
                 jc["is_warranty"] = True
                 jc["labour_charge"] = 0
-        elif v.get("status") not in ("available", "in_repair"):
-            raise HTTPException(400, "Job cards can only be created for Available, In Repair or Sold vehicles")
+        # A Reserved (booked) vehicle still gets prepared for delivery; it stays Reserved so the booking is untouched.
+        elif v.get("status") not in ("available", "in_repair", "reserved"):
+            raise HTTPException(400, "Job cards can only be created for Available, Reserved, In Repair or Sold vehicles")
         jc["vehicle_brand"] = v.get("brand"); jc["vehicle_model"] = v.get("model")
         jc["vehicle_year"] = v.get("year"); jc["registration_number"] = v.get("registration_number")
     await db.job_cards.insert_one(jc)
@@ -3983,8 +4028,20 @@ async def get_sales(start_date: Optional[str] = None, end_date: Optional[str] = 
         investment_by_vehicle = _batch_investment_from(full_vehicles, batch_inputs) if full_vehicles else {}
         purchase_price_by_vehicle = {v["id"]: v.get("purchase_price", 0) for v in full_vehicles}
 
+    item_ids = list({s["item_id"] for s in sales if s.get("item_id")})
+    items_by_id = {i["id"]: i for i in await db.items.find({"id": {"$in": item_ids}}, {"_id": 0, "id": 1, "name": 1, "sku": 1}).to_list(len(item_ids))} if item_ids else {}
     for s in sales:
         v = vehicles_by_id.get(s.get("vehicle_id"))
+        it = items_by_id.get(s.get("item_id")) if s.get("item_id") else None
+        if it:  # an item sale: name it like a vehicle sale is named, and give it profit from the cost kept on the sale
+            s["item_info"] = it.get("name") or ""
+            s["vehicle_info"] = f"{it.get('name') or ''}" + (f" ×{s.get('quantity')}" if (s.get("quantity") or 1) > 1 else "")
+            s["sku"] = it.get("sku")
+            if cu.get("role", "admin") == "admin":
+                revenue = _sale_revenue(s)
+                s["total_investment"] = s.get("cost_at_sale") or 0
+                s["profit"] = revenue - s["total_investment"]
+                s["profit_margin"] = round(s["profit"] / revenue * 100, 2) if revenue else None
         if v:
             s["vehicle_info"] = f"{v['brand']} {v['model']} {v.get('year','')}" + (f" ({v['registration_number']})" if v.get("registration_number") else "")
             s["vehicle_brand"] = v.get("brand"); s["vehicle_model"] = v.get("model")
@@ -4098,25 +4155,48 @@ async def _plan_exchange_change(existing: dict, sale: SaleUpdate, sold: dict, sa
     plan["link"] = plan["insert"]["id"]
     return plan
 
-async def _sale_to_finance(sale_id: str) -> None:
+async def _finance_context(customer_id, vehicle_id):
+    """The customer and the vehicle's label ("Honda Shine 2020 (78/4613)") a Finance entry is written with."""
+    c = await db.customers.find_one({"id": customer_id}, {"_id": 0}) if customer_id else None
+    v = await db.vehicles.find_one({"id": vehicle_id}, {"_id": 0, "brand": 1, "model": 1, "year": 1, "registration_number": 1}) if vehicle_id else None
+    label = ""
+    if v:
+        label = f"{v.get('brand') or ''} {v.get('model') or ''} {v.get('year') or ''}".strip()
+        if v.get("registration_number"):
+            label += f" ({v['registration_number']})"
+    return c, label
+
+async def _sale_to_finance(sale_id: str) -> str:
     """Keep the sale's Sale bill in the Finance books (and so on its customer's Finance Ledger) in step with the sale: made
     when the sale is recorded, changed when it is edited or returned, removed when it is deleted. See
-    finance_books.sync_sale_bill. Never raises: the sale itself has already been saved."""
+    finance_books.sync_sale_bill. Never raises: the sale itself has already been saved. Returns "posted", "nothing" or
+    "failed: <why>", which the save's response carries as "finance" so the page can tell the user."""
     try:
         s = await db.sales.find_one({"id": sale_id}, {"_id": 0})
         if not s:
             await finance_books.remove_sale_bill(db, sale_id)
-            return
-        c = await db.customers.find_one({"id": s["customer_id"]}, {"_id": 0}) if s.get("customer_id") else None
-        v = await db.vehicles.find_one({"id": s.get("vehicle_id")}, {"_id": 0, "brand": 1, "model": 1, "year": 1, "registration_number": 1}) if s.get("vehicle_id") else None
-        label = ""
-        if v:
-            label = f"{v.get('brand') or ''} {v.get('model') or ''} {v.get('year') or ''}".strip()
-            if v.get("registration_number"):
-                label += f" ({v['registration_number']})"
-        await finance_books.sync_sale_bill(db, s, c, label)
-    except Exception:  # noqa: BLE001
+            return "nothing"
+        c, label = await _finance_context(s.get("customer_id"), s.get("vehicle_id"))
+        return await finance_books.sync_sale_bill(db, s, c, label)
+    except Exception as e:  # noqa: BLE001
         logger.warning("Could not update the Finance books for sale %s", sale_id, exc_info=True)
+        return finance_books._why(e)
+
+async def _booking_to_finance(booking_id: str) -> str:
+    """Keep a booking's deposit (and, once cancelled, its refund and the amount kept) on the customer's Finance Ledger in step
+    with the booking: made when it is booked, changed when it is edited or cancelled, removed when it is deleted. See
+    finance_books.sync_booking_entries. Never raises: the booking itself has already been saved. Returns "posted", "nothing"
+    or "failed: <why>", which the save's response carries as "finance" so the page can tell the user."""
+    try:
+        b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+        if not b:
+            await finance_books.remove_booking_entries(db, booking_id)
+            return "nothing"
+        c, label = await _finance_context(b.get("customer_id"), b.get("vehicle_id"))
+        return await finance_books.sync_booking_entries(db, b, c, label)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Could not update the Finance books for booking %s", booking_id, exc_info=True)
+        return finance_books._why(e)
 
 @api_router.post("/sales")
 async def create_sale(sale: SaleCreate, cu: dict = Depends(require("sales", "create"))):
@@ -4132,8 +4212,8 @@ async def create_sale(sale: SaleCreate, cu: dict = Depends(require("sales", "cre
         raise HTTPException(400, "Vehicle is booked — record the sale from its booking")
     if v.get("status") != ("reserved" if booking else "available"): raise HTTPException(400, f"Vehicle is already {v.get('status')}")
     # Sale-deed witness block — captured with the buyer when a new customer is entered
-    # on the form; the required-ness of it is enforced there, not here (a sale against an
-    # already-recorded customer skips the panel and sends nothing).
+    # on the form. It is optional everywhere (the form does not require it either, for a
+    # sale or a booking); a sale against an already-recorded customer sends nothing.
     _witness = {
         "witness_name": (sale.witness_name or "").strip() or None,
         "witness_address": (sale.witness_address or "").strip() or None,
@@ -4214,8 +4294,7 @@ async def create_sale(sale: SaleCreate, cu: dict = Depends(require("sales", "cre
     # Update customer purchase history
     if sale.customer_id:
         await db.customers.update_one({"id": sale.customer_id}, {"$set": {"last_purchase_date": sale_date}})
-    await _sale_to_finance(doc["id"])  # the Sale bill on the customer's Finance Ledger
-    return doc
+    return {**doc, "finance": await _sale_to_finance(doc["id"])}  # the Sale bill on the customer's Finance Ledger
 
 @api_router.get("/sales/summary")
 async def get_sales_summary(cu: dict = Depends(require("sales", "view"))):
@@ -4260,8 +4339,8 @@ async def reconcile_sales(cu: dict = Depends(admin_only)):
     vehicles_by_id = {v["id"]: v for v in await db.vehicles.find({"id": {"$in": vehicle_ids}}, {"_id": 0}).to_list(None)} if vehicle_ids else {}
     mismatches = []
     for s in sales:
-        if s.get("returned"):
-            continue
+        if s.get("returned") or (s.get("item_id") and not s.get("vehicle_id")):
+            continue  # an item sale has no vehicle to drift away from
         v = vehicles_by_id.get(s.get("vehicle_id"))
         if not v:
             mismatches.append({
@@ -4340,6 +4419,16 @@ async def get_sale(sid: str, cu: dict = Depends(require("sales", "view"))):
         s["engine_cc"] = v.get("engine_cc"); s["fuel_type"] = v.get("fuel_type")
         s["vehicle_status"] = v.get("status")
     s["job_card_cost"] = job_card_cost if s.get("vehicle_id") else 0
+    if s.get("item_id") and not s.get("vehicle_id"):
+        it = await db.items.find_one({"id": s["item_id"]}, {"_id": 0, "name": 1, "sku": 1, "serial_number": 1})
+        s["item_info"] = (it or {}).get("name") or "Deleted item"
+        s["vehicle_info"] = s["item_info"]
+        s["sku"], s["serial_number"] = (it or {}).get("sku"), (it or {}).get("serial_number")
+        if is_admin:
+            revenue = _sale_revenue(s)
+            s["total_investment"] = s.get("cost_at_sale") or 0
+            s["profit"] = revenue - s["total_investment"]
+            s["profit_margin"] = round(s["profit"] / revenue * 100, 2) if revenue else None
     s["customer_name"] = c["name"] if c else "Walk-in Customer"
     s["customer_contact"] = c.get("contact_number") if c else None
     s["customer_address"] = c.get("address") if c else None
@@ -4449,8 +4538,9 @@ async def update_sale(sid: str, sale: SaleUpdate, cu: dict = Depends(get_current
     await db.vehicles.update_one({"id": sale.vehicle_id}, {"$set": veh_set})
     if sale.customer_id:
         await db.customers.update_one({"id": sale.customer_id}, {"$set": {"last_purchase_date": sale_date}})
-    await _sale_to_finance(sid)  # price, date or customer may have changed
+    finance = await _sale_to_finance(sid)  # price, date or customer may have changed
     updated = await db.sales.find_one({"id": sid}, {"_id": 0})
+    updated["finance"] = finance  # not saved: just tells the page whether the Finance ledger was updated
     if exchange_plan and exchange_plan["note"]:
         updated["exchange_note"] = exchange_plan["note"]  # not saved: just tells the form what happened to the Inventory entry
     return updated
@@ -4480,6 +4570,11 @@ async def delete_sale(sid: str, cu: dict = Depends(get_current_user)):
     if not s: raise HTTPException(404, "Not found")
     await db.sales.delete_one({"id": sid})
     await _sale_to_finance(sid)  # takes its Sale bill out of the Finance books
+    if s.get("item_id") and not s.get("vehicle_id"):
+        # An item sale: the units go back on the shelf.
+        await db.items.update_one({"id": s["item_id"]}, {"$inc": {"quantity": s.get("quantity") or 1},
+                                  "$set": {"status": "available", "updated_at": datetime.now(timezone.utc).isoformat()}})
+        return {"message": "Sale deleted, the items are back in stock"}
     # Restore vehicle to available
     await db.vehicles.update_one({"id": s["vehicle_id"]}, {"$set": {
         "status": "available", "sold_date": None, "customer_id": None,
@@ -4602,7 +4697,8 @@ async def create_booking(body: BookingCreate, cu: dict = Depends(require("sales"
     await db.audit_logs.insert_one({"action": "booking_created", "vehicle_id": body.vehicle_id, "user": cu["username"],
         "timestamp": now, "details": f"Booking {doc['id']} — deposit {doc['booking_amount']}"})
     asyncio.create_task(_notify_storefront())
-    return (await _enrich_bookings([doc]))[0]
+    finance = await _booking_to_finance(doc["id"])  # the deposit, as a Received entry on the customer's Finance Ledger
+    return {**(await _enrich_bookings([doc]))[0], "finance": finance}
 
 @api_router.put("/bookings/{bid}")
 async def update_booking(bid: str, body: BookingUpdate, cu: dict = Depends(require("sales", "create"))):
@@ -4625,7 +4721,8 @@ async def update_booking(bid: str, body: BookingUpdate, cu: dict = Depends(requi
         await db.vehicles.update_one({"id": upd["vehicle_id"]}, {"$set": {"status": "reserved", "updated_at": upd["updated_at"]}})
     await db.bookings.update_one({"id": bid}, {"$set": upd})
     if swap: asyncio.create_task(_notify_storefront())
-    return (await _enrich_bookings([await db.bookings.find_one({"id": bid}, {"_id": 0})]))[0]
+    finance = await _booking_to_finance(bid)  # amount, date, customer or vehicle may have changed
+    return {**(await _enrich_bookings([await db.bookings.find_one({"id": bid}, {"_id": 0})]))[0], "finance": finance}
 
 @api_router.post("/bookings/{bid}/cancel")
 async def cancel_booking(bid: str, body: BookingCancel, cu: dict = Depends(admin_only)):
@@ -4647,7 +4744,8 @@ async def cancel_booking(bid: str, body: BookingCancel, cu: dict = Depends(admin
     await db.audit_logs.insert_one({"action": "booking_cancelled", "vehicle_id": b["vehicle_id"], "user": cu["username"],
         "timestamp": now, "details": f"Booking {bid} withdrawn — {refund} refunded, {round(deposit - refund, 2)} retained"})
     asyncio.create_task(_notify_storefront())
-    return (await _enrich_bookings([await db.bookings.find_one({"id": bid}, {"_id": 0})]))[0]
+    finance = await _booking_to_finance(bid)  # the refund paid back, and the amount kept as income
+    return {**(await _enrich_bookings([await db.bookings.find_one({"id": bid}, {"_id": 0})]))[0], "finance": finance}
 
 @api_router.delete("/bookings/{bid}")
 async def delete_booking(bid: str, cu: dict = Depends(admin_only)):
@@ -4656,6 +4754,7 @@ async def delete_booking(bid: str, cu: dict = Depends(admin_only)):
     if not b: raise HTTPException(404, "Booking not found")
     if b.get("status") == "converted": raise HTTPException(400, "This booking became a sale — delete the sale instead")
     await db.bookings.delete_one({"id": bid})
+    await _booking_to_finance(bid)  # takes its entries out of the Finance books
     if b.get("status") == "active":
         await db.vehicles.update_one({"id": b["vehicle_id"], "status": "reserved"}, {"$set": {"status": "available", "updated_at": datetime.now(timezone.utc).isoformat()}})
         asyncio.create_task(_notify_storefront())
@@ -4853,6 +4952,35 @@ async def get_vendor_payments(vid: str, cu: dict = Depends(require("vendors", "v
             "total_owed": total_owed, "remaining_due": max(0, total_owed - total_paid),
             "vehicles": vehicles, "parts_bills": parts_bills}
 
+@api_router.get("/reports/vendor-dues")
+async def vendor_dues(cu: dict = Depends(require("vendors", "view"))):
+    """What is owed to vendors and what was paid to them, as dated events (kind "owed": a vehicle or spare part bought from the
+    vendor; kind "paid": a payment made to them), so the Dashboard can show To Pay and Paid for any period. Same sums as
+    GET /vendors (vehicle purchase price + parts cost, less payments), one row per purchase / payment."""
+    vendors, vehicles, parts, payments = await asyncio.gather(
+        db.vendors.find({}, {"_id": 0, "id": 1}).to_list(200),
+        db.vehicles.find({"$or": [{"vendor_id": {"$exists": True}}, {"linked_contact_type": "vendor"}]},
+                         {"_id": 0, "vendor_id": 1, "linked_contact_type": 1, "linked_contact_id": 1, "purchase_price": 1, "purchase_date": 1}).to_list(20000),
+        db.spare_parts.find({"vendor_id": {"$exists": True}}, {"_id": 0, "id": 1, "vendor_id": 1, "quantity": 1, "unit_cost": 1, "entry_date": 1, "created_at": 1}).to_list(20000),
+        db.vendor_payments.find({}, {"_id": 0, "vendor_id": 1, "amount": 1, "payment_date": 1}).to_list(20000),
+    )
+    listed = {v["id"] for v in vendors}
+    parts = [p for p in parts if p.get("vendor_id") in listed]
+    await _attach_bought_qty(parts)
+    events = []
+    for vh in vehicles:
+        vid = vh.get("vendor_id") or (vh.get("linked_contact_id") if vh.get("linked_contact_type") == "vendor" else None)
+        if vid in listed and vh.get("purchase_price"):
+            events.append({"vendor_id": vid, "date": vh.get("purchase_date") or "", "amount": vh["purchase_price"], "kind": "owed"})
+    for p in parts:
+        amount = _parts_owed([p])
+        if amount:
+            events.append({"vendor_id": p["vendor_id"], "date": p.get("entry_date") or (p.get("created_at") or "")[:10], "amount": amount, "kind": "owed"})
+    for p in payments:
+        if p.get("vendor_id") in listed:
+            events.append({"vendor_id": p["vendor_id"], "date": p.get("payment_date") or "", "amount": p.get("amount", 0), "kind": "paid"})
+    return {"events": events}
+
 @api_router.post("/vendor-payments")
 async def create_vendor_payment(payment: VendorPaymentCreate, cu: dict = Depends(require("vendors", "manage_payments"))):
     if not await db.vendors.find_one({"id": payment.vendor_id}, {"_id": 0, "id": 1}):
@@ -4928,25 +5056,41 @@ async def add_emi_payment(payment: EMIPaymentCreate, cu: dict = Depends(admin_on
     p.pop("_id", None)
     return p
 
+async def _items_in_stock() -> tuple:
+    """(how many item lines are on the shelf, what they cost the shop): listed items with units left, at cost x quantity."""
+    try:
+        rows = await db.items.find({"status": "available"}, {"_id": 0, "cost": 1, "quantity": 1}).to_list(50000)
+    except Exception:
+        # The items table comes from backend/supabase/schema.sql (Postgres, run by hand) or start-up (MySQL). Until it exists the
+        # Dashboard and Finance summary must still load, just without items; this is what blanked the Dashboard once.
+        logger.warning("Could not read the items table; counting no items in stock", exc_info=True)
+        return 0, 0.0
+    return len(rows), round(sum((r.get("cost") or 0) * (r.get("quantity") or 0) for r in rows), 2)
+
+def _item_cogs(sales: list) -> float:
+    """What the items sold in these (not returned) sales cost, from the cost kept on each sale."""
+    return round(sum(s.get("cost_at_sale") or 0 for s in sales if s.get("item_id") and not s.get("vehicle_id") and not s.get("returned")), 2)
+
 # ── FINANCE ───────────────────────────────────────────────────────────
 @api_router.get("/finance/summary")
-async def finance_summary(cu: dict = Depends(admin_only)):
+async def finance_summary(cu: dict = Depends(require("finance", "manage"))):
     # Five pieces of work that do not depend on each other, run at the same time (the database is in another city, so
     # one after another this waited for every step in turn).
-    async def stock_value():  # inventory value (available vehicles)
+    async def stock_value():  # inventory value (available vehicles, plus stock items at cost)
         avail = await db.vehicles.find({"status": "available"}, _INVESTMENT_FIELDS).to_list(1000)
-        return avail, sum((await _batch_vehicle_investment(avail)).values())
+        _, item_value = await _items_in_stock()
+        return avail, sum((await _batch_vehicle_investment(avail)).values()) + item_value
 
     async def sales_and_cogs():  # revenue & COGS from the Sales table (single source of truth)
         sales_records = await db.sales.find({}, {"_id": 0}).to_list(1000)
         # Dedupe: a vehicle sold, returned, then resold appears in two sales rows but its
         # investment (purchase price + expenses) should only count once toward COGS.
-        sold_vehicle_ids = list({s["vehicle_id"] for s in sales_records})
+        sold_vehicle_ids = list({s["vehicle_id"] for s in sales_records if s.get("vehicle_id")})
         sold_vehicles = (
             await db.vehicles.find({"id": {"$in": sold_vehicle_ids}}, _INVESTMENT_FIELDS).to_list(5000)
             if sold_vehicle_ids else []
         )
-        return sales_records, sum((await _batch_vehicle_investment(sold_vehicles)).values())
+        return sales_records, sum((await _batch_vehicle_investment(sold_vehicles)).values()) + _item_cogs(sales_records)
 
     async def vendor_payables_total():
         vendors = await db.vendors.find({}, {"_id": 0}).to_list(100)
@@ -4994,6 +5138,7 @@ async def assistant_briefing(request: Request):
     if not cid:
         raise HTTPException(401, "Invalid assistant key")
     current_company_id.set(cid)          # every db.<collection> call below is now scoped to this company
+    await portal_bridge.enforce_feature(request.url.path, cid)
     finance = await finance_summary({"role": "admin"})
     sales = await db.sales.find({}, {"_id": 0}).to_list(50000)
     today, month = assistant_api.nepal_today()
@@ -5034,6 +5179,7 @@ async def assistant_lookup(request: Request, body: AssistantLookup):
     if not cid:
         raise HTTPException(401, "Invalid assistant key")
     current_company_id.set(cid)
+    await portal_bridge.enforce_feature(request.url.path, cid)
     data = {}
     if body.name in ("customer", "dues", "sales"):
         data["sales"] = await db.sales.find({}, {"_id": 0}).to_list(50000)
@@ -5073,7 +5219,7 @@ async def dashboard_stats(cu: dict = Depends(admin_only)):
         sales_records = await db.sales.find({}, {"_id": 0}).to_list(1000)
         # Sold vehicles' investment feeds both the profit loop below and total_cogs —
         # fetch + batch-compute once instead of once per sale/vehicle.
-        sold_vehicle_ids = list({s["vehicle_id"] for s in sales_records})
+        sold_vehicle_ids = list({s["vehicle_id"] for s in sales_records if s.get("vehicle_id")})
         sold_vehicles = (
             await db.vehicles.find({"id": {"$in": sold_vehicle_ids}}, _INVESTMENT_FIELDS).to_list(5000)
             if sold_vehicle_ids else []
@@ -5089,7 +5235,8 @@ async def dashboard_stats(cu: dict = Depends(admin_only)):
      (sales_records, sold_vehicles, sold_investment_by_vehicle),
      payable_by_vendor) = await asyncio.gather(counts(), stock_for_sale(), sales_and_their_vehicles(), vendor_dues())
 
-    locked_capital = sum(investment_by_vehicle.values())
+    item_lines, item_value = await _items_in_stock()  # stock items count toward what is on the shelf, at cost
+    locked_capital = sum(investment_by_vehicle.values()) + item_value
     aging = _aging_counts(avail_v)
     sold = len(sales_records)
     sold_vehicle_ids_existing = {v["id"] for v in sold_vehicles}
@@ -5102,13 +5249,15 @@ async def dashboard_stats(cu: dict = Depends(admin_only)):
             # that snapshot existed have none and count only the retained fee, as before.
             total_profit += _sale_revenue(s) - (s.get("cost_at_return") or 0)
             continue
-        if s["vehicle_id"] in sold_vehicle_ids_existing:
+        if s.get("vehicle_id") in sold_vehicle_ids_existing:
             total_profit += _sale_revenue(s) - sold_investment_by_vehicle.get(s["vehicle_id"], 0)
+        elif s.get("item_id") and not s.get("vehicle_id"):
+            total_profit += _sale_revenue(s) - (s.get("cost_at_sale") or 0)  # an item sale: cost kept on the sale
 
     total_revenue = sum(_sale_revenue(s) for s in sales_records)
     # Dedupe: a vehicle sold, returned, then resold appears in two sales rows but its
     # investment (purchase price + expenses) should only count once toward COGS.
-    total_cogs = sum(sold_investment_by_vehicle.values())
+    total_cogs = sum(sold_investment_by_vehicle.values()) + _item_cogs(sales_records)
 
     total_vendor_due = sum(payable_by_vendor.values())
 
@@ -5125,6 +5274,7 @@ async def dashboard_stats(cu: dict = Depends(admin_only)):
         "total_vendors": total_vendors,
         "total_revenue": total_revenue, "inventory_value": locked_capital,
         "total_cogs": total_cogs,
+        "item_lines_in_stock": item_lines, "items_value": item_value,
     }
 
 @api_router.get("/reports/inventory")
@@ -5169,6 +5319,15 @@ async def financial_report(cu: dict = Depends(admin_only)):
         monthly[month]["investment"] += inv
         monthly[month]["profit"] += sp - inv
         monthly[month]["count"] += 1
+    # item sales (no vehicle): cost was kept on the sale
+    item_sales = await db.sales.find({"item_id": {"$exists": True}, "returned": {"$ne": True}},
+                                     {"_id": 0, "vehicle_id": 1, "sale_date": 1, "created_at": 1, "sale_price": 1, "cost_at_sale": 1}).to_list(20000)
+    for s in item_sales:
+        if s.get("vehicle_id"): continue
+        month = (s.get("sale_date") or s.get("created_at") or "")[:7] or "unknown"
+        m = monthly.setdefault(month, {"revenue": 0, "investment": 0, "profit": 0, "count": 0})
+        sp, cost = s.get("sale_price") or 0, s.get("cost_at_sale") or 0
+        m["revenue"] += sp; m["investment"] += cost; m["profit"] += sp - cost; m["count"] += 1
     total_profit = sum(m["profit"] for m in monthly.values())
     partner_shares = [{"name": p["name"], "stake": p["stake_percentage"],
                        "capital": p["capital_contribution"],
@@ -5189,7 +5348,10 @@ async def _enriched_sales_for_closing(start_date: Optional[str] = None, end_date
     # Only the columns this report reads are fetched (whole sale and vehicle rows are mostly text it never looks at), and
     # everything that needs only the sales' ids is read at the same time (the database is in another city).
     sales = await db.sales.find(query, {"_id": 0, "id": 1, "sale_date": 1, "sale_price": 1, "due_amount": 1, "returned": 1, "retained_amount": 1,
-                                        "vehicle_id": 1, "customer_id": 1, "created_at": 1, "returned_at": 1, "cost_at_return": 1}).sort("sale_date", 1).to_list(5000)
+                                        "vehicle_id": 1, "customer_id": 1, "created_at": 1, "returned_at": 1, "cost_at_return": 1,
+                                        "item_id": 1, "quantity": 1, "cost_at_sale": 1}).sort("sale_date", 1).to_list(5000)
+    item_ids = list({s["item_id"] for s in sales if s.get("item_id")})
+    item_names = {i["id"]: i.get("name") for i in await db.items.find({"id": {"$in": item_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(len(item_ids))} if item_ids else {}
     vehicle_ids = list({s["vehicle_id"] for s in sales if s.get("vehicle_id")})
     customer_ids = list({s["customer_id"] for s in sales if s.get("customer_id")})
     vs, cs, returned_rows, all_exps, all_jobs = await asyncio.gather(
@@ -5226,6 +5388,9 @@ async def _enriched_sales_for_closing(start_date: Optional[str] = None, end_date
         if s.get("returned") and s.get("cost_at_return") is not None:
             investment = s["cost_at_return"]
         vehicle_label = "Vehicle removed"
+        if s.get("item_id") and not s.get("vehicle_id"):  # an item sale: its cost was kept on the sale
+            vehicle_label = (item_names.get(s["item_id"]) or "Item removed") + (f" ×{s['quantity']}" if (s.get("quantity") or 1) > 1 else "")
+            investment = s.get("cost_at_sale") or 0
         if v:
             parts = [v["brand"], v["model"]]
             if v.get("year"): parts.append(str(v["year"]))
@@ -5791,7 +5956,7 @@ async def accounting_summary(start_date: str, end_date: str, cu: dict = Depends(
         # and resold (all non-returned sales) within the period, its investment is meant to
         # count once per sale here — this mirrors the original per-sale-record calculation.
         non_returned = [s for s in sales_in_period if not s.get("returned")]
-        sold_vehicle_ids = list({s["vehicle_id"] for s in non_returned})
+        sold_vehicle_ids = list({s["vehicle_id"] for s in non_returned if s.get("vehicle_id")})
         sold_vehicles = (
             await db.vehicles.find({"id": {"$in": sold_vehicle_ids}}, _INVESTMENT_FIELDS).to_list(5000)
             if sold_vehicle_ids else []
@@ -5808,8 +5973,8 @@ async def accounting_summary(start_date: str, end_date: str, cu: dict = Depends(
     sold_count = len(sales_in_period)
     total_sales = sum(_sale_revenue(s) for s in sales_in_period)
     total_investment_sold = sum(
-        investment_by_vehicle[s["vehicle_id"]] for s in non_returned if s["vehicle_id"] in investment_by_vehicle
-    )
+        investment_by_vehicle[s["vehicle_id"]] for s in non_returned if s.get("vehicle_id") in investment_by_vehicle
+    ) + _item_cogs(non_returned)
 
     net_profit = total_sales - total_investment_sold
     return {
@@ -5894,7 +6059,7 @@ async def _backfill_lead_vehicles():
     if done: logger.info(f"Linked {done} earlier website tap(s) to the bike they were about")
 
 @api_router.get("/leads")
-async def get_leads(request: Request, cu: dict = Depends(admin_only)):
+async def get_leads(request: Request, cu: dict = Depends(require("marketing", "manage"))):
     """Every lead, newest first. A lead from a vehicle's WhatsApp / Call button also carries that vehicle (name, plate,
     price, cover photo and its page on the website), so staff can see which bike the person was looking at."""
     leads = await db.leads.find({}, {"_id": 0}).sort("created_at", -1).to_list(1000)
@@ -5913,11 +6078,14 @@ async def get_leads(request: Request, cu: dict = Depends(admin_only)):
     return leads
 
 @api_router.get("/leads/new-count")
-async def get_new_leads_count(cu: dict = Depends(admin_only)):
-    """How many website leads are still new and unopened (the sidebar badge). The sidebar asks every minute, so this reads
-    two small columns instead of every lead together with the photos some of them carry (megabytes)."""
-    rows = await db.leads.find({"status": "new"}, {"_id": 0, "id": 1, "seen_at": 1}).to_list(100000)
-    return {"count": sum(1 for l in rows if not l.get("seen_at"))}
+async def get_new_leads_count(cu: dict = Depends(require("marketing", "manage"))):
+    """How many website leads are still new and unopened (the sidebar badge), and, apart from them, how many newly registered
+    accounts (a signup is not a lead: it is told about in the bell and listed under Leads > Accounts). The sidebar asks every
+    minute, so this reads three small columns instead of every lead together with the photos some of them carry (megabytes)."""
+    rows = await db.leads.find({"status": "new"}, {"_id": 0, "id": 1, "seen_at": 1, "type": 1}).to_list(100000)
+    unseen = [l for l in rows if not l.get("seen_at")]
+    accounts = sum(1 for l in unseen if l.get("type") == "signup")
+    return {"count": len(unseen) - accounts, "accounts": accounts}
 
 # ── LEADS: every website lead is either accepted or rejected ─────────────
 # A new lead is pending (status "new"). Accepting it puts the person in the CRM (source: Website; someone who is already
@@ -5931,16 +6099,17 @@ def _lead_email(v) -> Optional[str]:
     return e if re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", e) else None
 
 @api_router.post("/leads/seen")
-async def mark_leads_seen(body: LeadsSeen, cu: dict = Depends(admin_only)):
+async def mark_leads_seen(body: LeadsSeen, cu: dict = Depends(require("marketing", "manage"))):
     """The Leads screen was opened with these leads on it: they stop counting as new in the nav badge and the bell.
     Only the ids the screen actually showed are marked, so a lead that arrived a moment later still notifies."""
     if body.ids:
+        # seen_by is the first person to open the lead (same username format as decided_by); it is never overwritten.
         await db.leads.update_many({"id": {"$in": body.ids}, "seen_at": {"$exists": False}},
-                                   {"$set": {"seen_at": datetime.now(timezone.utc).isoformat()}})
-    return {"ok": True}
+                                   {"$set": {"seen_at": datetime.now(timezone.utc).isoformat(), "seen_by": cu.get("username")}})
+    return {"ok": True, "seen_by": cu.get("username")}
 
 @api_router.post("/leads/{lid}/accept")
-async def accept_lead(lid: str, cu: dict = Depends(admin_only)):
+async def accept_lead(lid: str, cu: dict = Depends(require("marketing", "manage"))):
     async with _lead_decision_lock:
         lead = await db.leads.find_one({"id": lid}, {"_id": 0})
         if not lead: raise HTTPException(404, "Lead not found")
@@ -5951,7 +6120,7 @@ async def accept_lead(lid: str, cu: dict = Depends(admin_only)):
     return {"lead": await db.leads.find_one({"id": lid}, {"_id": 0}), "customer_id": customer["id"] if customer else None, "customer_created": created}
 
 @api_router.post("/leads/{lid}/reject")
-async def reject_lead(lid: str, body: LeadReject, cu: dict = Depends(admin_only)):
+async def reject_lead(lid: str, body: LeadReject, cu: dict = Depends(require("marketing", "manage"))):
     remark = (body.remark or "").strip()[:1000]
     if len(remark) < 3: raise HTTPException(422, "Please write why you are rejecting this lead")
     async with _lead_decision_lock:
@@ -6024,14 +6193,14 @@ def _offer_bike_no(raw: str) -> str:
     return s if 4 <= len(s) <= 20 and re.search(r"\d", s) else ""
 
 @api_router.get("/offers/dashain")
-async def get_dashain_offer(cu: dict = Depends(admin_only)):
+async def get_dashain_offer(cu: dict = Depends(require("marketing", "manage"))):
     prizes = await _offer_prizes()
     spins = await db.offer_codes.find({"status": "USED"}, {"_id": 0}).sort("used_at", -1).to_list(5000)
     return {"prizes": prizes, "spins": spins, "review_url": OFFER_REVIEW_URL,
             "storefront_url": f"{STOREFRONT_URL}/offers"}
 
 @api_router.put("/offers/dashain/prizes")
-async def update_dashain_prizes(req: OfferPrizesUpdate, cu: dict = Depends(admin_only)):
+async def update_dashain_prizes(req: OfferPrizesUpdate, cu: dict = Depends(require("marketing", "manage"))):
     """Saves the wheel exactly as sent: listed prizes are updated/added in this order, and
     any prize left out is removed. Spins already won keep their prize name."""
     current = {p["id"] for p in await _offer_prizes()}
@@ -6162,9 +6331,10 @@ def _gsc_token() -> str:
     return creds.token
 
 @api_router.get("/visits/search")
-async def visits_search(days: int = 30, skip: int = 0, cu: dict = Depends(admin_only)):
+async def visits_search(days: int = 30, skip: int = 0, cu: dict = Depends(require("marketing", "manage"))):
     days = max(1, min(days, 365)); skip = max(0, min(skip, 30))
-    if not GSC_CREDENTIALS_JSON:
+    # The Search Console property is the first company's website (GSC_SITE_URL); another company must not see its numbers.
+    if not GSC_CREDENTIALS_JSON or cu.get("company_id") != await _default_company_id():
         return {"configured": False}
     try:
         token = await asyncio.to_thread(_gsc_token)
@@ -6207,9 +6377,9 @@ async def visits_search(days: int = 30, skip: int = 0, cu: dict = Depends(admin_
             "total_clicks": sum(d["clicks"] for d in daily), "total_impressions": sum(d["impressions"] for d in daily)}
 
 @api_router.get("/visits/summary")
-async def visits_summary(days: int = 30, skip: int = 0, cu: dict = Depends(admin_only)):
+async def visits_summary(days: int = 30, skip: int = 0, cu: dict = Depends(require("marketing", "manage"))):
     days = max(1, min(days, 365)); skip = max(0, min(skip, 30))  # skip = days back from today the range ends (1 = yesterday)
-    if GA4_PROPERTY_ID and GA4_CREDENTIALS_JSON:
+    if GA4_PROPERTY_ID and GA4_CREDENTIALS_JSON and cu.get("company_id") == await _default_company_id():  # GA4 is the first company's site
         return await _name_vehicle_pages(await _ga4_summary(days, skip))
     npt = timezone(timedelta(hours=5, minutes=45))  # Nepal time, so "today" matches the shop's day
     today = datetime.now(npt).date() - timedelta(days=skip)
@@ -6254,6 +6424,17 @@ async def visits_summary(days: int = 30, skip: int = 0, cu: dict = Depends(admin
             e["views"] += 1; e["people"].add(r["visitor_id"])
     top_bikes = [{"id": k, "path": f"/inventory/{k}", "name": k, "views": e["views"], "customers": len(e["people"])}
                  for k, e in sorted(bike_views.items(), key=lambda kv: (-kv[1]["views"], -len(kv[1]["people"])))[:20]]
+    site = await _company_site()
+    shop = shop_sync.is_shop(site)
+    if shop:  # the shop's product pages (/product/<id>, see its tracker) take the bikes' place
+        prod_views, base = {}, "/product.php"
+        for r in rows:
+            if m := _SHOP_PRODUCT_PATH.fullmatch(r["path"]):
+                base = m.group(1)
+                e = prod_views.setdefault(m.group(2), {"views": 0, "people": set()})
+                e["views"] += 1; e["people"].add(r["visitor_id"])
+        top_bikes = [{"id": k, "path": f"{base}?id={k}", "name": k, "views": e["views"], "customers": len(e["people"])}
+                     for k, e in sorted(prod_views.items(), key=lambda kv: (-kv[1]["views"], -len(kv[1]["people"])))[:20]]
     visits, spans, visit_list = 0, [], []
     def close_visit(vid, pv):
         nonlocal visits
@@ -6279,25 +6460,71 @@ async def visits_summary(days: int = 30, skip: int = 0, cu: dict = Depends(admin
                   "longest_minutes": round(max(spans) / 60, 1) if spans else 0,
                   "pages_per_visit": round(len(rows) / visits, 1) if visits else 0,
                   "quick_visit_pct": round(100 * (visits - len(spans)) / visits) if visits else 0}
-    return await _name_vehicle_pages({"days": days, "total_views": len(rows), "unique_visitors": len(visitors),
+    out = await _name_vehicle_pages({"days": days, "total_views": len(rows), "unique_visitors": len(visitors),
             "today_views": today_views, "today_visitors": len(today_visitors), "daily": daily,
             "top_pages": top(pages), "top_bikes": top_bikes, "sources": top(refs), "devices": devices,
-            "storefront_url": STOREFRONT_URL, "source": "beacon", "engagement": engagement, "visit_list": visit_list[:200]})
+            "storefront_url": (site["site_url"] or STOREFRONT_URL) if shop else STOREFRONT_URL,
+            "source": "beacon", "engagement": engagement, "visit_list": visit_list[:200]})
+    return _name_shop_products(out, await shop_sync.product_names(site)) if shop else out
+
+_SHOP_PRODUCT_PATH = re.compile(r"(/[^/]*product[^/]*)/(\d+)/?")  # what the tracker sends for a product page: /product.php/29
+
+def _name_shop_products(summary: dict, names: dict) -> dict:
+    """The shop's counterpart of _name_vehicle_pages: /product/<id> becomes the product's name, and links to its page."""
+    label = lambda p: names.get(m.group(2), f"Product {m.group(2)}") if (m := _SHOP_PRODUCT_PATH.fullmatch(p)) else p
+    for r in summary["top_pages"]:
+        if m := _SHOP_PRODUCT_PATH.fullmatch(r["path"]): r["path"] = f"{m.group(1)}?id={m.group(2)}"
+        r["name"] = label(r["name"])
+    for b in summary["top_bikes"]: b["name"] = names.get(b["id"], f"Product {b['id']}")
+    for v in summary["visit_list"]:
+        v["paths"] = [label(p) for p in v["paths"]]
+        for st in v.get("steps", []): st["label"] = label(st["path"])
+    return summary
 
 # ── SETTINGS (storefront branding/contact info) ────────────────────────
+def _settings_out(row: Optional[dict], request: Request) -> dict:
+    """The settings row for the admin screen: the sync key is never sent back (only whether one is set), and the tracker
+    address is worked out from this request."""
+    out = dict(row or {})
+    out["site_sync_key_set"] = bool(out.pop("site_sync_key", None))
+    if out.get("site_key"):
+        scheme = request.headers.get("x-forwarded-proto", request.url.scheme).split(",")[0].strip()
+        host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc).split(",")[0].strip()
+        out["tracker_url"] = f"{scheme}://{host}/api/public/tracker/{out['site_key']}.js"
+    return out
+
+def _clean_url(v: str, what: str) -> str:
+    v = v.strip().rstrip("/")
+    if v and not re.fullmatch(r"https?://[^\s/]+(/\S*)?", v):
+        raise HTTPException(400, f"{what} must start with https:// (or http://) and be a full address")
+    return v
+
 @api_router.get("/settings")
-async def get_settings(cu: dict = Depends(admin_only)):
+async def get_settings(request: Request, cu: dict = Depends(admin_only)):
     # No "id" filter: settings is looked up purely by the company_id the wrapper scopes
     # this query to -- one row per company, "id" is just an arbitrary row identifier.
-    s = await db.settings.find_one({}, {"_id": 0})
-    return s or {}
+    return _settings_out(await db.settings.find_one({}, {"_id": 0}), request)
 
 @api_router.put("/settings")
-async def update_settings(settings: SettingsUpdate, cu: dict = Depends(admin_only)):
+async def update_settings(request: Request, settings: SettingsUpdate, cu: dict = Depends(admin_only)):
     updates = {k: v for k, v in settings.model_dump().items() if v is not None}
-    await db.settings.update_one({}, {"$set": updates}, upsert=True)
+    for field, what in (("site_url", "Website address"), ("site_sync_url", "Receiver address")):
+        if field in updates:
+            updates[field] = _clean_url(updates[field], what)
+    if "site_sync_key" in updates:
+        updates["site_sync_key"] = updates["site_sync_key"].strip()
+        if updates["site_sync_key"] and len(updates["site_sync_key"]) < 32:
+            raise HTTPException(400, "The sync key must be at least 32 characters (use a long random one)")
+    row = await db.settings.find_one({}, {"_id": 0})
+    if not row:  # a company that never saved settings has no row yet; "id" is the table's primary key
+        await db.settings.insert_one({"id": str(uuid.uuid4())})
+        row = {}
+    if updates.get("site_url") and not row.get("site_key"):
+        updates["site_key"] = uuid.uuid4().hex[:24]  # public id for this company's visit tracker
+    if updates:
+        await db.settings.update_one({}, {"$set": updates})
     asyncio.create_task(_notify_storefront())
-    return await db.settings.find_one({}, {"_id": 0})
+    return _settings_out(await db.settings.find_one({}, {"_id": 0}), request)
 
 # ── REAL TIMINGS (see perf_stats.py) ─────────────────────────────────────
 class PerfSample(BaseModel):
@@ -6513,6 +6740,11 @@ async def _run_startup_tasks():
             ("vehicles", "sanakhat_cost", "DOUBLE"),
             ("vehicles", "purchase_due", "DOUBLE"),
             ("settings", "warranty_days_default", "INT"),
+            ("settings", "business_type", "VARCHAR(20)"),
+            ("settings", "site_url", "VARCHAR(300)"),
+            ("settings", "site_sync_url", "VARCHAR(300)"),
+            ("settings", "site_sync_key", "VARCHAR(120)"),
+            ("settings", "site_key", "VARCHAR(40)"),
             ("vehicle_photos", "sort_order", "INT"),
             ("vehicle_photos", "storage_path", "VARCHAR(500)"),
             ("legal_documents", "storage_path", "VARCHAR(500)"),
@@ -6543,6 +6775,7 @@ async def _run_startup_tasks():
             ("leads", "customer_id", "VARCHAR(36)"),
             ("leads", "vehicle_id", "VARCHAR(36)"),  # the vehicle the visitor was looking at when they tapped WhatsApp / Call
             ("leads", "seen_at", "VARCHAR(40)"),  # when staff first opened the lead; unseen pending leads drive the nav badge
+            ("leads", "seen_by", "VARCHAR(100)"),  # who opened it first
             # Who sold the vehicle (a Team member); the name is kept on the sale so it survives the member being removed.
             ("sales", "sold_by_id", "VARCHAR(36)"),
             ("sales", "sold_by_name", "VARCHAR(255)"),
@@ -6558,6 +6791,11 @@ async def _run_startup_tasks():
             ("sales", "exchange_reg_no", "VARCHAR(50)"),
             ("sales", "exchange_year", "VARCHAR(10)"),
             ("sales", "exchange_vehicle_id", "VARCHAR(36)"),  # the inventory entry made for that old vehicle
+            # Prompt 4: a sale of a stock item instead of a vehicle (nullable; vehicle sales never set them), and item photos.
+            ("sales", "item_id", "VARCHAR(36)"),
+            ("sales", "quantity", "INT"),
+            ("sales", "cost_at_sale", "DOUBLE"),  # what the items cost the shop when sold, so a later cost edit cannot change past profit
+            ("vehicle_photos", "item_id", "VARCHAR(36)"),
         ]
         for _tbl, _col, _type in _post_schema_cols:
             try:
@@ -6569,6 +6807,10 @@ async def _run_startup_tasks():
             await db.execute_raw(BOOKINGS_DDL)
         except Exception:
             logger.warning("Could not ensure bookings table", exc_info=True)
+        try:
+            await db.execute_raw(ITEMS_DDL)
+        except Exception:
+            logger.warning("Could not ensure items table", exc_info=True)
         for _ddl in [*OFFERS_DDL, PAGE_VIEWS_DDL, *CRM_DDL]:
             try:
                 await db.execute_raw(_ddl)
@@ -6579,11 +6821,21 @@ async def _run_startup_tasks():
         except Exception:
             logger.warning("Could not ensure the Finance rent tables", exc_info=True)
     if DB_BACKEND == "postgres":
+        # leads.seen_by (who first read a lead) was added after the Supabase schema was loaded: add it here so the Leads screen
+        # keeps working without a manual SQL step. If the database user may not alter tables, stop asking for the column
+        # instead of failing every Leads query ("column seen_by does not exist").
+        try:
+            await db.execute_raw('ALTER TABLE leads ADD COLUMN IF NOT EXISTS seen_by varchar(100)')
+        except Exception:
+            logger.warning("Could not add leads.seen_by; Leads will not show who read a lead", exc_info=True)
+            import sqldb
+            sqldb.TABLES["leads"]["columns"].discard("seen_by")
         # Supabase: the tables and columns come from backend/supabase/schema.sql; this only registers Finance's late-added ones.
         try:
             await finance_books.ensure_schema_postgres(db)
         except Exception:
             logger.warning("Could not check the Finance columns", exc_info=True)
+    await staff_access.ensure_schema(db, DB_BACKEND)  # never raises; leaves the feature off if the table cannot be made
     try:
         await _backfill_booking_receipt_numbers()
     except Exception:
@@ -7065,6 +7317,313 @@ async def delete_vehicle_photo(vid: str, photo_id: str, cu: dict = Depends(requi
     return {"message": "Photo deleted"}
 
 # ══════════════════════════════════════════════════════════════════════
+# ── STOCK ITEMS (Prompt 4) ────────────────────────────────────────────
+# What a shop that is not a vehicle dealer keeps in stock: name, SKU, category, cost, price, a count, optional serial
+# number, photos. One table for everyone (see ITEMS_DDL); vehicles stay in their own table and are untouched. An item's
+# photos live in vehicle_photos (item_id set, vehicle_id empty), so /vehicle-photos/{id}/file serves them too.
+# ══════════════════════════════════════════════════════════════════════
+class ItemIn(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    sku: Optional[str] = Field(None, max_length=100)
+    category: Optional[str] = Field(None, max_length=100)
+    serial_number: Optional[str] = Field(None, max_length=100)  # set = a single unit, so quantity is 1
+    cost: float = Field(0, ge=0)
+    price: float = Field(0, ge=0)
+    quantity: int = Field(1, ge=0, le=1_000_000)
+    notes: Optional[str] = Field(None, max_length=5000)
+    vendor_id: Optional[str] = None
+    unlisted: bool = False  # kept in the books but not for sale yet
+
+class ItemSale(BaseModel):
+    customer_id: Optional[str] = None
+    unit_price: float = Field(..., ge=0)
+    quantity: int = Field(1, ge=1, le=1_000_000)
+    extra_expenses: List[dict] = []
+    payment_method: str = "Cash"
+    paid_cash: float = 0
+    paid_bank: float = 0
+    advance_payment: float = 0
+    due_amount: Optional[float] = None
+    due_date: Optional[str] = None
+    sale_date: Optional[str] = None
+    notes: Optional[str] = None
+    sold_by_id: Optional[str] = None
+    lead_source: Optional[str] = None
+    lead_note: Optional[str] = Field(None, max_length=255)
+    referred_by_id: Optional[str] = None
+    referred_by_name: Optional[str] = Field(None, max_length=255)
+
+def _item_status(quantity: int, unlisted: bool) -> str:
+    return "unlisted" if unlisted else ("available" if quantity > 0 else "sold")
+
+def _item_doc(body: ItemIn) -> dict:
+    qty = 1 if (body.serial_number or "").strip() else body.quantity
+    return {"name": body.name.strip(), "sku": (body.sku or "").strip() or None, "category": (body.category or "").strip() or None,
+            "serial_number": (body.serial_number or "").strip() or None, "cost": body.cost, "price": body.price, "quantity": qty,
+            "status": _item_status(qty, body.unlisted), "notes": body.notes, "vendor_id": body.vendor_id or None}
+
+async def _check_sku_free(sku: Optional[str], except_id: Optional[str] = None):
+    if sku and await db.items.find_one({"sku": sku, **({"id": {"$ne": except_id}} if except_id else {})}, {"_id": 0, "id": 1}):
+        raise HTTPException(400, f"SKU '{sku}' is already used by another item")
+
+def _item_out(it: dict, role: str, photos: Optional[list] = None) -> dict:
+    out = dict(it)
+    if role != "admin":
+        out.pop("cost", None)  # what the shop paid stays admin-only, as on vehicles
+    photos = photos or []
+    out["photo_count"] = len(photos)
+    out["thumb_photos"] = [{"id": p["id"], "url": f"/api/vehicle-photos/{p['id']}/file", "thumb": f"/api/vehicle-photos/{p['id']}/file?w=240"} for p in photos[:3]]
+    return out
+
+async def _company_site(cid=None) -> dict:
+    """The current company's website connection (see shop_sync.from_settings), from its settings row."""
+    cid = cid or current_company_id.get()
+    return shop_sync.from_settings(await db.settings.find_one({}, {"_id": 0}), cid)
+
+async def _shop_sync_item(iid: str):
+    """Sends an item's current state to the company's online shop (see shop_sync.py). Runs in the background and never
+    raises: a shop outage must not hold up stock work. Unlisted items are taken off the shop; sold-out ones stay, as Out of stock."""
+    try:
+        cfg = await _company_site()
+        it = await db.items.find_one({"id": iid}, {"_id": 0}) if shop_sync.enabled(cfg) else None
+        if not it:
+            return
+        if it.get("status") == "unlisted":
+            await shop_sync.remove_item(cfg, iid)
+            return
+        photos = await db.vehicle_photos.find({"item_id": iid}, {"_id": 0, "id": 1}).sort(PHOTO_ORDER).to_list(shop_sync.MAX_PHOTOS)
+        blobs = [(p["id"], (await _get_photo_bytes({"id": p["id"], "item_id": iid}))[0]) for p in photos]
+        await shop_sync.push_item(cfg, it, blobs)
+    except Exception:
+        logger.warning("Shop sync of item %s failed", iid, exc_info=True)
+
+@api_router.get("/items")
+async def list_items(status: Optional[str] = None, q: Optional[str] = None, cu: dict = Depends(require("items", "view"))):
+    query = {}
+    if status and status != "all":
+        query["status"] = status
+    items = await db.items.find(query, {"_id": 0}).sort("created_at", -1).to_list(5000)
+    if q:
+        needle = q.strip().lower()
+        items = [i for i in items if needle in " ".join(str(i.get(k) or "") for k in ("name", "sku", "category", "serial_number")).lower()]
+    ids = [i["id"] for i in items]
+    photos = await db.vehicle_photos.find({"item_id": {"$in": ids}}, {"_id": 0, "id": 1, "item_id": 1, "uploaded_at": 1}).sort(PHOTO_ORDER).to_list(20000) if ids else []
+    by_item: dict = {}
+    for p in photos:
+        by_item.setdefault(p["item_id"], []).append(p)
+    return [_item_out(i, cu.get("role", "admin"), by_item.get(i["id"])) for i in items]
+
+@api_router.post("/items")
+async def create_item(body: ItemIn, cu: dict = Depends(require("items", "create"))):
+    doc = _item_doc(body)
+    await _check_sku_free(doc["sku"])
+    now = datetime.now(timezone.utc).isoformat()
+    doc.update({"id": str(uuid.uuid4()), "created_by": cu.get("username"), "created_at": now, "updated_at": now})
+    await db.items.insert_one(doc)
+    doc.pop("_id", None)
+    _spawn(_shop_sync_item(doc["id"]))
+    return _item_out(doc, cu.get("role", "admin"))
+
+@api_router.get("/items/categories")
+async def item_categories(cu: dict = Depends(require("items", "view"))):
+    """The category choices for the Add Item form: those already used by this company's items, plus the ones its website
+    takes when it is connected. Declared before /items/{iid}, which would otherwise read "categories" as an item id."""
+    used = {(i.get("category") or "").strip() for i in await db.items.find({}, {"_id": 0, "category": 1}).to_list(20000)}
+    if shop_sync.enabled(await _company_site()):
+        used |= shop_sync.CATEGORIES
+    return sorted(c for c in used if c)
+
+@api_router.get("/items/{iid}")
+async def get_item(iid: str, cu: dict = Depends(require("items", "view"))):
+    it = await db.items.find_one({"id": iid}, {"_id": 0})
+    if not it: raise HTTPException(404, "Item not found")
+    photos = await db.vehicle_photos.find({"item_id": iid}, {"_id": 0, "id": 1, "uploaded_at": 1}).sort(PHOTO_ORDER).to_list(200)
+    return _item_out(it, cu.get("role", "admin"), photos)
+
+@api_router.put("/items/{iid}")
+async def update_item(iid: str, body: ItemIn, cu: dict = Depends(require("items", "edit"))):
+    if not await db.items.find_one({"id": iid}, {"_id": 0, "id": 1}): raise HTTPException(404, "Item not found")
+    doc = _item_doc(body)
+    await _check_sku_free(doc["sku"], iid)
+    doc["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.items.update_one({"id": iid}, {"$set": doc})
+    _spawn(_shop_sync_item(iid))
+    return await get_item(iid, cu)
+
+@api_router.delete("/items/{iid}")
+async def delete_item(iid: str, cu: dict = Depends(require("items", "delete"))):
+    if await db.sales.find_one({"item_id": iid}, {"_id": 0, "id": 1}):
+        # The books keep referring to it; unlist it instead so history stays whole.
+        raise HTTPException(400, "This item has sales on record and cannot be deleted. Mark it unlisted instead.")
+    photos = await db.vehicle_photos.find({"item_id": iid}, {"_id": 0, "id": 1, "storage_path": 1}).to_list(500)
+    r = await db.items.delete_one({"id": iid})
+    if r.deleted_count == 0: raise HTTPException(404, "Item not found")
+    cfg = await _company_site()
+    if shop_sync.enabled(cfg):
+        _spawn(shop_sync.remove_item(cfg, iid))
+    for p in photos:
+        await db.vehicle_photos.delete_one({"id": p["id"]})
+        if p.get("storage_path") and media_storage.enabled():
+            await media_storage.remove(media_storage.PHOTO_BUCKET, p["storage_path"])
+        _evict_photo_cache(p["id"])
+    return {"message": "Item deleted"}
+
+@api_router.post("/items/{iid}/sell")
+async def sell_item(iid: str, sale: ItemSale, cu: dict = Depends(require("sales", "create"))):
+    it = await db.items.find_one({"id": iid}, {"_id": 0})
+    if not it: raise HTTPException(404, "Item not found")
+    if it.get("status") == "unlisted": raise HTTPException(400, "This item is unlisted, so it cannot be sold yet")
+    # Atomic conditional decrement (same as stock_out_part), so two sales cannot both take the last unit.
+    updated = await db.items.find_one_and_update(
+        {"id": iid, "quantity": {"$gte": sale.quantity}}, {"$inc": {"quantity": -sale.quantity}}, return_document=ReturnDocument.AFTER)
+    if not updated:
+        raise HTTPException(400, f"Not enough in stock. Available: {it.get('quantity') or 0}")
+    now = datetime.now(timezone.utc).isoformat()
+    if updated["quantity"] <= 0:
+        await db.items.update_one({"id": iid}, {"$set": {"status": "sold", "updated_at": now}})
+    sale_price = round(sale.unit_price * sale.quantity, 2)
+    expenses_total = sum(float(e.get("amount", 0)) for e in sale.extra_expenses)
+    total_amount = sale_price + expenses_total
+    paid_total = (sale.paid_cash or 0) + (sale.paid_bank or 0) + (sale.advance_payment or 0)
+    due_amount = round(sale.due_amount, 2) if sale.due_amount is not None else max(round(total_amount - paid_total, 2), 0)
+    sale_date = sale.sale_date or datetime.now(timezone.utc).date().isoformat()
+    try:
+        doc = {
+            "id": str(uuid.uuid4()), "vehicle_id": None, "item_id": iid, "quantity": sale.quantity,
+            "cost_at_sale": round((it.get("cost") or 0) * sale.quantity, 2),
+            "customer_id": sale.customer_id, "sale_price": sale_price, "extra_expenses": sale.extra_expenses,
+            "expenses_total": expenses_total, "total_amount": total_amount, "payment_method": sale.payment_method,
+            "paid_cash": sale.paid_cash or 0, "paid_bank": sale.paid_bank or 0, "advance_payment": sale.advance_payment or 0,
+            "due_amount": due_amount, "due_date": sale.due_date,
+            "payment_status": "Paid" if due_amount <= 0 else ("Partial" if paid_total > 0 else "Unpaid"),
+            "sale_date": sale_date, "notes": sale.notes,
+            **await crm.seller_for_sale(sale.sold_by_id, sale.customer_id),
+            **await crm.lead_for_sale(sale.model_dump()),
+            "created_by": cu.get("username"), "created_at": now,
+        }
+        await db.sales.insert_one(doc)
+    except Exception:
+        # Put the count back: no sale was recorded.
+        await db.items.update_one({"id": iid}, {"$inc": {"quantity": sale.quantity}, "$set": {"status": _item_status(1, False)}})
+        raise
+    if sale.customer_id:
+        await db.customers.update_one({"id": sale.customer_id}, {"$set": {"last_purchase_date": sale_date}})
+    doc.pop("_id", None)
+    _spawn(_shop_sync_item(iid))  # the shop shows the new count, or Out of stock
+    return doc
+
+@api_router.get("/items/{iid}/photos")
+async def get_item_photos(iid: str, cu: dict = Depends(require("items", "view"))):
+    if not await db.items.find_one({"id": iid}, {"_id": 0, "id": 1}): raise HTTPException(404, "Item not found")
+    photos = await db.vehicle_photos.find({"item_id": iid}, {"_id": 0, "data": 0}).sort(PHOTO_ORDER).to_list(200)
+    return [_photo_out(p) for p in photos]
+
+@api_router.post("/items/{iid}/photos")
+async def upload_item_photo(iid: str, file: UploadFile = File(...), cu: dict = Depends(require("items", "edit"))):
+    it = await db.items.find_one({"id": iid})
+    if not it: raise HTTPException(404, "Item not found")
+    if not _upload_type_ok(file, ALLOWED_IMAGE_TYPES, IMAGE_EXTENSIONS):
+        raise HTTPException(400, f"File type {file.content_type} not allowed. Use JPEG/PNG/WebP/HEIC.")
+    content = await file.read()
+    if len(content) > RAW_UPLOAD_MAX:
+        raise HTTPException(400, "File too large. Max 25MB.")
+    photo = await _save_item_photo(it, content, _resolved_content_type(file), file.filename)
+    _spawn(_shop_sync_item(iid))
+    return _photo_out(photo)
+
+async def _save_item_photo(it: dict, content: bytes, content_type: str, filename: Optional[str]) -> dict:
+    """Compresses and stores one photo of an item (database or Supabase Storage) and starts its thumbnails."""
+    iid = it["id"]
+    try:
+        content, content_type = await _run_isolated(_compress_photo, content)
+    except Exception:
+        logger.warning(f"Photo compression failed for upload to item {iid}, storing original", exc_info=True)
+    if len(content) > PHOTO_MAX_BYTES:
+        raise HTTPException(400, "File too large and could not be compressed. Try a smaller photo.")
+    photo_id = str(uuid.uuid4())
+    photo = {"id": photo_id, "vehicle_id": None, "item_id": iid, "filename": filename or f"{photo_id}.jpg",
+             "content_type": content_type, "data": base64.b64encode(content).decode("ascii"),
+             "uploaded_at": datetime.now(timezone.utc).isoformat(), "size": len(content),
+             "sort_order": await db.vehicle_photos.count_documents({"item_id": iid})}
+    if media_storage.enabled():
+        path = media_storage.object_path(it.get("company_id"), iid, photo_id, content_type)
+        try:
+            await media_storage.upload(media_storage.PHOTO_BUCKET, path, content, content_type)
+            photo.update(storage_path=path, data=None)
+        except Exception:
+            logger.warning(f"Supabase upload failed for a photo of item {iid}, keeping it in the database", exc_info=True)
+    await db.vehicle_photos.insert_one(photo)
+    _spawn(_make_and_store_thumbs(photo_id, content))
+    return photo
+
+@api_router.delete("/items/{iid}/photos/{photo_id}")
+async def delete_item_photo(iid: str, photo_id: str, cu: dict = Depends(require("items", "edit"))):
+    p = await db.vehicle_photos.find_one({"id": photo_id, "item_id": iid}, {"_id": 0, "storage_path": 1})
+    r = await db.vehicle_photos.delete_one({"id": photo_id, "item_id": iid})
+    if r.deleted_count == 0: raise HTTPException(404, "Photo not found")
+    if p and p.get("storage_path") and media_storage.enabled():
+        await media_storage.remove(media_storage.PHOTO_BUCKET, p["storage_path"])
+    _evict_photo_cache(photo_id)
+    _spawn(_shop_sync_item(iid))
+    return {"message": "Photo deleted"}
+
+async def _sync_items_in_turn(ids: list):
+    for iid in ids:  # one at a time: each sends its photos
+        await _shop_sync_item(iid)
+
+@api_router.post("/items/import-from-site")
+async def import_items_from_site(cu: dict = Depends(require("items", "create"))):
+    """One-off: reads the products already on the company's website (its public <site>/api.php?action=products) and creates an
+    Item, with its photos, for each name that is not an Item yet. Stock count and price come across; the cost does not (the site
+    never had it), so fill that in. The new Items are then sent back to the site, which links each to its existing product."""
+    cfg = await _company_site()
+    if not cfg["site_url"]:
+        raise HTTPException(400, "Add the website address under Settings > Website connection first")
+    try:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as http:
+            r = await http.get(cfg["site_url"] + "/api.php", params={"action": "products"})
+            products = r.json().get("products")
+            if not isinstance(products, list):
+                raise ValueError("no product list")
+            have = {(i.get("name") or "").strip().lower() for i in await db.items.find({}, {"_id": 0, "name": 1}).to_list(20000)}
+            created, skipped, photos_failed, new_ids = 0, 0, 0, []
+            for pr in products:
+                name = str(pr.get("name") or "").strip()[:255]
+                if not name or name.lower() in have:
+                    skipped += 1
+                    continue
+                qty = max(int(pr.get("stock") or 0), 0)
+                now = datetime.now(timezone.utc).isoformat()
+                doc = {"id": str(uuid.uuid4()), "name": name, "sku": None, "category": (str(pr.get("cat") or "").strip() or None),
+                       "serial_number": None, "cost": 0, "price": float(pr.get("price") or 0), "quantity": qty,
+                       "status": _item_status(qty, False), "notes": (str(pr.get("sub") or "").strip()[:5000] or None),
+                       "vendor_id": None, "created_by": cu.get("username"), "created_at": now, "updated_at": now}
+                await db.items.insert_one(doc)
+                have.add(name.lower())
+                new_ids.append(doc["id"])
+                created += 1
+                paths = [pr.get("img")] + str(pr.get("images") or "").split("|")
+                for path in [x.strip() for x in paths if x and x.strip()][:8]:
+                    try:
+                        url = path if re.match(r"https?://", path) else f"{cfg['site_url']}/{path.lstrip('/')}"
+                        pic = await http.get(url)
+                        ctype = pic.headers.get("content-type", "").split(";")[0].strip().lower()
+                        if pic.status_code != 200 or ctype not in ALLOWED_IMAGE_TYPES or len(pic.content) > RAW_UPLOAD_MAX:
+                            raise ValueError(f"{pic.status_code} {ctype}")
+                        await _save_item_photo(doc, pic.content, ctype, path.rsplit("/", 1)[-1])
+                    except Exception:
+                        photos_failed += 1
+                        logger.warning("Import: could not copy photo %s of %s", path, name, exc_info=True)
+    except HTTPException:
+        raise
+    except Exception as ex:
+        logger.warning("Import from %s failed", cfg["site_url"], exc_info=True)
+        raise HTTPException(502, f"Could not read the product list from {cfg['site_url']} ({type(ex).__name__})")
+    if new_ids:
+        _spawn(_sync_items_in_turn(new_ids))
+    return {"created": created, "skipped_existing": skipped, "photos_failed": photos_failed}
+
+# ══════════════════════════════════════════════════════════════════════
 # ── LEGAL DOCUMENT UPLOAD ─────────────────────────────────────────────
 # Also stored as base64 in MongoDB (db.legal_documents) for the same reason.
 # ══════════════════════════════════════════════════════════════════════
@@ -7187,7 +7746,7 @@ async def get_legal_documents(vid: str, cu: dict = Depends(require("vehicle_medi
     return [_doc_out(d) for d in docs]
 
 @api_router.get("/legal-documents/{doc_id}/file")
-async def get_legal_document_file(doc_id: str):
+async def get_legal_document_file(doc_id: str, request: Request):
     """Same fix as get_vehicle_photo_file, for legal documents (bluebook/insurance/tax/transfer
     scans and PDFs). Deliberately unauthenticated with no company scoping: doc_id is an
     unguessable UUID (122 bits of randomness), the same trust model this app already uses for
@@ -7196,9 +7755,10 @@ async def get_legal_document_file(doc_id: str):
 
     A document kept in Supabase Storage sits in a private bucket: the answer is a redirect to a signed link
     that stops working after an hour, never cached."""
-    d = await db.legal_documents.find_one({"id": doc_id}, {"_id": 0, "id": 1, "storage_path": 1})
+    d = await db.legal_documents.find_one({"id": doc_id}, {"_id": 0, "id": 1, "storage_path": 1, "company_id": 1})
     if not d:
         raise HTTPException(404, "Document not found")
+    await portal_bridge.enforce_feature(request.url.path, d.get("company_id"))
     if d.get("storage_path") and media_storage.enabled():
         url = await media_storage.signed_url(media_storage.DOC_BUCKET, d["storage_path"])
         return RedirectResponse(url, status_code=302, headers={"Cache-Control": "no-store"})
@@ -7774,7 +8334,7 @@ async def _default_company_id() -> Optional[str]:
         _default_company_id_cache = c["id"] if c else None
     return _default_company_id_cache
 
-async def _scope_to_default_company():
+async def _scope_to_default_company(request: Request):
     """FastAPI dependency for the /public/* routes below. They're unauthenticated (no
     get_current_user, so current_company_id never gets set by a JWT) but the storefront
     (hamroauto.com.np) is one specific business's public site -- without this, every
@@ -7783,6 +8343,7 @@ async def _scope_to_default_company():
     pre-multi-tenant business) rather than building a whole public-storefront-per-company
     routing scheme, which nothing has asked for yet."""
     current_company_id.set(await _default_company_id())
+    await portal_bridge.enforce_feature(request.url.path, current_company_id.get())
 
 @api_router.get("/public/vehicles", dependencies=[Depends(_scope_to_default_company)])
 async def public_list_vehicles(request: Request):
@@ -7861,9 +8422,61 @@ async def public_get_settings():
     s = await db.settings.find_one({}, {"_id": 0, "id": 0})
     return s or {}
 
+async def _scope_to_site(site_key: str):
+    """For /public/visit/{site_key}: the company that owns this key (Settings > Website). The key only says whose visits these
+    are; it is public, like the page it sits on."""
+    row = await db.settings.find_one({"site_key": site_key}, {"_id": 0, "company_id": 1}) if re.fullmatch(r"[A-Za-z0-9]{16,40}", site_key) else None
+    if not row:
+        raise HTTPException(404, "Not found")
+    current_company_id.set(row["company_id"])
+
 @api_router.post("/public/visit", dependencies=[Depends(_scope_to_default_company)])
 @limiter.limit("120/minute")
 async def public_record_visit(request: Request):
+    return await _record_visit(request, "hamroauto.com.np")
+
+async def _scope_to_env_shop():
+    if not shop_sync.company_id():
+        raise HTTPException(404, "Not found")
+    current_company_id.set(shop_sync.company_id())
+
+@api_router.post("/public/shop/visit", dependencies=[Depends(_scope_to_env_shop)])
+@limiter.limit("120/minute")
+async def public_record_shop_visit(request: Request):
+    """Kept for the first shop's already-installed tracker (it posts here). New sites use /public/visit/{site_key}."""
+    host = urlparse((await _company_site())["site_url"]).hostname or ""
+    return await _record_visit(request, host.removeprefix("www.") or "-")
+
+@api_router.post("/public/visit/{site_key}", dependencies=[Depends(_scope_to_site)])
+@limiter.limit("120/minute")
+async def public_record_site_visit(request: Request, site_key: str):
+    host = urlparse((await _company_site())["site_url"]).hostname or ""
+    return await _record_visit(request, host.removeprefix("www.") or "-")
+
+_TRACKER_JS = """(function () {
+  if (navigator.webdriver) return;
+  var id = null;
+  try { id = localStorage.getItem('vid'); if (!id) { id = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + '-' + Math.random().toString(16).slice(2); localStorage.setItem('vid', id); } }
+  catch (e) { id = String(Date.now()) + '-' + Math.random().toString(16).slice(2); }
+  var path = location.pathname, pid = new URLSearchParams(location.search).get('id');
+  if (pid && /^[0-9]+$/.test(pid)) path += '/' + pid; // product.php?id=29 is reported as /product.php/29, so Visits can rank products
+  var url = '__URL__', body = JSON.stringify({ visitor_id: id, path: path, referrer: document.referrer });
+  try { if (!navigator.sendBeacon(url, body)) throw 0; } catch (e) { fetch(url, { method: 'POST', body: body, keepalive: true, headers: { 'Content-Type': 'text/plain' } }).catch(function () {}); }
+})();
+"""
+
+@api_router.get("/public/tracker/{site_key_js}")
+async def public_tracker_js(request: Request, site_key_js: str):
+    """The visit tracker for a company's website: <script src=".../api/public/tracker/<site key>.js" defer></script> on its pages."""
+    key = site_key_js.removesuffix(".js")
+    if not re.fullmatch(r"[A-Za-z0-9]{16,40}", key) or not await db.settings.find_one({"site_key": key}, {"_id": 0, "id": 1}):
+        raise HTTPException(404, "Not found")
+    scheme = request.headers.get("x-forwarded-proto", request.url.scheme).split(",")[0].strip()
+    host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc).split(",")[0].strip()
+    return Response(_TRACKER_JS.replace("__URL__", f"{scheme}://{host}/api/public/visit/{key}"), media_type="application/javascript",
+                    headers={"Cache-Control": "public, max-age=3600"})
+
+async def _record_visit(request: Request, own_host: str):
     try:  # navigator.sendBeacon posts text/plain, so don't insist on a JSON content type
         body = json.loads((await request.body()) or b"{}")
     except Exception:
@@ -7873,7 +8486,7 @@ async def public_record_visit(request: Request):
     path = (str(body.get("path") or "/").split("?")[0].split("#")[0] or "/")[:300]
     if not visitor: return {"ok": False}
     ref_host = (urlparse(str(body.get("referrer") or "")).hostname or "").lower().removeprefix("www.")[:100]
-    if ref_host.endswith("hamroauto.com.np"): ref_host = ""  # internal navigation isn't a source
+    if ref_host.endswith(own_host): ref_host = ""  # internal navigation isn't a source
     # A signed-in visitor's email rides along, but only one that really is a registered account is kept (the beacon is public).
     email = _lead_email(body.get("email"))
     if email and not await db.leads.find_one({"type": "signup", "email": email}, {"_id": 0, "id": 1}): email = None
@@ -8085,8 +8698,11 @@ async def shutdown():
     _compress_pool.shutdown(wait=False, cancel_futures=True)
 
 import finance_books
-finance_books.register(api_router, db, admin_only)
-crm.register(api_router, db, admin_only, _sale_revenue)
+finance_books.register(api_router, db, require("finance", "manage"))  # Finance page: admin + roles granted "finance"
+staff_access.register(api_router, db, admin_only, company_scope, hash_pw_async, {"admin", *ROLE_PERMISSIONS})  # Settings > Staff & Access
+portal_sso.register(api_router, db, limiter, _default_company_id, create_token, current_company_id,
+                    hash_pw_async)  # POST /auth/sso, off until SSO_* is set
+crm.register(api_router, db, require("marketing", "manage"), _sale_revenue)  # CRM tab: admin + roles granted "marketing"
 
 # TEMPORARY - the owner-only tool that moves the data to Supabase without a login on the server. To remove it once the
 # move is finished: delete backend/migration_tool.py and tools/run_migration.py, and delete this comment and the two lines below.

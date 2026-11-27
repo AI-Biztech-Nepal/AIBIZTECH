@@ -1,4 +1,7 @@
-import { createContext, useContext, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
+import api from "../utils/api";
+import { ALL_FEATURES_ON, GENERIC_TERMS, VEHICLE_TERMS, itemsMode, setAccessOverrides } from "../utils/permissions";
+import { forKind } from "../utils/businessKind";
 import { forgetAll } from "../utils/listCache";
 
 const AuthContext = createContext(null);
@@ -28,10 +31,58 @@ export const AuthProvider = ({ children }) => {
   const initial = readInitialAuth();
   const [user, setUser] = useState(initial.user);
   const [token, setToken] = useState(initial.token);
+  // Which stock.* features are on for this organization (null = not known / the portal cannot say: show everything).
+  // Remembered from the last visit so a reload does not flash hidden items before the answer arrives.
+  const [features, setFeatures] = useState(() => (initial.token ? storage.get("gng_features") : null));
+
+  // The words for what is in stock (Vehicle / Item ...), from the same answer. Vehicle wording until told otherwise.
+  const [terms, setTerms] = useState(() => (initial.token && storage.get("gng_terms")) || VEHICLE_TERMS);
+
+  // This person's Staff & Access changes. Handed to permissions.js before anything renders, and remembered like features.
+  const [access, setAccess] = useState(() => {
+    const saved = (initial.token && storage.get("gng_access")) || {};
+    setAccessOverrides(saved);
+    return saved;
+  });
+  const applyAccess = (next) => { setAccessOverrides(next); setAccess(next); };
+
+  useEffect(() => {
+    if (!user || !token) return undefined;
+    let live = true;
+    api.get("/features").then((r) => {
+      if (!live) return;
+      const said = r.data?.features ?? null;
+      const f = forKind(said);
+      setFeatures(f);
+      const own = r.data?.access || {};
+      applyAccess(own);
+      try { storage.set("gng_access", own); } catch { /* applies this session */ }
+      const words = (f === said && r.data?.terms) || (itemsMode(f) ? GENERIC_TERMS : VEHICLE_TERMS);
+      setTerms(words);
+      try { storage.set("gng_features", f); storage.set("gng_terms", words); } catch { /* storage full or blocked: the answer still applies this session */ }
+    }).catch(() => {}); // old server without the endpoint, or offline: keep what we had; the server's 403s still apply
+    return () => { live = false; };
+  }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Any API answer of 403 {"feature": key} means that switch is off, whatever the screen thought.
+  useEffect(() => {
+    const onOff = (e) => {
+      const key = e.detail?.feature;
+      if (key) setFeatures((prev) => ({ ...(prev || ALL_FEATURES_ON), [key]: false }));
+    };
+    window.addEventListener("stock-feature-off", onOff);
+    return () => window.removeEventListener("stock-feature-off", onOff);
+  }, []);
 
   const login = (userData, authToken) => {
     forgetAll();
     setUser(userData);
+    setFeatures(forKind(null));
+    applyAccess({});
+    setTerms(itemsMode(forKind(null)) ? GENERIC_TERMS : VEHICLE_TERMS);
+    storage.remove("gng_features");
+    storage.remove("gng_terms");
+    storage.remove("gng_access");
     setToken(authToken);
     storage.set("gng_user", userData);
     localStorage.setItem("gng_token", authToken);
@@ -41,12 +92,18 @@ export const AuthProvider = ({ children }) => {
     forgetAll();
     setUser(null);
     setToken(null);
+    setFeatures(null);
+    applyAccess({});
+    setTerms(VEHICLE_TERMS);
+    storage.remove("gng_features");
+    storage.remove("gng_terms");
+    storage.remove("gng_access");
     localStorage.removeItem("gng_user");
     localStorage.removeItem("gng_token");
   };
 
   return (
-    <AuthContext.Provider value={{ user, token, login, logout }}>
+    <AuthContext.Provider value={{ user, token, features, access, terms, login, logout }}>
       {children}
     </AuthContext.Provider>
   );

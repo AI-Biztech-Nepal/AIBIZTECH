@@ -9,6 +9,7 @@ import { updateOrganization } from '../actions';
 import { Notices } from '../dashboard-view';
 import page from '../dashboard.module.css';
 import s from '../plans/plans.module.css';
+import { BUSINESS_TYPES } from '@/lib/business-kind';
 
 export type Details = { name: string; address: string | null; phone: string | null; email: string | null; owner_name: string | null; owner_phone: string | null; owner_email: string | null; pan_no: string | null; created_at: string; verified_at: string | null };
 type Service = { key: string; name: string; roles: string[] };
@@ -84,6 +85,10 @@ export function BusinessView({ org, details, members, services, enabled, pending
                 <input type="hidden" name="org_id" value={org.id} />
                 <div className={a.fields}>
                   <label>Name<input name="name" defaultValue={details.name ?? ''} maxLength={120} required /></label>
+                  <label>Kind of business<select name="business_type" defaultValue={(details as { business_type?: string | null }).business_type ?? ''}>
+                    <option value="" disabled>Choose…</option>
+                    {BUSINESS_TYPES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+                  </select></label>
                   <label>Address<input name="address" defaultValue={details.address ?? ''} maxLength={200} required /></label>
                   <label>Phone<input name="phone" type="tel" defaultValue={details.phone ?? ''} pattern="\+?[0-9][0-9 \-]{6,19}" title="Digits, optionally starting with +" required /></label>
                   <label>Email<input name="email" type="email" defaultValue={details.email ?? ''} required /></label>

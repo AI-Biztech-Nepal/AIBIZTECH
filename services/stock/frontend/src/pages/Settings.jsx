@@ -1,10 +1,13 @@
 import { useState, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
+import TopbarRow from "../components/TopbarRow";
 import { toast } from "sonner";
-import { Fingerprint, UserPlus, Shield, ShieldCheck, Edit, Trash2 } from "lucide-react";
+import { Fingerprint, ShieldCheck } from "lucide-react";
 import WarrantyLengthInput from "../components/WarrantyLengthInput";
 import SpeedReport from "../components/SpeedReport";
 import BackupCard from "../components/BackupCard";
 import { useAuth } from "../context/AuthContext";
+import StaffAccess from "../components/StaffAccess";
 import api from "../utils/api";
 import { isNative, isBiometricAvailable, hasSavedCredentials, saveCredentials, deleteCredentials, verifyIdentity } from "../utils/biometric";
 
@@ -29,34 +32,25 @@ const formatBytes = (bytes) => {
 export default function Settings() {
   const { user, logout } = useAuth();
   const isAdmin = user?.role === "admin";
+  const [params, setParams] = useSearchParams();
   const [pwForm, setPwForm] = useState({ current_password: "", new_password: "", confirm: "" });
   const [saving, setSaving] = useState(false);
   const [siteForm, setSiteForm] = useState(null);
   const [warrantyDays, setWarrantyDays] = useState(182);
   const [savingWarranty, setSavingWarranty] = useState(false);
   const [savingSite, setSavingSite] = useState(false);
+  const [webForm, setWebForm] = useState({ business_type: "dealership", site_url: "", site_sync_key: "" });
+  const [savingWeb, setSavingWeb] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [storage, setStorage] = useState(null);
   const [bioSupported, setBioSupported] = useState(false);
   const [bioEnabled, setBioEnabled] = useState(false);
   const [bioPassword, setBioPassword] = useState("");
   const [bioBusy, setBioBusy] = useState(false);
-  const [companyUsers, setCompanyUsers] = useState(null);
-  const [showAddUserModal, setShowAddUserModal] = useState(false);
-  const [newUserForm, setNewUserForm] = useState({ name: "", email: "", password: "", role: "stock_supervisor" });
-  const [savingUser, setSavingUser] = useState(false);
-  const [editUserItem, setEditUserItem] = useState(null);
-  const [editUserForm, setEditUserForm] = useState({ name: "", role: "stock_supervisor", password: "" });
-  const [savingEditUser, setSavingEditUser] = useState(false);
-
-  const fetchCompanyUsers = () => {
-    api.get("/auth/users").then(r => setCompanyUsers(r.data)).catch(() => toast.error("Failed to load accounts"));
-  };
-
   useEffect(() => {
     if (!isAdmin) return;
-    api.get("/settings").then(r => { setSiteForm(r.data || {}); setWarrantyDays(r.data?.warranty_days_default || 182); }).catch(() => toast.error("Failed to load storefront settings"));
+    api.get("/settings").then(r => { setSiteForm(r.data || {}); setWarrantyDays(r.data?.warranty_days_default || 182); setWebForm({ business_type: r.data?.business_type || "dealership", site_url: r.data?.site_url || "", site_sync_key: "" }); }).catch(() => toast.error("Failed to load storefront settings"));
     api.get("/admin/storage-usage").then(r => setStorage(r.data)).catch(() => {});
-    fetchCompanyUsers();
   }, [isAdmin]);
 
   useEffect(() => {
@@ -103,6 +97,29 @@ export default function Settings() {
     } catch { toast.error("Failed to save"); } finally { setSavingSite(false); }
   };
 
+  const saveWebsite = async (e) => {
+    e.preventDefault();
+    setSavingWeb(true);
+    try {
+      const body = { business_type: webForm.business_type, site_url: webForm.site_url };
+      if (webForm.site_sync_key.trim()) body.site_sync_key = webForm.site_sync_key.trim();  // empty = keep the saved key
+      const r = await api.put("/settings", body);
+      setSiteForm(r.data);
+      setWebForm({ business_type: r.data.business_type || "dealership", site_url: r.data.site_url || "", site_sync_key: "" });
+      toast.success("Website connection saved. Reload the page to see the menu change.");
+    } catch (err) { toast.error(err?.response?.data?.detail || "Failed to save"); } finally { setSavingWeb(false); }
+  };
+
+  const importFromSite = async () => {
+    if (!window.confirm(`Copy the products already on ${siteForm.site_url} into Items, with their photos? Products whose name is already an Item are skipped.`)) return;
+    setImporting(true);
+    try {
+      const r = await api.post("/items/import-from-site", {}, { timeout: 300000 });
+      const { created, skipped_existing, photos_failed } = r.data;
+      toast.success(`Imported ${created} product${created === 1 ? "" : "s"}${skipped_existing ? `, skipped ${skipped_existing} already in Items` : ""}${photos_failed ? `, ${photos_failed} photo(s) could not be copied` : ""}.`);
+    } catch (err) { toast.error(err?.response?.data?.detail || "Import failed"); } finally { setImporting(false); }
+  };
+
   const saveWarrantyDefault = async (e) => {
     e.preventDefault();
     if (!warrantyDays) { toast.error("Enter a warranty length"); return; }
@@ -129,69 +146,25 @@ export default function Settings() {
     } finally { setSaving(false); }
   };
 
-  const openAddUser = () => {
-    setNewUserForm({ name: "", email: "", password: "", role: "stock_supervisor" });
-    setShowAddUserModal(true);
-  };
-
-  const handleAddUser = async (e) => {
-    e.preventDefault();
-    if (!newUserForm.name || !newUserForm.email || !newUserForm.password) { toast.error("Fill all fields"); return; }
-    if (newUserForm.password.length < 8) { toast.error("Password must be at least 8 characters"); return; }
-    setSavingUser(true);
-    try {
-      await api.post("/auth/register", newUserForm);
-      toast.success("Account created!");
-      setShowAddUserModal(false);
-      fetchCompanyUsers();
-    } catch (err) {
-      toast.error(err.response?.data?.detail || "Failed to create account");
-    } finally { setSavingUser(false); }
-  };
-
-  const openEditUser = (u) => {
-    setEditUserItem(u);
-    setEditUserForm({ name: u.name, role: u.role, password: "" });
-  };
-
-  const handleEditUser = async (e) => {
-    e.preventDefault();
-    if (!editUserForm.name || !editUserForm.role) { toast.error("Fill all fields"); return; }
-    if (editUserForm.password && editUserForm.password.length < 8) { toast.error("Password must be at least 8 characters"); return; }
-    setSavingEditUser(true);
-    try {
-      const payload = { name: editUserForm.name, role: editUserForm.role };
-      if (editUserForm.password) payload.password = editUserForm.password;
-      await api.put(`/auth/users/${editUserItem.id}`, payload);
-      toast.success("Account updated!");
-      setEditUserItem(null);
-      fetchCompanyUsers();
-    } catch (err) {
-      toast.error(err.response?.data?.detail || "Failed to update account");
-    } finally { setSavingEditUser(false); }
-  };
-
-  const handleDeleteUser = async (u) => {
-    if (!window.confirm(`Remove ${u.name}'s account? This cannot be undone.`)) return;
-    try {
-      await api.delete(`/auth/users/${u.id}`);
-      toast.success("Account deleted");
-      fetchCompanyUsers();
-    } catch (err) {
-      toast.error(err.response?.data?.detail || "Failed to delete account");
-    }
-  };
-
-  const ROLE_LABELS = { admin: "Admin", stock_supervisor: "Front Desk", parts_supervisor: "Parts Department", social_media: "Social Media", sanakhat_officer: "Sanakhat Desk" };
-
   const inp = "w-full h-10 px-3 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500";
 
+  // Admin gets a second tab, Staff & Access (?tab=staff): wider, as it is a list beside an editor.
+  const staffTab = isAdmin && params.get("tab") === "staff";
+
   return (
-    <div className="space-y-6 animate-fade-in max-w-2xl">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900">Settings</h1>
-        <p className="text-sm text-slate-500">Manage your account and preferences</p>
-      </div>
+    <div className={`space-y-6 animate-fade-in ${staffTab ? "max-w-7xl" : "max-w-2xl"}`}>
+      <TopbarRow note="Manage your account and preferences" />
+
+      {isAdmin && (
+        <div role="tablist" aria-label="Settings" className="inline-flex rounded-xl bg-slate-100 p-1">
+          {[["general", "General"], ["staff", "Staff & Access"]].map(([key, label]) => (
+            <button key={key} role="tab" aria-selected={staffTab === (key === "staff")} onClick={() => setParams(key === "staff" ? { tab: "staff" } : {}, { replace: true })} data-testid={`settings-tab-${key}`}
+              className={`h-9 px-4 rounded-lg text-sm font-semibold transition-colors ${staffTab === (key === "staff") ? "bg-white text-blue-700 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}>{label}</button>
+          ))}
+        </div>
+      )}
+
+      {staffTab ? <StaffAccess /> : (<>
 
       {/* Profile */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
@@ -206,48 +179,6 @@ export default function Settings() {
           </div>
         </div>
       </div>
-
-      {/* Team Accounts (Admin only) */}
-      {isAdmin && (
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
-          <div className="flex items-center justify-between mb-1">
-            <h2 className="text-base font-bold text-slate-900" style={{ fontFamily: "Manrope" }}>Team Accounts</h2>
-            <button onClick={openAddUser} data-testid="add-account-btn" className="flex items-center gap-1.5 h-9 px-3 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg transition-all active:scale-95">
-              <UserPlus size={14} /> Add Account
-            </button>
-          </div>
-          <p className="text-xs text-slate-500 mb-4">Login accounts for your employees — front desk, parts, or another admin</p>
-          {!companyUsers ? (
-            <div className="flex items-center justify-center h-16"><div className="animate-spin w-5 h-5 border-4 border-blue-600 border-t-transparent rounded-full" /></div>
-          ) : (
-            <div className="space-y-2">
-              {companyUsers.map((u) => (
-                <div key={u.id} data-testid="account-row" className="flex items-center justify-between gap-3 p-3 bg-slate-50 rounded-lg">
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-white text-xs font-bold">
-                      {u.name?.[0]?.toUpperCase() || "U"}
-                    </div>
-                    <div>
-                      <div className="text-sm font-semibold text-slate-900 flex items-center gap-1.5">
-                        {u.name}
-                        {u.role === "admin" && <Shield size={12} className="text-blue-500" />}
-                      </div>
-                      <div className="text-xs text-slate-500">@{u.username}</div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-semibold uppercase tracking-wide bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded">{ROLE_LABELS[u.role] || u.role}</span>
-                    <button onClick={() => openEditUser(u)} data-testid="edit-account-btn" className="w-11 h-11 md:w- md:h- flex items-center justify-center hover:bg-slate-200 rounded-lg transition-colors"><Edit size={13} className="text-slate-500" /></button>
-                    {u.username !== user?.username && (
-                      <button onClick={() => handleDeleteUser(u)} data-testid="delete-account-btn" className="w-11 h-11 md:w- md:h- flex items-center justify-center hover:bg-red-50 rounded-lg transition-colors"><Trash2 size={13} className="text-red-400" /></button>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
 
       {/* Storefront Settings (Admin only) */}
       {isAdmin && (
@@ -275,6 +206,53 @@ export default function Settings() {
               </button>
             </form>
           )}
+        </div>
+      )}
+
+      {/* Website connection (Admin only): what this business sells, and the site its items and visits belong to */}
+      {isAdmin && siteForm && (
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+          <h2 className="text-base font-bold text-slate-900 mb-1" style={{ fontFamily: "Manrope" }}>Website connection</h2>
+          <p className="text-xs text-slate-500 mb-4">
+            For a business with its own website: pick "Shop" if it sells goods rather than vehicles (the menu then shows Items), add the
+            website address, and its items are sent to the site and its visitors are counted under Marketing &rarr; Visits.
+          </p>
+          <form onSubmit={saveWebsite} className="space-y-4">
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1.5">What does this business sell?</label>
+              <select value={webForm.business_type} onChange={e => setWebForm({ ...webForm, business_type: e.target.value })} className={inp} data-testid="web-business-type">
+                <option value="dealership">Vehicles (dealership)</option>
+                <option value="shop">Goods (shop: Items instead of Vehicles)</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1.5">Website address</label>
+              <input type="url" placeholder="https://yourshop.com" value={webForm.site_url} onChange={e => setWebForm({ ...webForm, site_url: e.target.value })} className={inp} data-testid="web-site-url" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1.5">Sync key {siteForm.site_sync_key_set && <span className="text-emerald-600 font-semibold">(saved)</span>}</label>
+              <input type="password" autoComplete="new-password" placeholder={siteForm.site_sync_key_set ? "Leave empty to keep the saved key" : "The same key as in your website's receiver (32+ characters)"}
+                value={webForm.site_sync_key} onChange={e => setWebForm({ ...webForm, site_sync_key: e.target.value })} className={inp} data-testid="web-sync-key" />
+              <p className="text-xs text-slate-400 mt-1">Items are sent to <b>{(webForm.site_url || "your website").replace(/\/$/, "")}/sync_product.php</b>. Never shown again once saved.</p>
+            </div>
+            {siteForm.tracker_url && (
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1.5">Visit tracker: paste this line before &lt;/body&gt; on each page of the website</label>
+                <input readOnly onFocus={e => e.target.select()} value={`<script src="${siteForm.tracker_url}" defer></script>`} className={`${inp} font-mono text-xs`} data-testid="web-tracker" />
+              </div>
+            )}
+            <button type="submit" disabled={savingWeb} data-testid="save-website-btn" className="h-10 px-6 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold disabled:opacity-60 transition-colors">
+              {savingWeb ? "Saving..." : "Save website connection"}
+            </button>
+            {siteForm.site_url && (
+              <div className="pt-4 mt-2 border-t border-slate-100">
+                <p className="text-xs text-slate-500 mb-2">Already have products on this website? Copy them into Items (name, price, stock, description and photos). Run it once.</p>
+                <button type="button" onClick={importFromSite} disabled={importing} data-testid="import-from-site-btn" className="h-10 px-6 border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg text-sm font-semibold disabled:opacity-60 transition-colors">
+                  {importing ? "Importing... this can take a minute" : "Import products from my website"}
+                </button>
+              </div>
+            )}
+          </form>
         </div>
       )}
 
@@ -436,84 +414,7 @@ export default function Settings() {
           </div>
         </div>
       )}
-
-      {/* Add Account Modal */}
-      {showAddUserModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 sm:p-4">
-          <div className="bg-white sm:rounded-2xl shadow-2xl overflow-y-auto w-full h-full sm:h-auto max-w-sm">
-            <div className="flex items-center justify-between p-5 border-b border-slate-100 sticky top-0 bg-white z-10">
-              <h2 className="text-lg font-bold text-slate-900">Add Account</h2>
-              <button onClick={() => setShowAddUserModal(false)} className="w-11 h-11 md:w- md:h- flex items-center justify-center rounded-lg hover:bg-slate-100 text-slate-500">✕</button>
-            </div>
-            <form onSubmit={handleAddUser} className="p-5 space-y-4">
-              <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1.5">Name</label>
-                <input value={newUserForm.name} onChange={e => setNewUserForm({ ...newUserForm, name: e.target.value })} className={inp} data-testid="new-user-name" autoComplete="off" />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1.5">Email</label>
-                <input type="email" value={newUserForm.email} onChange={e => setNewUserForm({ ...newUserForm, email: e.target.value })} placeholder="employee@yourbusiness.com" className={inp} data-testid="new-user-email" autoComplete="off" />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1.5">Password</label>
-                <input type="password" value={newUserForm.password} onChange={e => setNewUserForm({ ...newUserForm, password: e.target.value })} placeholder="Min 8 characters" className={inp} data-testid="new-user-password" autoComplete="new-password" />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1.5">Role</label>
-                <select value={newUserForm.role} onChange={e => setNewUserForm({ ...newUserForm, role: e.target.value })} className={inp} data-testid="new-user-role">
-                  <option value="stock_supervisor">Front Desk</option>
-                  <option value="parts_supervisor">Parts Department</option>
-                  <option value="social_media">Social Media</option>
-                  <option value="sanakhat_officer">Sanakhat Desk</option>
-                  <option value="admin">Admin</option>
-                </select>
-              </div>
-              <button type="submit" disabled={savingUser} data-testid="save-new-user-btn" className="w-full h-10 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold disabled:opacity-60 transition-all active:scale-95">
-                {savingUser ? "Creating..." : "Create Account"}
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Edit Account Modal */}
-      {editUserItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 sm:p-4">
-          <div className="bg-white sm:rounded-2xl shadow-2xl overflow-y-auto w-full h-full sm:h-auto max-w-sm">
-            <div className="flex items-center justify-between p-5 border-b border-slate-100 sticky top-0 bg-white z-10">
-              <h2 className="text-lg font-bold text-slate-900">Edit Account</h2>
-              <button onClick={() => setEditUserItem(null)} className="w-11 h-11 md:w- md:h- flex items-center justify-center rounded-lg hover:bg-slate-100 text-slate-500">✕</button>
-            </div>
-            <form onSubmit={handleEditUser} className="p-5 space-y-4">
-              <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1.5">Name</label>
-                <input value={editUserForm.name} onChange={e => setEditUserForm({ ...editUserForm, name: e.target.value })} className={inp} data-testid="edit-user-name" autoComplete="off" />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1.5">Username</label>
-                <input value={editUserItem.username} disabled className={`${inp} bg-slate-50 text-slate-400`} />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1.5">New Password</label>
-                <input type="password" value={editUserForm.password} onChange={e => setEditUserForm({ ...editUserForm, password: e.target.value })} placeholder="Leave blank to keep current password" className={inp} data-testid="edit-user-password" autoComplete="new-password" />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1.5">Role</label>
-                <select value={editUserForm.role} onChange={e => setEditUserForm({ ...editUserForm, role: e.target.value })} className={inp} data-testid="edit-user-role">
-                  <option value="stock_supervisor">Front Desk</option>
-                  <option value="parts_supervisor">Parts Department</option>
-                  <option value="social_media">Social Media</option>
-                  <option value="sanakhat_officer">Sanakhat Desk</option>
-                  <option value="admin">Admin</option>
-                </select>
-              </div>
-              <button type="submit" disabled={savingEditUser} data-testid="save-edit-user-btn" className="w-full h-10 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold disabled:opacity-60 transition-all active:scale-95">
-                {savingEditUser ? "Saving..." : "Save Changes"}
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
+      </>)}
     </div>
   );
 }

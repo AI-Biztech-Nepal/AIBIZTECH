@@ -1,6 +1,7 @@
 import axios from "axios";
 import { toast } from "sonner";
 import { forgetAll } from "./listCache";
+import { signInAgain } from "./portalFlag";
 
 const API_URL = process.env.REACT_APP_BACKEND_URL || "";
 
@@ -103,10 +104,12 @@ api.interceptors.response.use(
   (err) => {
     recordTiming(err.config, err.response?.status ?? 0, err.response);
     forgetEverything(err.config);
+    const offFeature = err.response?.status === 403 && err.response?.data?.detail?.feature;
+    if (offFeature) window.dispatchEvent(new CustomEvent("stock-feature-off", { detail: { feature: offFeature } }));
     if (err.response?.status === 401) {
       localStorage.removeItem("gng_token");
       localStorage.removeItem("gng_user");
-      window.location.href = "/login";
+      signInAgain();
     } else if (err.config?.suppressErrorToast) {
       // A retrying call (see postWithRetry) handles its own user-facing error once it
       // actually gives up — showing this generic toast on every attempt in between would

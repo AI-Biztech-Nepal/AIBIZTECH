@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { getContext } from '@/lib/supabase';
 import { signSsoToken } from '@/lib/sso';
-import { STOCK_IS_LIVE_APP, STOCK_LIVE_URL } from '@/lib/stock-live';
+import { businessKind } from '@/lib/business-kind-load';
 
 // Open app: checks the person may use the service, then hands them to it already signed in
 export async function GET(req: NextRequest, { params }: { params: Promise<{ service: string }> }) {
@@ -21,13 +21,16 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ serv
   const asked = req.nextUrl.searchParams.get('to') ?? '/';
   const to = asked.startsWith('/') && !asked.startsWith('//') ? asked : '/';
   const embed = req.nextUrl.searchParams.get('embed') === '1';
-  const base = service === 'stock' && STOCK_IS_LIVE_APP ? STOCK_LIVE_URL : svc.base_url.replace(/\/$/, '');
-  const marker = embed ? 'embed=1' : 'from=aibiztech';
+  // Stock Manager is served by the portal itself, at /stock-app
+  const base = service === 'stock' ? new URL('/stock-app', req.url).toString() : svc.base_url.replace(/\/$/, '');
+  // Stock Manager is told what kind of business this is, so it shows the vehicle screens or the general ones
+  const kind = service === 'stock' ? `&kind=${(await businessKind(supabase, org.id)) ?? 'general'}` : '';
+  const marker = `${embed ? 'embed=1' : 'from=aibiztech'}${kind}`;
   const joiner = to.includes('?') ? '&' : '?';
 
   // Single sign-on only for apps that have the /sso page (listed in SSO_SERVICES, e.g. "attendance,stock"); the rest open as they are
   const ssoApps = (process.env.SSO_SERVICES ?? '').split(',').map((s) => s.trim());
-  const secret = ssoApps.includes(service) ? process.env.SSO_SECRET : undefined;
+  const secret = service === 'stock' || ssoApps.includes(service) ? process.env.SSO_SECRET : undefined;
   const { data: claims } = await supabase.auth.getClaims();
   const email = claims?.claims.email;
   // Without a shared secret, fall back to opening the app and letting it ask for a login

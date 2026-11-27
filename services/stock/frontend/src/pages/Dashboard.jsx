@@ -1,17 +1,22 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
+import { createPortal } from "react-dom";
+import { useNavigate, useOutletContext } from "react-router-dom";
+import useMediaQuery from "../hooks/useMediaQuery";
+import DashboardTrends from "../components/DashboardTrends";
+import FinanceOverview from "../components/FinanceOverview";
 import { AlertTriangle, TrendingUp, Package, Users, Wrench, DollarSign, ShoppingCart, CalendarDays, TrendingDown, Banknote, Sparkles } from "lucide-react";
 import api from "../utils/api";
 import { peek, remember, cacheTicket } from "../utils/listCache";
 import { formatNPR } from "../utils/helpers";
 import HoverADDate from "../components/HoverADDate";
+import SaleDetailModal from "./SaleDetailModal";
+import BookingDetailsHost from "../components/BookingDetailsHost";
 import DateRangeFilter, { resolveDateFilter } from "../components/DateRangeFilter";
 import { useAuth } from "../context/AuthContext";
+import { featureOn, itemsMode } from "../utils/permissions";
 import { getCurrentBSDate, BS_MONTHS } from "../utils/nepali-date";
 
 // ── Sub-components defined OUTSIDE to prevent remount ──────────────────
-const AGING_COLORS = { fresh: "#22c55e", normal: "#eab308", slow: "#f97316", dead: "#ef4444" };
 
 const KPICard = ({ title, value, subtitle, icon: Icon, color, testid, onClick }) => (
   <div
@@ -120,15 +125,28 @@ function AccountingSummary({ range }) {
   const rl = range.key === "daily" ? "today" : range.key === "all" ? "" : range.label.toLowerCase();
   const rangePhrase = range.key === "daily" ? "for today" : range.key === "all" ? "yet" : `for ${range.label.toLowerCase()}`;
   const navigate = useNavigate();
+  const { user, features, terms } = useAuth();
+  const bookingsOn = featureOn(features, "stock.bookings");
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [recentSales, setRecentSales] = useState([]);
   const [purchases, setPurchases] = useState([]);
   const [bookings, setBookings] = useState([]);
+  const bookedNow = bookings.filter(b => b.status === "active"); // vehicles booked in the period and still booked
+  const [viewingBooking, setViewingBooking] = useState(null);   // the cancelled booking whose details are open
+  const [reloadTick, setReloadTick] = useState(0);              // bumped after a change made from those details, to reload the lists
   // null | "sales" | "profit" — which tile opened the sales-list popup, and so which
   // summary (Total Sale only, or Total Sale + Total Profit) it shows top-right.
   const [salesModalView, setSalesModalView] = useState(null);
   const [showPurchasesModal, setShowPurchasesModal] = useState(false);
+  // The sale open in the bill pop-up (refresh, below, re-reads the lists after it is edited, returned or deleted).
+  const [openSaleId, setOpenSaleId] = useState(null);
+  const openIdx = recentSales.findIndex(s => s.id === openSaleId);
+  const saleNav = openIdx < 0 ? undefined : {
+    index: openIdx, total: recentSales.length,
+    prev: openIdx > 0 ? () => setOpenSaleId(recentSales[openIdx - 1].id) : undefined,
+    next: openIdx < recentSales.length - 1 ? () => setOpenSaleId(recentSales[openIdx + 1].id) : undefined,
+  };
 
   useEffect(() => {
     const { start, end } = range;
@@ -148,13 +166,13 @@ function AccountingSummary({ range }) {
     // Bookings are deposits, not sales — kept out of the sales figures and listed in
     // their own section of the popup. The endpoint has no date filter, so narrow to
     // the period here by booking_date.
-    api.get("/bookings")
+    if (bookingsOn) api.get("/bookings")
       .then(r => setBookings(r.data.filter(b => {
         const d = (b.booking_date || b.created_at || "").slice(0, 10);
         return d >= start && d <= end;
       })))
       .catch(() => {});
-  }, [range]);
+  }, [range, bookingsOn, reloadTick]);
 
   const fetchSummary = useCallback(async () => {
     setLoading(true); setData(null);
@@ -169,6 +187,8 @@ function AccountingSummary({ range }) {
   }, [range]);
 
   useEffect(() => { fetchSummary(); }, [fetchSummary]);
+  // A booking was sold, cancelled or deleted from its details: reload the lists and the figures.
+  const refresh = () => { setReloadTick(t => t + 1); fetchSummary(); };
 
   const isProfitPositive = data && data.net_profit >= 0;
   // "Vehicle Purchase Cost" = bare purchase price, no accessories/repairs. Backend
@@ -199,18 +219,18 @@ function AccountingSummary({ range }) {
       ) : data ? (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3">
           <AccountingKPI
-            label="Vehicle Purchase Cost"
+            label={`${terms.item} Purchase Cost`}
             value={formatNPR(vehiclePurchaseCost)}
-            sub={`${data.purchase_count} vehicle${data.purchase_count !== 1 ? "s" : ""} purchased`}
+            sub={`${data.purchase_count} ${data.purchase_count !== 1 ? terms.items.toLowerCase() : terms.item.toLowerCase()} purchased`}
             color="bg-blue-500"
             icon={ShoppingCart}
             testid="kpi-total-cost"
             onClick={() => setShowPurchasesModal(true)}
           />
           <AccountingKPI
-            label="Total Vehicle Sale"
+            label={`Total ${terms.item} Sale`}
             value={formatNPR(data.total_sales)}
-            sub={`${data.sold_count} vehicle${data.sold_count !== 1 ? "s" : ""} sold`}
+            sub={`${data.sold_count} ${data.sold_count !== 1 ? terms.items.toLowerCase() : terms.item.toLowerCase()} sold`}
             color="bg-green-500"
             icon={Banknote}
             testid="kpi-total-sales"
@@ -245,20 +265,43 @@ function AccountingSummary({ range }) {
           <span className="text-xs font-medium text-green-700 bg-green-100 px-2 py-0.5 rounded-full">
             {recentSales.length} {rl}
           </span>
+          {bookedNow.length > 0 && (
+            <span className="text-xs font-medium text-yellow-800 bg-yellow-100 px-2 py-0.5 rounded-full" data-testid="recent-booked-count">
+              {bookedNow.length} booked
+            </span>
+          )}
         </div>
-        {recentSales.length > 0 ? (
+        {recentSales.length > 0 || bookedNow.length > 0 ? (
           <div className="flex gap-3 overflow-x-auto pb-1">
+            {/* Vehicles booked in the period come first, tagged "Booked": a booking is a deposit, not yet a sale, so it is
+                shown here but never counted in the sales figures. */}
+            {bookedNow.map(b => (
+              <div
+                key={b.id}
+                onClick={() => navigate(`/sales/vehicle/${b.vehicle_id}`)}
+                data-testid="recent-booking-card"
+                className="shrink-0 w-56 bg-white rounded-lg border border-yellow-200 shadow-sm p-3 cursor-pointer hover:shadow-md hover:border-yellow-300 transition-all"
+              >
+                <div className="flex items-start justify-between gap-2 mb-1">
+                  <div className="font-bold text-slate-900 text-sm truncate" style={{ fontFamily: "Manrope" }}>{b.vehicle_info || "Vehicle"}</div>
+                  <span className="shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide bg-yellow-100 text-yellow-800" data-testid="recent-booking-tag">Booked</span>
+                </div>
+                <div className="text-xs text-slate-500 mb-1 truncate">{b.customer_name}</div>
+                <div className="text-sm font-semibold text-amber-700 mb-1">{formatNPR(b.booking_amount)} <span className="text-xs font-medium text-slate-400">deposit</span></div>
+                <div className="text-xs text-slate-500">Booked: <HoverADDate date={b.booking_date} /></div>
+              </div>
+            ))}
             {recentSales.map(s => {
               const extraCosts = (s.expenses_total || 0) + (s.job_card_cost || 0);
               return (
                 <div
                   key={s.id}
-                  onClick={() => navigate(`/sales/vehicle/${s.vehicle_id}`)}
+                  onClick={() => setOpenSaleId(s.id)}
                   data-testid="recent-sale-card"
                   className="shrink-0 w-56 bg-white rounded-lg border border-green-100 shadow-sm p-3 cursor-pointer hover:shadow-md hover:border-green-300 transition-all"
                 >
                   <div className="font-bold text-slate-900 text-sm truncate mb-1" style={{ fontFamily: "Manrope" }}>
-                    {s.vehicle_info || "Vehicle"}
+                    {s.vehicle_info || terms.item}
                   </div>
                   <div className="text-xs text-slate-500 mb-1 truncate">{s.customer_name}</div>
                   <div className="text-sm font-semibold text-green-700 mb-1">{formatNPR(s.sale_price)}</div>
@@ -276,6 +319,12 @@ function AccountingSummary({ range }) {
           </p>
         )}
       </div>
+
+      {openSaleId && (
+        <SaleDetailModal key={openSaleId} saleId={openSaleId} nav={saleNav} onClose={() => setOpenSaleId(null)} onChanged={refresh} />
+      )}
+      {/* A cancelled booking's details (opened from the Bookings list of the Today's Sale popup): the same popup the Sales page opens */}
+      {viewingBooking && <BookingDetailsHost booking={viewingBooking} isAdmin={user?.role === "admin"} onClose={() => setViewingBooking(null)} onChanged={refresh} />}
 
       {/* Sales-list popup — opened by either the Total Vehicle Sale or Net Profit tile
           (salesModalView says which). Net Profit adds a per-vehicle bill to each row
@@ -308,7 +357,7 @@ function AccountingSummary({ range }) {
                     </div>
                   )}
                   <div className="text-xs text-slate-500 font-medium" data-testid="sales-modal-total-sale">
-                    Total Vehicle Sale: {formatNPR(data?.total_sales)}
+                    Total {terms.item} Sale: {formatNPR(data?.total_sales)}
                   </div>
                 </div>
                 <button
@@ -340,14 +389,14 @@ function AccountingSummary({ range }) {
                   return (
                     <div
                       key={s.id}
-                      onClick={() => { setSalesModalView(null); navigate(`/sales/vehicle/${s.vehicle_id}`); }}
+                      onClick={() => { setSalesModalView(null); setOpenSaleId(s.id); }}
                       data-testid="period-sales-modal-row"
                       className="px-4 sm:px-5 py-3 cursor-pointer hover:bg-slate-50 transition-colors"
                     >
                       <div className={showBill ? "" : "flex items-center justify-between gap-3"}>
                         <div className="min-w-0">
                           <div className="font-semibold text-slate-900 text-sm truncate" style={{ fontFamily: "Manrope" }}>
-                            {s.vehicle_info || "Vehicle"}
+                            {s.vehicle_info || terms.item}
                           </div>
                           <div className="text-xs text-slate-500 truncate">
                             {s.customer_name} · Sold: <HoverADDate date={s.sale_date} />
@@ -400,7 +449,7 @@ function AccountingSummary({ range }) {
 
               {/* Bookings made in the period — separate from sales; a booking is only a
                   deposit until it's converted into a sale. */}
-              {salesModalView === "sales" && (
+              {salesModalView === "sales" && bookingsOn && (
                 <div data-testid="period-bookings-section">
                   <div className="flex items-center justify-between gap-3 px-4 sm:px-5 py-2.5 bg-amber-50 border-y border-amber-100">
                     <h3 className="text-sm font-bold text-amber-900">
@@ -417,13 +466,19 @@ function AccountingSummary({ range }) {
                       {bookings.map(b => (
                         <div
                           key={b.id}
-                          onClick={() => { setSalesModalView(null); navigate("/sales"); }}
+                          onClick={() => {
+                            setSalesModalView(null);
+                            // A booking still booked, or one that became a sale, opens its vehicle's details page, as a sold
+                            // vehicle does; a cancelled one (the vehicle is for sale again) opens the cancellation details.
+                            if (b.status === "cancelled") setViewingBooking(b);
+                            else navigate(`/sales/vehicle/${b.vehicle_id}`);
+                          }}
                           data-testid="period-bookings-modal-row"
                           className="flex items-center justify-between gap-3 px-4 sm:px-5 py-3 cursor-pointer hover:bg-slate-50 transition-colors"
                         >
                           <div className="min-w-0">
                             <div className="font-semibold text-slate-900 text-sm truncate" style={{ fontFamily: "Manrope" }}>
-                              {b.vehicle_info || "Vehicle"}
+                              {b.vehicle_info || terms.item}
                             </div>
                             <div className="text-xs text-slate-500 truncate">
                               {b.customer_name} · Booked: <HoverADDate date={b.booking_date} />
@@ -431,7 +486,7 @@ function AccountingSummary({ range }) {
                           </div>
                           <div className="text-right shrink-0">
                             <div className="text-sm font-bold text-amber-700">{formatNPR(b.booking_amount)}</div>
-                            <div className="text-xs capitalize text-slate-500">{b.status === "cancelled" ? "withdrawn" : b.status}</div>
+                            <div className="text-xs text-slate-500" data-testid="period-booking-status">{{ active: "Booked", converted: "Sold", cancelled: "Cancelled" }[b.status] || b.status}</div>
                           </div>
                         </div>
                       ))}
@@ -471,7 +526,7 @@ function AccountingSummary({ range }) {
               <div className="flex items-center gap-4 shrink-0">
                 <div className="text-right">
                   <div className="text-sm font-bold text-blue-700" data-testid="purchases-modal-total-cost">
-                    Vehicle Purchase Cost: {formatNPR(vehiclePurchaseCost)}
+                    {terms.item} Purchase Cost: {formatNPR(vehiclePurchaseCost)}
                   </div>
                 </div>
                 <button
@@ -499,7 +554,7 @@ function AccountingSummary({ range }) {
                   >
                     <div className="min-w-0">
                       <div className="font-semibold text-slate-900 text-sm truncate" style={{ fontFamily: "Manrope" }}>
-                        {v.vehicle_info || "Vehicle"}
+                        {v.vehicle_info || terms.item}
                       </div>
                       <div className="text-xs text-slate-500 truncate">
                         {v.registration_number || v.purchase_source || "—"} · Purchased: <HoverADDate date={v.purchase_date} />
@@ -524,7 +579,11 @@ function AccountingSummary({ range }) {
 const PERIOD_STORAGE_KEY = "dashboard_date_filter";
 
 export default function Dashboard() {
-  const { user } = useAuth();
+  const { user, features, terms } = useAuth();
+  const itemsOnly = itemsMode(features);
+  const jobsOn = featureOn(features, "stock.job_cards");
+  const wideScreen = useMediaQuery("(min-width: 1024px)");
+  const { topbarSlot } = useOutletContext() || {}; // the app's top bar: on wide screens the page's status pills and date filter sit there
   // Coming back to the Dashboard shows the last figures at once (see utils/listCache.js); they are refreshed below as always.
   const [stats, setStats] = useState(() => peek("dashboard:stats") ?? null);
   const [loading, setLoading] = useState(() => peek("dashboard:stats") === undefined);
@@ -565,83 +624,87 @@ export default function Dashboard() {
     </div>
   );
 
-  if (!stats) return null;
-
-  const agingData = [
-    { name: "Fresh (0-30d)", count: stats.fresh_count || 0, color: AGING_COLORS.fresh },
-    { name: "Normal (31-45d)", count: stats.normal_count || 0, color: AGING_COLORS.normal },
-    { name: "Slow (46-60d)", count: stats.slow_moving_count || 0, color: AGING_COLORS.slow },
-    { name: "Dead (60+d)", count: stats.dead_stock_count || 0, color: AGING_COLORS.dead },
-  ];
+  if (!stats) return (
+    <div className="bg-white rounded-xl border border-red-200 p-8 text-center" data-testid="dashboard-error">
+      <p className="font-semibold text-slate-900">The dashboard could not load</p>
+      <p className="text-sm text-slate-500 mt-1">The server did not answer the request for the dashboard figures. Check your connection, or ask whoever runs the server to look at its log.</p>
+      <button onClick={() => window.location.reload()} className="mt-4 px-4 h-10 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold">Try again</button>
+    </div>
+  );
 
   const bs = getCurrentBSDate();
   const bsDateStr = bs ? `${bs.day} ${BS_MONTHS[bs.month - 1]} ${bs.year} BS` : "";
+  const statusPills = (
+    <>
+      <OnlineUsers />
+      {bsDateStr && (
+        <div className="flex items-center gap-2 bg-blue-50 border border-blue-100 px-3 py-1.5 rounded-lg" data-testid="bs-today-display">
+          <CalendarDays size={14} className="text-blue-600" />
+          <span className="text-xs font-semibold text-blue-700">{bsDateStr}</span>
+        </div>
+      )}
+    </>
+  );
+  const dateFilter = <DateRangeFilter value={filter.key} custom={filter.custom} onChange={changeFilter} testid="dashboard-date-filter" />;
 
   return (
     <div className="space-y-6 animate-fade-in">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Dashboard</h1>
-          <p className="text-sm text-slate-500 mt-0.5">Overview of {user?.company_name || "your"} operations</p>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          {/* Status pills — one tidy row (was date+clock stacked over online-count, which
-              read as misaligned once the toggle grew a third tab). Hidden below sm: purely
-              informational, and the toggle above already stays reachable on phones. */}
-          <div className="hidden sm:flex items-center gap-2 flex-wrap">
-            <OnlineUsers />
-            {bsDateStr && (
-              <div className="flex items-center gap-2 bg-blue-50 border border-blue-100 px-3 py-1.5 rounded-lg" data-testid="bs-today-display">
-                <CalendarDays size={14} className="text-blue-600" />
-                <span className="text-xs font-semibold text-blue-700">{bsDateStr}</span>
-              </div>
-            )}
+      {/* The title "Dashboard" is in the app's top bar. On wide screens the status pills and the date filter are up there too;
+          on narrower ones they are here. */}
+      {wideScreen && topbarSlot
+        ? createPortal(
+          <>
+            {statusPills}
+            {dateFilter}
+          </>,
+          topbarSlot,
+        )
+        : (
+          <div className="flex items-start justify-end gap-3 flex-wrap">
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* Status pills — one tidy row (was date+clock stacked over online-count, which
+                  read as misaligned once the toggle grew a third tab). Hidden below sm: purely
+                  informational, and the toggle above already stays reachable on phones. */}
+              <div className="hidden sm:flex items-center gap-2 flex-wrap">{statusPills}</div>
+              {dateFilter}
+            </div>
           </div>
-          <DateRangeFilter value={filter.key} custom={filter.custom} onChange={changeFilter} testid="dashboard-date-filter" />
-        </div>
-      </div>
+        )}
 
       {/* Period-scoped: follows the toggle above. Lifetime totals now live on the Finance tab. */}
       <AccountingSummary range={range} />
 
       {/* Current stock & workload — a live "right now" snapshot, not affected by the period toggle */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-4">
-        <KPICard title="Available Vehicles" value={stats.available} icon={Package} color="bg-blue-500" testid="kpi-available" onClick={() => navigate("/inventory")} />
-        <KPICard title="Locked Capital" value={formatNPR(stats.locked_capital)} icon={DollarSign} color="bg-indigo-500" testid="kpi-capital" subtitle="In available stock" onClick={() => navigate("/inventory")} />
-        <KPICard title="Pending Jobs" value={stats.pending_jobs} icon={Wrench} color="bg-orange-500" testid="kpi-pending-jobs" onClick={() => navigate("/jobs")} />
+        <KPICard title={`Available ${terms.items}`} value={itemsOnly ? stats.item_lines_in_stock ?? 0 : stats.available} icon={Package} color="bg-blue-500" testid="kpi-available" onClick={() => navigate(itemsOnly ? "/items" : "/inventory")} />
+        <KPICard title="Locked Capital" value={formatNPR(stats.locked_capital)} icon={DollarSign} color="bg-indigo-500" testid="kpi-capital" subtitle="In available stock" onClick={() => navigate(itemsOnly ? "/items" : "/inventory")} />
+        {jobsOn && (
+          <KPICard title="Pending Jobs" value={stats.pending_jobs} icon={Wrench} color="bg-orange-500" testid="kpi-pending-jobs" onClick={() => navigate("/jobs")} />
+        )}
       </div>
 
-      {/* Charts + Alerts */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Stock Aging Chart */}
-        <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200 shadow-sm p-5" data-testid="aging-chart">
-          <h2 className="text-base font-bold text-slate-900 mb-4" style={{ fontFamily: "Manrope, sans-serif" }}>Stock Aging Overview</h2>
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={agingData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
-              <XAxis dataKey="name" tick={{ fontSize: 11, fill: "#64748B" }} />
-              <YAxis tick={{ fontSize: 11, fill: "#64748B" }} allowDecimals={false} />
-              <Tooltip formatter={(val) => [`${val} vehicles`]} contentStyle={{ fontSize: 12, borderRadius: 8 }} />
-              <Bar dataKey="count" radius={[4, 4, 0, 0]}>
-                {agingData.map((entry) => <Cell key={entry.name} fill={entry.color} />)}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-
+      {/* Charts (sales trend, net trend) + Alerts */}
+      <DashboardTrends>
         {/* Alerts */}
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5" data-testid="alerts-panel">
           <h2 className="text-base font-bold text-slate-900 mb-4" style={{ fontFamily: "Manrope, sans-serif" }}>Stock Alerts</h2>
           <div className="space-y-3">
             <AlertCard title="Dead Stock" count={stats.dead_stock_count} description="60+ days. Immediate action needed." color="bg-red-100 text-red-800" onClick={() => navigate("/inventory?aging=dead")} />
             <AlertCard title="Slow Moving" count={stats.slow_moving_count} description="46–60 days. Consider price reduction." color="bg-orange-100 text-orange-800" onClick={() => navigate("/inventory?aging=slow")} />
+            {jobsOn && (
+              <>
             <AlertCard title="Pending Jobs" count={stats.pending_jobs} description="Job cards awaiting attention." color="bg-yellow-100 text-yellow-800" onClick={() => navigate("/jobs?status=pending")} />
             {stats.in_progress_jobs > 0 && (
               <AlertCard title="In Progress" count={stats.in_progress_jobs} description="Active repair/prep work." color="bg-blue-100 text-blue-800" onClick={() => navigate("/jobs?status=in_progress")} />
             )}
+              </>
+            )}
           </div>
         </div>
-      </div>
+      </DashboardTrends>
+
+      {/* Finance books + job totals: the owner's view, as in the Finance dashboard */}
+      {user?.role === "admin" && <FinanceOverview jobsOn={jobsOn} />}
 
       {/* Quick Action */}
       <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 flex items-center justify-between">
