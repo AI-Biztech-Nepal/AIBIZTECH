@@ -2,9 +2,7 @@ import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 import { cookieOptions } from './lib/supabase';
 
-const PUBLIC = ['/login', '/signup', '/forgot-password', '/auth/callback', '/finance-config.js',
-  // Stock Manager's public addresses (the website's feed and the share pages sent to customers)
-  '/api/public/'];
+const PUBLIC = ['/login', '/signup', '/forgot-password', '/auth/callback', '/finance-config.js'];
 
 // Refreshes the Supabase session cookie on every request and sends signed-out users to /login
 export async function proxy(request: NextRequest) {
@@ -33,5 +31,6 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|.*\\.(?:jpg|jpeg|png|svg|webp|ico)$).*)'],
+  // /api is Stock Manager's server (next.config.ts passes it on). It checks its own sign-in.
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|api/|.*\\.(?:jpg|jpeg|png|svg|webp|ico)$).*)'],
 };
