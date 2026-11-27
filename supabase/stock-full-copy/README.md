@@ -24,11 +24,17 @@ the earlier partial pages. Source copied: Auto-Stock-Manager `2c1df2b`.
   the screens (utils/businessKind.js); its server does not refuse them.
 - Tried on one Mac: portal build + copied server + these tables + made-up data, every screen clicked through.
 
+## Data (done 2026-11-27)
+01-tables.sql plus the data are in the portal database's `stock` schema: 47 tables, compared record by record. The earlier
+empty tables are `stock_before_full_copy`. The app's login is `stock_app` (owns that schema, nothing else). Portal
+database backups keep the latest of the last 2 days. The scripts in `server/` are on the server in
+`~/migrate/stock-full-copy/`: `refresh.sh` (bring the copy up to date; rehearsed, about 2 minutes), `switch.sh` (move the
+app to this database; not run yet), `undo.sh`.
+
 ## Not done yet
-1. Portal dashboard: its stock figures read the stock tables directly; once 01-tables.sql runs they must come from the app.
-2. Server: run services/stock/backend against the portal database with its own database login. Automatic backups switch
-   themselves off when PG_SCHEMA is set; change that first. Check disk space.
-3. Public website: keep its feed, leads and visit tracking working when the server moves.
-4. Data: copy the live rows, compare every table, then switch at a quiet time. Nothing here has touched live data.
+1. Switch: run `switch.sh` at a quiet time.
+2. Portal: publish this branch (until then the portal's earlier Marketing pages error and its stock figures are blank).
+3. Portal dashboard stock figures for general businesses: read them from the app.
+4. Run the server from services/stock/backend and move its settings and scheduled jobs, before the old app is deleted.
 5. EMI: the removed portal pages had an EMI screen; the original app has none.
 6. Changes made to the Auto-Stock-Manager repository after 2c1df2b must be copied into services/stock.
