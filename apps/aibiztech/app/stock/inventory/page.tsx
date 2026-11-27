@@ -9,7 +9,7 @@ export default async function Inventory({ searchParams }: { searchParams: Search
   const { data: vehicles, error: loadError } = await stock.from('vehicles').select('id, brand, model, variant, year, registration_number, color, selling_price, purchase_price, status').eq('company_id', org.id).order('created_at', { ascending: false }).limit(500);
   const problem = error ?? setupError ?? loadError?.message;
   return (
-    <Shell org={org} orgs={ctx.orgs} page="frame">
+    <Shell org={org} orgs={ctx.orgs} page="frame" light>
       <h1>Inventory</h1>
       <p>Vehicles in your stock.</p>
       <Notice error={problem} message={message} />

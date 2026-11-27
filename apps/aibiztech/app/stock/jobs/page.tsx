@@ -14,7 +14,7 @@ export default async function Jobs({ searchParams }: { searchParams: Search }) {
   const isAdmin = org.services.stock === 'admin';
   const open = (jobs ?? []).filter((j) => j.status !== 'completed').length;
   return (
-    <Shell org={org} orgs={ctx.orgs} page="frame">
+    <Shell org={org} orgs={ctx.orgs} page="frame" light>
       <h1>Job cards</h1>
       <Notice error={error ?? setupError ?? loadError?.message} message={message} />
       <div className="panels"><section className="tile"><h2>Open job cards</h2><p className="big">{open}</p></section></div>

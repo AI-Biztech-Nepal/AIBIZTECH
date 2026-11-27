@@ -5,7 +5,7 @@ import { Shell } from '../../shell';
 export default async function NotYet() {
   const { ctx, org } = await getStock();
   return (
-    <Shell org={org} orgs={ctx.orgs} page="frame">
+    <Shell org={org} orgs={ctx.orgs} page="frame" light>
       <h1>Coming soon</h1>
       <p>This part of Stock Manager is being rebuilt inside AIBIZTECH. Dashboard and Inventory are ready; the rest follows in stages.</p>
       <p><a className="button" href="/stock/inventory">Go to Inventory</a></p>

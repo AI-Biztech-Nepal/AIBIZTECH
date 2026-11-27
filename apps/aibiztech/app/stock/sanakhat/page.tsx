@@ -20,7 +20,7 @@ export default async function Sanakhat({ searchParams }: { searchParams: Promise
   const overdue = all.filter((v) => !v.done && v.status !== 'sold' && v.status !== 'scrap' && (daysSince(v.sanakhat_date) ?? 0) > OVERDUE_DAYS).length;
   const today = new Date().toISOString().slice(0, 10);
   return (
-    <Shell org={org} orgs={ctx.orgs} page="frame">
+    <Shell org={org} orgs={ctx.orgs} page="frame" light>
       <h1>Sanakhat</h1>
       <p>Ownership-termination progress for every vehicle. Mark one done with its date, or undo it.</p>
       <Notice error={error ?? setupError ?? loadError?.message} message={message} />

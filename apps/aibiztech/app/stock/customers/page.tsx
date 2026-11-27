@@ -8,7 +8,7 @@ export default async function Customers({ searchParams }: { searchParams: Search
   const { stock, ctx, org, setupError } = await getStock();
   const { data, error: loadError } = await stock.from('customers').select('id, name, contact_number, address, budget_min, budget_max, interested_brands').eq('company_id', org.id).order('created_at', { ascending: false }).limit(1000);
   return (
-    <Shell org={org} orgs={ctx.orgs} page="frame">
+    <Shell org={org} orgs={ctx.orgs} page="frame" light>
       <h1>Customers</h1>
       <Notice error={error ?? setupError ?? loadError?.message} message={message} />
       <section className="tile">

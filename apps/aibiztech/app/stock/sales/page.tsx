@@ -23,7 +23,7 @@ export default async function Sales({ searchParams }: { searchParams: Search }) 
   const overdue = rows.filter((r) => (r.due_amount ?? 0) > 0 && r.due_date && r.due_date < today).length;
   const isAdmin = org.services.stock === 'admin';
   return (
-    <Shell org={org} orgs={ctx.orgs} page="frame">
+    <Shell org={org} orgs={ctx.orgs} page="frame" light>
       <h1>Sales</h1>
       <Notice error={error ?? setupError ?? loadError?.message} message={message} />
       <div className="panels">

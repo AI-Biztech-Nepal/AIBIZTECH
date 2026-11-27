@@ -12,7 +12,7 @@ export default async function SpareParts({ searchParams }: { searchParams: Searc
   ]);
   const value = (parts ?? []).reduce((s, p) => s + (p.quantity ?? 0) * (p.unit_cost ?? 0), 0);
   return (
-    <Shell org={org} orgs={ctx.orgs} page="frame">
+    <Shell org={org} orgs={ctx.orgs} page="frame" light>
       <h1>Spare parts</h1>
       <Notice error={error ?? setupError ?? loadError?.message} message={message} />
       <section className="tile">

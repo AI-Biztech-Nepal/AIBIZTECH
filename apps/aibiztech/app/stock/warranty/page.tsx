@@ -27,7 +27,7 @@ export default async function Warranty({ searchParams }: { searchParams: Search 
     .sort((a, b) => ORDER[a.w.status] - ORDER[b.w.status] || (a.w.daysLeft ?? 0) - (b.w.daysLeft ?? 0));
   const isAdmin = org.services.stock === 'admin';
   return (
-    <Shell org={org} orgs={ctx.orgs} page="frame">
+    <Shell org={org} orgs={ctx.orgs} page="frame" light>
       <h1>Warranty</h1>
       <p>Every sold vehicle, with how long its warranty has left. Standard warranty: {days} days from the sale date; it becomes active after the 1st service at your shop.</p>
       <Notice error={error ?? setupError ?? loadError?.message} message={message} />

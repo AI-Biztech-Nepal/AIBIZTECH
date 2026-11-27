@@ -7,7 +7,7 @@ export default async function Emi({ searchParams }: { searchParams: Search }) {
   const { error, message } = await searchParams;
   const { stock, ctx, org, setupError } = await getStock();
   if (org.services.stock !== 'admin') {
-    return <Shell org={org} orgs={ctx.orgs} page="frame"><h1>EMI</h1><p>Only a Stock Manager admin can see EMI plans.</p></Shell>;
+    return <Shell org={org} orgs={ctx.orgs} page="frame" light><h1>EMI</h1><p>Only a Stock Manager admin can see EMI plans.</p></Shell>;
   }
   const [{ data: emis, error: loadError }, { data: pays }, { data: customers }, { data: vehicles }] = await Promise.all([
     stock.from('emi_records').select('*').eq('company_id', org.id).order('created_at', { ascending: false }).limit(500),
@@ -20,7 +20,7 @@ export default async function Emi({ searchParams }: { searchParams: Search }) {
   const left = (e: { id: string; total_payable: number | null }) => Math.max(0, (e.total_payable ?? 0) - (paid.get(e.id)?.sum ?? 0));
   const totalLeft = (emis ?? []).reduce((s, e) => s + left(e), 0);
   return (
-    <Shell org={org} orgs={ctx.orgs} page="frame">
+    <Shell org={org} orgs={ctx.orgs} page="frame" light>
       <h1>EMI</h1>
       <Notice error={error ?? setupError ?? loadError?.message} message={message} />
       <div className="panels"><section className="tile"><h2>Still to collect</h2><p className="big">{money(totalLeft)}</p><p>{(emis ?? []).filter((e) => left(e) > 0).length} active plans</p></section></div>

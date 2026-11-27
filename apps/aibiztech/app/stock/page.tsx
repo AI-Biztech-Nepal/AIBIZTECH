@@ -9,7 +9,7 @@ export default async function StockHome() {
   const sold = rows.filter((v) => v.status === 'sold');
   const sum = (a: typeof rows, k: 'purchase_price' | 'selling_price') => a.reduce((s, v) => s + (v[k] ?? 0), 0);
   return (
-    <Shell org={org} orgs={ctx.orgs} page="frame">
+    <Shell org={org} orgs={ctx.orgs} page="frame" light>
       <h1>Stock Manager</h1>
       {setupError && <p className="error">{setupError}</p>}
       <div className="panels">
