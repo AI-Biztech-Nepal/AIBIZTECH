@@ -41,7 +41,7 @@ const paths: Record<string, ReactNode> = {
 const PICTURES: Record<string, string> = {
   'hris-logo': '/apps/hris.jpg', 'finance-logo': '/apps/finance.jpg', 'sales-logo': '/apps/sales.jpg', 'inventory-logo': '/apps/inventory.jpg',
   'marketing-logo': '/apps/marketing.jpg', 'service-logo': '/apps/service.jpg', 'sanakhat-logo': '/apps/sanakhat.jpg', hanuman: '/apps/hanuman.png',
-  'website-logo': '/apps/website.jpg', 'chats-logo': '/apps/chats.jpg', 'emails-logo': '/apps/emails.jpg', 'emi-logo': '/apps/emi.jpg', 'rental-logo': '/apps/rental.jpg',
+  'website-logo': '/apps/website.jpg', 'chats-logo': '/apps/chats.jpg', 'emails-logo': '/apps/emails.jpg', 'emi-logo': '/apps/emi.jpg', 'rental-logo': '/apps/rental-v2.jpg',
 };
 
 export function Icon({ name, size = 20 }: { name: string; size?: number }) {
