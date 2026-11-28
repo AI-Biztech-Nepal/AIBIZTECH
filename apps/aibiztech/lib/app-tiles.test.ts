@@ -49,7 +49,7 @@ test('side panel entries follow their tile; the rest always show', () => {
 });
 
 test('coming-soon apps start unticked and keep their ticks beside the unticked modules', () => {
-  assert.deepEqual(SOON.map((t) => t.id), ['website', 'chats', 'emails']);
+  assert.deepEqual(SOON.map((t) => t.id), ['website', 'chats', 'emails', 'emi', 'rental']);
   assert.deepEqual(soonShown(['sales']), []);
   const saved = withSoon(['sales', '+emails'], ['chats', 'inventory']);
   assert.deepEqual(saved, ['+chats', 'sales']);

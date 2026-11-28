@@ -2,7 +2,7 @@ import type { BusinessKind } from './business-kind';
 
 // The tiles on Add apps are the modules the side panel lists. Several of them are pages of one app (Stock Manager), so
 // they share its trial, status and access: adding any of them adds that app.
-export type Tile = { id: string; app: string; name: string; href: string; art?: 'sales' | 'inventory' | 'marketing' | 'service' | 'sanakhat' | 'ai' | 'website' | 'chats' | 'emails' };
+export type Tile = { id: string; app: string; name: string; href: string; art?: 'sales' | 'inventory' | 'marketing' | 'service' | 'sanakhat' | 'ai' | 'website' | 'chats' | 'emails' | 'emi' | 'rental' };
 
 const STOCK: Tile[] = [
   { id: 'sales', app: 'stock', name: 'Sales', href: '/app/stock/sales', art: 'sales' },
@@ -63,6 +63,8 @@ export const SOON: Tile[] = [
   { id: 'website', app: 'soon', name: 'Website', href: '/soon/website', art: 'website' },
   { id: 'chats', app: 'soon', name: 'Chats', href: '/soon/chats', art: 'chats' },
   { id: 'emails', app: 'soon', name: 'Emails', href: '/soon/emails', art: 'emails' },
+  { id: 'emi', app: 'soon', name: 'EMI', href: '/soon/emi', art: 'emi' },
+  { id: 'rental', app: 'soon', name: 'Rental', href: '/soon/rental', art: 'rental' },
 ];
 export const soonShown = (hidden: string[]) => SOON.filter((t) => hidden.includes(`+${t.id}`));
 export const withSoon = (hidden: string[], ticked: string[]) =>
