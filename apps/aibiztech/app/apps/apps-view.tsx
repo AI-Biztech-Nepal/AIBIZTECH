@@ -2,7 +2,7 @@ import 'lenis/dist/lenis.css';
 import Link from 'next/link';
 import { ReactLenis } from 'lenis/react';
 import type { BusinessKind } from '@/lib/business-kind';
-import { manages, tilesFor } from '@/lib/app-tiles';
+import { manages, SOON, soonShown, tilesFor } from '@/lib/app-tiles';
 import { appStatus, isOpen } from '@/lib/plans';
 import { TRIAL_DAYS } from '@/lib/signup';
 import a from '../account.module.css';
@@ -33,6 +33,7 @@ export function AppsView({ orgName, access, services, kind = null, rows, hidden 
   const mine = new Set(Object.keys(access));
   // Ticking cannot reopen an app whose trial is over or that is suspended: that needs a plan
   const isClosed = (tile: (typeof all)[number]) => !manages(tile, mine, kind) && !!tile.row && !isOpen(tile.row, now);
+  const shownSoon = new Set(soonShown(hidden).map((tile) => tile.id));
 
   return (
     <div className={`${page.page} ${a.page}`}>
@@ -73,6 +74,19 @@ export function AppsView({ orgName, access, services, kind = null, rows, hidden 
                   </li>
                 );
               })}
+              {SOON.map((tile) => (
+                <li key={tile.id}>
+                  <div className={t.tile}>
+                    <label className={t.pick}>
+                      <input type="checkbox" name="modules" value={tile.id} defaultChecked={shownSoon.has(tile.id)} aria-label={`Show ${tile.name} in the left panel`} />
+                      <ModuleLogo art={tile.art!} />
+                      <span className={t.name}>{tile.name}</span>
+                    </label>
+                    <span className={`${s.tag} ${s.over}`}>Coming soon</span>
+                    <Link href={tile.href} className={t.action} aria-label={`About ${tile.name}`}>Open</Link>
+                  </div>
+                </li>
+              ))}
             </ul>
             <div className={a.foot}><button type={preview ? 'button' : 'submit'} className={`${s.button} ${s.primary}`}>Save left panel</button></div>
           </form>

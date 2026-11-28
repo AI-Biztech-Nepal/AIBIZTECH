@@ -8,7 +8,7 @@ import { safeNext } from '@/lib/safe-next';
 import { EMAIL, FIELDS, PHONE, validateDetails, validatePhoto, type Details } from '@/lib/org-details';
 import { TRIAL_DAYS, validateSignup, type SignupState, type SignupValues } from '@/lib/signup';
 import { signInProblem, type SignInState } from '@/lib/signin';
-import { planModules, tilesFor } from '@/lib/app-tiles';
+import { planModules, tilesFor, withSoon } from '@/lib/app-tiles';
 import { isOpen } from '@/lib/plans';
 import { isBusinessType } from '@/lib/business-kind';
 import { businessKind } from '@/lib/business-kind-load';
@@ -109,16 +109,17 @@ export async function saveModules(form: FormData) {
   ]);
   if (servicesError || rowsError) fail('/apps', 'Your apps could not be loaded. Try again.');
   const now = new Date();
+  const ticked = form.getAll('modules').map(String);
   const plan = planModules({
     tiles: tilesFor(services ?? [], kind), access: Object.keys(org!.services), kind, hidden,
     closed: (rows ?? []).filter((r) => !isOpen(r, now)).map((r) => r.service_key as string),
-    ticked: form.getAll('modules').map(String),
+    ticked,
   });
   if (plan.add.length) {
     const problem = await enableApps(supabase, org!.id, ctx!.user_id, plan.add);
     if (problem) fail('/apps', problem);
   }
-  const { data: saved, error } = await core.from('organizations').update({ hidden_modules: plan.hidden }).eq('id', org!.id).select('id');
+  const { data: saved, error } = await core.from('organizations').update({ hidden_modules: withSoon(plan.hidden, ticked) }).eq('id', org!.id).select('id');
   revalidatePath('/', 'layout');
   if (error || !saved?.length) fail('/apps', `${plan.add.length ? 'The new apps were added, but your' : 'Your'} left panel choice could not be saved${error ? `: ${error.message}` : '.'}`);
   redirect('/apps?message=' + encodeURIComponent(plan.add.length ? `Saved. Your ${TRIAL_DAYS}-day trial of the new apps has started.` : 'Saved. The left panel shows the ticked apps.'));

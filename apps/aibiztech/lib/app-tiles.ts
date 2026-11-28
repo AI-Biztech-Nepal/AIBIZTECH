@@ -2,7 +2,7 @@ import type { BusinessKind } from './business-kind';
 
 // The tiles on Add apps are the modules the side panel lists. Several of them are pages of one app (Stock Manager), so
 // they share its trial, status and access: adding any of them adds that app.
-export type Tile = { id: string; app: string; name: string; href: string; art?: 'sales' | 'inventory' | 'marketing' | 'service' | 'sanakhat' | 'ai' };
+export type Tile = { id: string; app: string; name: string; href: string; art?: 'sales' | 'inventory' | 'marketing' | 'service' | 'sanakhat' | 'ai' | 'website' | 'chats' | 'emails' };
 
 const STOCK: Tile[] = [
   { id: 'sales', app: 'stock', name: 'Sales', href: '/app/stock/sales', art: 'sales' },
@@ -56,3 +56,14 @@ const MENU_TILE: Record<string, string> = {
   service: 'service', jobs: 'service', warranty: 'service', finance: 'finance', sanakhat: 'sanakhat', ai: 'ai',
 };
 export const menuShown = (key: string, hidden: string[]) => !hidden.includes(MENU_TILE[key] ?? '');
+
+// Apps that are announced but not built: no trial and no access to give, only a place in the side panel and a page
+// saying so. They start unticked, so a tick is kept as "+id" in the same list that holds the unticked modules.
+export const SOON: Tile[] = [
+  { id: 'website', app: 'soon', name: 'Website', href: '/soon/website', art: 'website' },
+  { id: 'chats', app: 'soon', name: 'Chats', href: '/soon/chats', art: 'chats' },
+  { id: 'emails', app: 'soon', name: 'Emails', href: '/soon/emails', art: 'emails' },
+];
+export const soonShown = (hidden: string[]) => SOON.filter((t) => hidden.includes(`+${t.id}`));
+export const withSoon = (hidden: string[], ticked: string[]) =>
+  [...hidden.filter((h) => !h.startsWith('+')), ...SOON.filter((t) => ticked.includes(t.id)).map((t) => `+${t.id}`)].sort();

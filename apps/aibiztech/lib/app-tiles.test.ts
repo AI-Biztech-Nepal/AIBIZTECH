@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { menuShown, planModules, tilesFor } from './app-tiles.ts';
+import { menuShown, planModules, tilesFor, SOON, soonShown, withSoon } from './app-tiles.ts';
 
 const services = ['attendance', 'finance', 'marketing', 'stock'].map((key) => ({ key, name: key }));
 
@@ -46,4 +46,13 @@ test('side panel entries follow their tile; the rest always show', () => {
   assert.equal(menuShown('sales', ['service']), true);
   assert.equal(menuShown('dashboard', all), true);
   assert.equal(menuShown('ledger', all), true);
+});
+
+test('coming-soon apps start unticked and keep their ticks beside the unticked modules', () => {
+  assert.deepEqual(SOON.map((t) => t.id), ['website', 'chats', 'emails']);
+  assert.deepEqual(soonShown(['sales']), []);
+  const saved = withSoon(['sales', '+emails'], ['chats', 'inventory']);
+  assert.deepEqual(saved, ['+chats', 'sales']);
+  assert.deepEqual(soonShown(saved).map((t) => t.name), ['Chats']);
+  assert.equal(menuShown('sales', saved), false);
 });

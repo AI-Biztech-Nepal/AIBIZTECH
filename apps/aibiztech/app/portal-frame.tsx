@@ -6,13 +6,14 @@ import { FINANCE_MENU } from '@/lib/finance-menu';
 import { signOut, switchOrg } from './actions';
 import { Icon, serviceIcon } from './icons';
 import { MenuLink } from './menu-link';
+import { soonShown } from '@/lib/app-tiles';
 import { SidebarMemory } from './sidebar-memory';
 import { StockDashboardLink, StockModules, StockSettings } from './stock-nav';
 import { CollapseButton, MenuButton } from './sidebar-toggle';
 import { fontVariables } from './fonts';
 import s from './frame.module.css';
 
-export type Page = 'home' | 'admin' | 'team' | 'apps' | 'plans' | 'billing' | 'profile' | 'frame';
+export type Page = 'home' | 'admin' | 'team' | 'apps' | 'plans' | 'billing' | 'profile' | 'frame' | 'soon';
 export type Service = { key: string; name: string; base_url: string };
 
 type Props = {
@@ -28,6 +29,7 @@ type Props = {
   hidden?: string[]; // modules the business unticked on Add apps: left out of the side panel
   light?: boolean; // redesigned portal pages; module screens keep their own look
   preview?: boolean; // look only: switching business and signing out do nothing
+  current?: string; // the coming-soon app being shown
   phoneDate?: string; // set by the dashboard: a charcoal header on phones, with this date in it
   children: ReactNode;
 };
@@ -37,7 +39,7 @@ const initialsOf = (name: string) => name.split(/\s+/).map((w) => w[0]).slice(0,
 
 // The frame around every signed-in page: side panel on the left, business and account menus on top.
 // Apps come from core.services, so a new service (or one turned on for a business) shows up without touching this file.
-export function PortalFrame({ org, orgs = [], services, person, email, page, bleed = false, auto = false, oldFinance = false, hidden = [], light = false, preview = false, phoneDate, children }: Props) {
+export function PortalFrame({ org, orgs = [], services, person, email, page, bleed = false, auto = false, oldFinance = false, hidden = [], light = false, preview = false, current, phoneDate, children }: Props) {
   const isAdmin = !!org && org.org_role !== 'member';
   const status = org?.verification_status;
   const statusLabel = status === 'verified' ? 'Verified' : status === 'rejected' ? 'Rejected' : 'Awaiting verification';
@@ -49,6 +51,7 @@ export function PortalFrame({ org, orgs = [], services, person, email, page, ble
   const stock = !!org?.services.stock;
   const merged = stock && auto && !oldFinance;
   const who = `${org?.id ?? ''}:${email}`;
+  const soon = org ? soonShown(hidden) : []; // announced apps the business ticked on Add apps
 
   const item = (href: string, icon: string, label: string, active = false, extra?: ReactNode) => (
     <Link href={href} className={cls(s.item, active && s.active)} aria-current={active ? 'page' : undefined} aria-label={label} title={label}>
@@ -79,7 +82,7 @@ export function PortalFrame({ org, orgs = [], services, person, email, page, ble
           </div>
 
           {/* A member with no open app gets no empty heading */}
-          {(isAdmin || apps.length > 0) && <div className={s.group}>
+          {(isAdmin || apps.length > 0 || soon.length > 0) && <div className={s.group}>
             <div className={s.groupTitle}>Modules</div>
             {apps.map((svc) => {
               const on = !!org?.services[svc.key];
@@ -100,6 +103,7 @@ export function PortalFrame({ org, orgs = [], services, person, email, page, ble
                 </Fragment>
               );
             })}
+            {soon.map((t) => <Fragment key={t.id}>{item(t.href, `${t.id}-logo`, t.name, current === t.id)}</Fragment>)}
             {isAdmin && item('/apps', 'plus', 'Add apps', page === 'apps')}
           </div>}
 
