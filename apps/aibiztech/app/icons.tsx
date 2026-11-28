@@ -74,3 +74,23 @@ export function ServiceLogo({ svc }: { svc: { key: string; name: string } }) {
     </span>
   );
 }
+
+// Add apps: modules without a logo of their own get one in the brand's navy, blue and cyan. Inventory keeps the stock
+// logo and AI Assistant wears the Hanuman AI mark.
+const MODULE_ART: Record<string, { icon: string; background: string }> = {
+  sales: { icon: 'card', background: 'linear-gradient(135deg, #22d3ee, #0b79ee)' },
+  megaphone: { icon: 'megaphone', background: 'linear-gradient(135deg, #1e88ff, #0b3fa8)' },
+  service: { icon: 'wrench', background: 'linear-gradient(135deg, #1d4f9e, #0b1230)' },
+  sanakhat: { icon: 'doc', background: 'linear-gradient(135deg, #0ea5b7, #0b3fa8)' },
+};
+
+export function ModuleLogo({ art }: { art: string }) {
+  const own = art === 'inventory' ? '/apps/stock.png' : art === 'ai' ? '/apps/hanuman.png' : null;
+  const drawn = MODULE_ART[art];
+  return (
+    <span className="svc-logo" style={own ? { overflow: 'hidden' } : { background: drawn?.background }}>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      {own ? <img src={own} alt="" width={art === 'ai' ? 72 : 60} height={art === 'ai' ? 72 : 60} /> : <Icon name={drawn?.icon ?? 'app'} size={36} />}
+    </span>
+  );
+}
