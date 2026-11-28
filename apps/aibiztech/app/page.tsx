@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import { getContext } from '@/lib/supabase';
+import { shellData } from '@/lib/shell-data';
 import { Shell } from './shell';
 import { businessKind } from '@/lib/business-kind-load';
 import { hasOldFinance } from '@/lib/old-finance';
@@ -31,7 +32,10 @@ export default async function Launcher({ searchParams }: { searchParams: Search 
   const open = Object.keys(org.services).length > 0;
 
   // Trial dates: for the "trial ended" screen, and the phone dashboard's trial line (admins can act on it)
-  const { data: rows } = !open || isAdmin ? await supabase.schema('core').from('org_services').select('status, trial_ends_at, enabled_at').eq('org_id', org.id) : { data: null };
+  const [{ data: rows }, { services }] = await Promise.all([
+    !open || isAdmin ? supabase.schema('core').from('org_services').select('status, trial_ends_at, enabled_at').eq('org_id', org.id) : { data: null },
+    shellData(supabase, org),
+  ]);
   const sub = subscription(rows ?? []);
 
   // No app is open to this person. If the free trial being over is why, say so instead of showing an empty dashboard.
@@ -49,8 +53,7 @@ export default async function Launcher({ searchParams }: { searchParams: Search 
   if (org.services.stock && !error && !denied && !message && (await businessKind(supabase, org.id)) === 'auto' && !(await hasOldFinance(supabase, org.id))) redirect('/app/stock');
 
   // The business's money dashboard, from its Finance books, and what Stock holds (each only when the business has that app)
-  const [{ data: services }, raw, stock] = await Promise.all([
-    supabase.schema('core').from('services').select('key, name').eq('is_active', true),
+  const [raw, stock] = await Promise.all([
     org.services.finance ? loadRaw(supabase, org.id) : null,
     org.services.stock ? loadStock(supabase, org.id) : null,
   ]);

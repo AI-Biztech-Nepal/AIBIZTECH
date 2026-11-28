@@ -1,6 +1,7 @@
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { getContext } from '@/lib/supabase';
+import { shellData } from '@/lib/shell-data';
 import { askBusinessType } from '@/lib/ask-business-type';
 import { AppFrame } from '../../../app-frame';
 import { Shell } from '../../../shell';
@@ -20,13 +21,20 @@ export default async function AppPage({ params, searchParams }: Props) {
   if (!ctx) redirect('/login');
   const org = ctx.orgs.find((o) => o.id === ctx.active_org_id) ?? ctx.orgs[0];
   if (!org) redirect('/onboarding');
-  if (service !== 'attendance') await askBusinessType(supabase, org);
 
   // The Marketing screens are part of Stock Manager, so they open with the business's Stock Manager access
   const key = service === 'marketing' ? 'stock' : service;
   if (!org.services[key]) redirect('/?error=' + encodeURIComponent('You do not have access to that app.'));
+  const ownAttendance = service === 'attendance' && !!process.env.ATTENDANCE_URL;
 
-  const { data: svc } = await supabase.schema('core').from('services').select('name, base_url').eq('key', key).eq('is_active', true).maybeSingle();
+  // Asked together. For Attendance, the first open gives the business its company and the person their profile.
+  const [frame, workspace] = await Promise.all([
+    shellData(supabase, org),
+    ownAttendance ? supabase.schema('attendance').rpc('ensure_workspace', { p_org: org.id }) : null,
+    service === 'attendance' ? null : askBusinessType(supabase, org),
+  ]);
+
+  const svc = frame.services?.find((s) => s.key === key);
   if (!svc) redirect('/?error=' + encodeURIComponent('That app is not available.'));
 
   const qs = new URLSearchParams();
@@ -42,10 +50,8 @@ export default async function AppPage({ params, searchParams }: Props) {
   } else if (service === 'finance') {
     // Finance is part of the portal itself (static files at /finance)
     src = `/finance${target === '/' ? '' : target}${search}`;
-  } else if (service === 'attendance' && process.env.ATTENDANCE_URL) {
-    // First open: the business gets its Attendance company and the person their Attendance profile
-    const { error: wsError } = await supabase.schema('attendance').rpc('ensure_workspace', { p_org: org.id });
-    if (wsError) redirect('/?error=' + encodeURIComponent('Could not set up Attendance: ' + wsError.message));
+  } else if (ownAttendance) {
+    if (workspace?.error) redirect('/?error=' + encodeURIComponent('Could not set up Attendance: ' + workspace.error.message));
     // The fresh copy is served under the portal's own address, so the portal sign-in already applies: no second login
     src = `/attendance${target === '/' ? '' : target}${search}`;
   } else {

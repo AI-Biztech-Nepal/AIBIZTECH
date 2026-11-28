@@ -5,6 +5,7 @@ import { ATTENDANCE_MENU, type MenuNode } from '@/lib/attendance-menu';
 import { FINANCE_MENU } from '@/lib/finance-menu';
 import { signOut, switchOrg } from './actions';
 import { Icon, serviceIcon } from './icons';
+import { MenuLink } from './menu-link';
 import { SidebarMemory } from './sidebar-memory';
 import { StockDashboardLink, StockModules, StockSettings } from './stock-nav';
 import { CollapseButton, MenuButton } from './sidebar-toggle';
@@ -160,7 +161,7 @@ export function PortalFrame({ org, orgs = [], services, person, email, page, ble
       {bar && (
         <nav className={s.tabs} aria-label="Shortcuts">
           <Link href="/" aria-current={page === 'home' ? 'page' : undefined}><Icon name="dashboard" /><span>Home</span></Link>
-          {TABS.filter(([key]) => org?.services[key] && !hidden.includes(key)).map(([key, label, href, icon]) => <a key={key} href={href}><Icon name={icon} /><span>{label}</span></a>)}
+          {TABS.filter(([key]) => org?.services[key] && !hidden.includes(key)).map(([key, label, href, icon]) => <MenuLink key={key} href={href}><Icon name={icon} /><span>{label}</span></MenuLink>)}
           {/* the other portal pages are reached through More, so it is the one lit on them */}
           <MenuButton className={cls(s.more, page !== 'home' && s.here)} label="More" />
         </nav>
@@ -194,15 +195,15 @@ function AppMenu({ service, icon, name, nodes, isAdmin, home = '/' }: { service:
           <div className={s.sub}>{render(n.children)}</div>
         </details>
       ) : (
-        <a key={n.label} className={s.item} href={href(n.path)}>
+        <MenuLink key={n.label} className={s.item} href={href(n.path)}>
           <Icon name={n.icon} size={15} /><span className={s.label}>{n.label}</span>
-        </a>
+        </MenuLink>
       ),
     );
   return (
     <details className={s.menu} data-menu={`app:${service}:${name}`}>
       {/* The name opens the app's first page; the arrow opens and closes the list */}
-      <summary className={s.item}><a href={href(home)} className={s.appTitle} aria-label={name} title={name}><Icon name={icon} size={17} /><span className={s.label}>{name}</span></a></summary>
+      <summary className={s.item}><MenuLink href={href(home)} className={s.appTitle} aria-label={name} title={name}><Icon name={icon} size={17} /><span className={s.label}>{name}</span></MenuLink></summary>
       <div className={s.sub}>{render(nodes)}</div>
     </details>
   );

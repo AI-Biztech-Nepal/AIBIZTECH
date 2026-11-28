@@ -56,6 +56,9 @@
 .badge { flex: none; min-width: 20px; padding: 0 6px; border-radius: 10px; background: #ef4444; color: #ffffff; font-size: 11px; font-weight: 700; line-height: 20px; text-align: center; }
 .appTitle { display: flex; flex: 1; align-items: center; gap: 10px; min-width: 0; min-height: 34px; color: inherit; text-decoration: none; }
 .sidebar .appTitle { color: inherit; }
+/* a page on its way */
+.waiting { flex: none; width: 12px; height: 12px; margin-left: auto; border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; animation: turn 0.7s linear infinite; }
+@keyframes turn { to { transform: rotate(360deg); } }
 .sub { display: flex; flex-direction: column; margin: 2px 0 6px 18px; padding-left: 8px; border-left: 1px solid #3a3f4c; }
 .sidebar .sub .item { min-height: 30px; color: #b9bfcc; font-weight: 400; }
 .sidebar .sub .item:hover { color: #ffffff; }

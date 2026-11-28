@@ -7,6 +7,11 @@ const ATTENDANCE_URL = (process.env.ATTENDANCE_URL ?? '').trim().replace(/\/$/, 
 // Stock Manager's server (services/stock/backend). The portal passes the app's /api calls on to it.
 const STOCK_SERVER = (process.env.STOCK_SERVER ?? 'https://api.hamroauto.com.np').trim().replace(/\/$/, '');
 
+// The browser keeps pictures for a day, then shows the kept copy while it fetches a fresh one
+const KEEP_PICTURE = [{ key: 'Cache-Control', value: 'public, max-age=86400, stale-while-revalidate=604800' }];
+// Files with a fingerprint in their name never change, so they are kept for good
+const KEEP_FOREVER = [{ key: 'Cache-Control', value: 'public, max-age=31536000, immutable' }];
+
 const config: NextConfig = {
   // Default is 1 MB; the PAN photo (max 4 MB) is posted with the onboarding form
   // Stock Manager's photo and document uploads (up to 25 MB) pass through the portal to its server
@@ -14,9 +19,15 @@ const config: NextConfig = {
   // no-store keeps the browser's back button from restoring a signed-in page or filled form after sign out
   headers: async () => [
     { source: '/:path*', headers: [{ key: 'Cache-Control', value: 'no-store' }] },
-    // Finance's script and styles have a fingerprint in their name, so they can be kept
-    { source: '/finance/_expo/:path*', headers: [{ key: 'Cache-Control', value: 'public, max-age=31536000, immutable' }] },
-    { source: '/stock-app/static/:path*', headers: [{ key: 'Cache-Control', value: 'public, max-age=31536000, immutable' }] },
+    // Finance's and Stock Manager's scripts, styles, fonts and pictures have a fingerprint in their name
+    { source: '/finance/_expo/:path*', headers: KEEP_FOREVER },
+    { source: '/finance/assets/:path*', headers: KEEP_FOREVER },
+    { source: '/stock-app/static/:path*', headers: KEEP_FOREVER },
+    // Logos. Only picture files: /apps on its own is the Add apps page
+    { source: '/logo.png', headers: KEEP_PICTURE },
+    { source: '/apps/:file([^/]+\\.(?:png|jpg))', headers: KEEP_PICTURE },
+    { source: '/stock-app/brand/:path*', headers: KEEP_PICTURE },
+    { source: '/brand/:path*', headers: KEEP_PICTURE },
   ],
   // Finance is a single-page app: any address under /finance that is not a real file opens its index.html
   // Old addresses of the apps now live under /app

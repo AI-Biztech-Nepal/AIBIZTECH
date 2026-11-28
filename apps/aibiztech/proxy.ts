@@ -32,5 +32,7 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   // /api is Stock Manager's server (next.config.ts passes it on). It checks its own sign-in.
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|api/|.*\\.(?:jpg|jpeg|png|svg|webp|ico)$).*)'],
+  // The apps' own script and font files hold nothing private: no sign-in check, so they load sooner and a signed-out
+  // browser never keeps a redirect in place of a file.
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|api/|finance/_expo/|finance/assets/|stock-app/static/|.*\\.(?:jpg|jpeg|png|svg|webp|ico)$).*)'],
 };

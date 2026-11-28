@@ -1,5 +1,6 @@
 import { createServerClient, type CookieOptionsWithName } from '@supabase/ssr';
 import { cookies } from 'next/headers';
+import { cache } from 'react';
 
 // Session cookie lives on the parent domain so every service subdomain can read it
 export const cookieOptions: CookieOptionsWithName = {
@@ -9,7 +10,8 @@ export const cookieOptions: CookieOptionsWithName = {
   secure: process.env.NODE_ENV === 'production',
 };
 
-export async function createClient() {
+// One client for the whole request, so the loaders that remember their answers (React cache) ask only once
+export const createClient = cache(async () => {
   const cookieStore = await cookies();
   return createServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, {
     cookieOptions,
@@ -23,7 +25,7 @@ export async function createClient() {
       },
     },
   });
-}
+});
 
 export type Org = { id: string; name: string; org_role: 'owner' | 'admin' | 'member'; verification_status: 'pending' | 'verified' | 'rejected'; verification_note: string | null; services: Record<string, string> };
 export type Member = { user_id: string; full_name: string | null; email: string; org_role: 'owner' | 'admin' | 'member'; status: 'active' | 'disabled'; joined_at: string; service_roles: Record<string, string> };
