@@ -11,8 +11,8 @@ import s from './frame.module.css';
 export type StockNode = { key: string; label: string; to: string; active?: boolean; badge?: number; children?: StockNode[] };
 
 const ICONS: Record<string, string> = {
-  dashboard: 'dashboard', sales: 'sales-logo', inventory: 'stock', items: 'stock', 'spare-parts': 'structure', marketing: 'marketing-logo',
-  service: 'service-logo', jobs: 'wrench', warranty: 'admin', ledger: 'doc', finance: 'finance', sanakhat: 'sanakhat-logo', ai: 'hanuman', platform: 'branch',
+  dashboard: 'dashboard', sales: 'sales-logo', inventory: 'inventory-logo', items: 'inventory-logo', 'spare-parts': 'structure', marketing: 'marketing-logo',
+  service: 'service-logo', jobs: 'wrench', warranty: 'admin', ledger: 'doc', finance: 'finance-logo', sanakhat: 'sanakhat-logo', ai: 'hanuman', platform: 'branch',
 };
 const cls = (...names: (string | false | undefined)[]) => names.filter(Boolean).join(' ');
 const address = (to: string) => `/app/stock${to === '/' ? '' : to}`;

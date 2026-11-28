@@ -37,9 +37,10 @@ const paths: Record<string, ReactNode> = {
   more: <><circle cx="5" cy="12" r="1.4" /><circle cx="12" cy="12" r="1.4" /><circle cx="19" cy="12" r="1.4" /></>,
 };
 
-// Modules with a logo of their own
+// Apps and modules with a logo of their own
 const PICTURES: Record<string, string> = {
-  hanuman: '/apps/hanuman.png', 'sales-logo': '/apps/sales.jpg', 'marketing-logo': '/apps/marketing.jpg', 'service-logo': '/apps/service.jpg', 'sanakhat-logo': '/apps/sanakhat.jpg',
+  'hris-logo': '/apps/hris.jpg', 'finance-logo': '/apps/finance.jpg', 'sales-logo': '/apps/sales.jpg', 'inventory-logo': '/apps/inventory.jpg',
+  'marketing-logo': '/apps/marketing.jpg', 'service-logo': '/apps/service.jpg', 'sanakhat-logo': '/apps/sanakhat.jpg', hanuman: '/apps/hanuman.png',
 };
 
 export function Icon({ name, size = 20 }: { name: string; size?: number }) {
@@ -51,46 +52,32 @@ export function Icon({ name, size = 20 }: { name: string; size?: number }) {
 
 export function serviceIcon(key: string, name: string) {
   const s = `${key} ${name}`.toLowerCase();
-  return s.includes('financ') ? 'finance' : s.includes('attend') ? 'attendance' : s.includes('stock') ? 'stock' : s.includes('market') ? 'marketing-logo' : 'app';
+  return s.includes('financ') ? 'finance-logo' : s.includes('attend') ? 'hris-logo' : s.includes('stock') ? 'stock' : s.includes('market') ? 'marketing-logo' : 'app';
 }
 
-// Attendance Nepal uses its real logo; Stock Manager uses the StockTrack mark; Finance has a logo drawn for the portal
-function FinanceMark() {
+// A logo filling its tile
+function LogoTile({ src }: { src: string }) {
   return (
-    <svg viewBox="0 0 64 64" width="40" height="40" aria-hidden="true">
-      <defs>
-        <linearGradient id="fb" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#1e88ff" /><stop offset="1" stopColor="#0b3fa8" /></linearGradient>
-        <linearGradient id="fr" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stopColor="#ff3b30" /><stop offset="1" stopColor="#d3121b" /></linearGradient>
-      </defs>
-      <path d="M12 58V22C12 11 19 5 30 5h27c-2 5-7 8-14 8H30c-4 0-6 2-6 6v6h22c-2 5-6 8-12 8H24v25z" fill="url(#fb)" />
-      <rect x="27" y="25" width="5" height="12" rx="1.5" fill="#fbbf24" /><rect x="34" y="21" width="5" height="16" rx="1.5" fill="#84cc16" />
-      <rect x="41" y="17" width="5" height="20" rx="1.5" fill="#22c55e" />
-      <path d="M8 46c14-2 30-8 46-22-4 14-20 26-46 30z" fill="url(#fr)" />
-    </svg>
+    <span className="svc-logo" style={{ overflow: 'hidden' }}>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={src} alt="" width={72} height={72} style={{ width: '100%', height: '100%' }} />
+    </span>
   );
 }
 
+// Stock Manager uses the StockTrack mark, on a light tile
 export function ServiceLogo({ svc }: { svc: { key: string; name: string } }) {
   const kind = serviceIcon(svc.key, svc.name);
+  if (PICTURES[kind]) return <LogoTile src={PICTURES[kind]} />;
   return (
     <span className="svc-logo">
-      {kind === 'attendance' ? <img src="/apps/attendance.png" alt="" width={44} height={44} /> : kind === 'stock' ? <img src="/apps/stock.png" alt="" width={52} height={52} /> : kind === 'finance' ? <FinanceMark /> : kind === 'marketing-logo' ? <img src="/apps/marketing.jpg" alt="" width={60} height={60} style={{ borderRadius: 'inherit' }} /> : <span style={{ display: 'grid', color: '#0b79ee' }}><Icon name="app" size={34} /></span>}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      {kind === 'stock' ? <img src="/apps/stock.png" alt="" width={52} height={52} /> : <span style={{ display: 'grid', color: '#0b79ee' }}><Icon name="app" size={34} /></span>}
     </span>
   );
 }
 
 // Add apps: each module's logo
-const MODULE_PICTURE: Record<string, string> = {
-  sales: '/apps/sales.jpg', inventory: '/apps/stock.png', marketing: '/apps/marketing.jpg', service: '/apps/service.jpg', sanakhat: '/apps/sanakhat.jpg', ai: '/apps/hanuman.png',
-};
-
 export function ModuleLogo({ art }: { art: string }) {
-  const picture = MODULE_PICTURE[art];
-  const size = art === 'inventory' ? 60 : 72; // the stock logo sits on white with room around it; the others fill the tile
-  return (
-    <span className="svc-logo" style={{ overflow: 'hidden' }}>
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={picture} alt="" width={size} height={size} />
-    </span>
-  );
+  return <LogoTile src={PICTURES[art === 'ai' ? 'hanuman' : `${art}-logo`]} />;
 }

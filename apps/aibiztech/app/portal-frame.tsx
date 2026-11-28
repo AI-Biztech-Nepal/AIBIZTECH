@@ -85,14 +85,14 @@ export function PortalFrame({ org, orgs = [], services, person, email, page, ble
               // Unticked on Add apps (Stock Manager's own entries are filtered one by one below)
               if (svc.key !== 'stock' && hidden.includes(svc.key)) return null;
               // HRIS and Marketing open their own menu here
-              if (on && svc.key === 'attendance') return <AppMenu key={svc.key} service="attendance" icon="attendance" name={svc.name} home="/" nodes={ATTENDANCE_MENU} isAdmin={org?.services.attendance === 'admin'} />;
+              if (on && svc.key === 'attendance') return <AppMenu key={svc.key} service="attendance" icon="hris-logo" name={svc.name} home="/" nodes={ATTENDANCE_MENU} isAdmin={org?.services.attendance === 'admin'} />;
               // Stock Manager's pages sit straight in this panel, Marketing among them
               if (on && svc.key === 'stock') return <StockModules key={svc.key} who={who} withDashboard={!merged} auto={auto} hidden={hidden} />;
               if (svc.key === 'marketing' && stock) return null;
               if (svc.key === 'finance' && merged) return null;
               if (on && svc.key === 'marketing') return <Fragment key={svc.key}>{item('/app/marketing', 'marketing-logo', svc.name)}</Fragment>;
               // Finance runs inside AIBIZTECH (served at /finance); other apps are opened through single sign-on
-              if (on && svc.key === 'finance') return <AppMenu key={svc.key} service="finance" icon="finance" name={auto ? 'General Finance' : svc.name} home="/company-dashboard" nodes={FINANCE_MENU} isAdmin />;
+              if (on && svc.key === 'finance') return <AppMenu key={svc.key} service="finance" icon="finance-logo" name={auto ? 'General Finance' : svc.name} home="/company-dashboard" nodes={FINANCE_MENU} isAdmin />;
               return (
                 <Fragment key={svc.key}>
                   {on ? item(`/app/${svc.key}`, serviceIcon(svc.key, svc.name), svc.name) : item(org ? '/' : '/onboarding', serviceIcon(svc.key, svc.name), svc.name, false, <Icon name="lockmini" size={14} />)}
@@ -160,7 +160,7 @@ export function PortalFrame({ org, orgs = [], services, person, email, page, ble
       {bar && (
         <nav className={s.tabs} aria-label="Shortcuts">
           <Link href="/" aria-current={page === 'home' ? 'page' : undefined}><Icon name="dashboard" /><span>Home</span></Link>
-          {TABS.filter(([key]) => org?.services[key] && !hidden.includes(key)).map(([key, label, href]) => <a key={key} href={href}><Icon name={key} /><span>{label}</span></a>)}
+          {TABS.filter(([key]) => org?.services[key] && !hidden.includes(key)).map(([key, label, href, icon]) => <a key={key} href={href}><Icon name={icon} /><span>{label}</span></a>)}
           {/* the other portal pages are reached through More, so it is the one lit on them */}
           <MenuButton className={cls(s.more, page !== 'home' && s.here)} label="More" />
         </nav>
@@ -169,8 +169,8 @@ export function PortalFrame({ org, orgs = [], services, person, email, page, ble
   );
 }
 
-// The phone bar's apps: key (also the icon's name), short label, first page
-const TABS = [['attendance', 'HRIS', '/app/attendance'], ['finance', 'Finance', '/app/finance/company-dashboard'], ['stock', 'Stock', '/app/stock']];
+// The phone bar's apps: key, short label, first page, icon
+const TABS = [['attendance', 'HRIS', '/app/attendance', 'hris-logo'], ['finance', 'Finance', '/app/finance/company-dashboard', 'finance-logo'], ['stock', 'Stock', '/app/stock', 'stock']];
 
 // The apps in the side panel, in this order, with Attendance Nepal shown as HRIS
 const APP_ORDER = ['attendance', 'finance', 'marketing', 'stock'];
