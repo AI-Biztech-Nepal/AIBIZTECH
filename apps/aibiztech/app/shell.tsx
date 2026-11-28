@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { createClient, type Org } from '@/lib/supabase';
 import { businessKind } from '@/lib/business-kind-load';
+import { hiddenModules } from '@/lib/hidden-modules';
 import { hasOldFinance } from '@/lib/old-finance';
 import { PortalFrame, type Page } from './portal-frame';
 
@@ -14,10 +15,11 @@ export async function Shell({ org, orgs, page, bleed, light, phoneDate, children
   const email = claims?.claims.email ?? '';
   const auto = org?.services.stock ? (await businessKind(supabase, org.id)) === 'auto' : false;
   const oldFinance = org && auto ? await hasOldFinance(supabase, org.id) : false;
+  const hidden = org ? await hiddenModules(supabase, org.id) : [];
   const person = (claims?.claims.user_metadata as { full_name?: string } | undefined)?.full_name || email.split('@')[0] || 'Account';
 
   return (
-    <PortalFrame org={org} orgs={orgs} services={services} person={person} email={email} page={page} bleed={bleed} auto={auto} oldFinance={oldFinance} light={light} phoneDate={phoneDate}>
+    <PortalFrame org={org} orgs={orgs} services={services} person={person} email={email} page={page} bleed={bleed} auto={auto} oldFinance={oldFinance} hidden={hidden} light={light} phoneDate={phoneDate}>
       {children}
     </PortalFrame>
   );

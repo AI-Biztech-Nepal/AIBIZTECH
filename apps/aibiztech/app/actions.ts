@@ -8,7 +8,11 @@ import { safeNext } from '@/lib/safe-next';
 import { EMAIL, FIELDS, PHONE, validateDetails, validatePhoto, type Details } from '@/lib/org-details';
 import { TRIAL_DAYS, validateSignup, type SignupState, type SignupValues } from '@/lib/signup';
 import { signInProblem, type SignInState } from '@/lib/signin';
+import { planModules, tilesFor } from '@/lib/app-tiles';
+import { isOpen } from '@/lib/plans';
 import { isBusinessType } from '@/lib/business-kind';
+import { businessKind } from '@/lib/business-kind-load';
+import { hiddenModules } from '@/lib/hidden-modules';
 
 const str = (f: FormData, k: string) => String(f.get(k) ?? '').trim();
 const fail = (path: string, message: string): never => redirect(`${path}?error=${encodeURIComponent(message)}`);
@@ -91,17 +95,33 @@ async function enableApps(supabase: Awaited<ReturnType<typeof createClient>>, or
   return error?.message ?? null;
 }
 
-// Tick more apps later (Apps page)
-export async function addApps(form: FormData) {
+// Add apps page: ticked modules show in the business's side panel; ticking one that is not added yet adds its app
+export async function saveModules(form: FormData) {
   const { supabase, ctx } = await getContext();
   const org = ctx?.orgs.find((o) => o.id === ctx.active_org_id) ?? ctx?.orgs[0];
-  if (!ctx || !org || org.org_role === 'member') fail('/', 'Only owners and admins can add apps.');
-  const keys = form.getAll('apps').map(String);
-  if (!keys.length) fail('/apps', 'Tick at least one app.');
-  const problem = await enableApps(supabase, org!.id, ctx!.user_id, keys);
-  if (problem) fail('/apps', problem);
+  if (!ctx || !org || org.org_role === 'member') fail('/', 'Only owners and admins can choose apps.');
+  const core = supabase.schema('core');
+  const [{ data: services, error: servicesError }, { data: rows, error: rowsError }, kind, hidden] = await Promise.all([
+    core.from('services').select('key, name').eq('is_active', true),
+    core.from('org_services').select('service_key, status, plan, trial_ends_at, enabled_at').eq('org_id', org!.id),
+    businessKind(supabase, org!.id),
+    hiddenModules(supabase, org!.id),
+  ]);
+  if (servicesError || rowsError) fail('/apps', 'Your apps could not be loaded. Try again.');
+  const now = new Date();
+  const plan = planModules({
+    tiles: tilesFor(services ?? [], kind), access: Object.keys(org!.services), kind, hidden,
+    closed: (rows ?? []).filter((r) => !isOpen(r, now)).map((r) => r.service_key as string),
+    ticked: form.getAll('modules').map(String),
+  });
+  if (plan.add.length) {
+    const problem = await enableApps(supabase, org!.id, ctx!.user_id, plan.add);
+    if (problem) fail('/apps', problem);
+  }
+  const { data: saved, error } = await core.from('organizations').update({ hidden_modules: plan.hidden }).eq('id', org!.id).select('id');
   revalidatePath('/', 'layout');
-  redirect('/?message=' + encodeURIComponent(`Apps added. Your ${TRIAL_DAYS}-day trial has started.`));
+  if (error || !saved?.length) fail('/apps', `${plan.add.length ? 'The new apps were added, but your' : 'Your'} left panel choice could not be saved${error ? `: ${error.message}` : '.'}`);
+  redirect('/apps?message=' + encodeURIComponent(plan.add.length ? `Saved. Your ${TRIAL_DAYS}-day trial of the new apps has started.` : 'Saved. The left panel shows the ticked apps.'));
 }
 
 export async function createOrganization(form: FormData) {

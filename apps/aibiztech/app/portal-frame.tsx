@@ -24,6 +24,7 @@ type Props = {
   bleed?: boolean; // an app's own page fills the whole area
   auto?: boolean; // a vehicle business with Stock Manager: its Finance is the one inside Stock Manager
   oldFinance?: boolean; // such a business that also has records in the general Finance app
+  hidden?: string[]; // modules the business unticked on Add apps: left out of the side panel
   light?: boolean; // redesigned portal pages; module screens keep their own look
   preview?: boolean; // look only: switching business and signing out do nothing
   phoneDate?: string; // set by the dashboard: a charcoal header on phones, with this date in it
@@ -35,7 +36,7 @@ const initialsOf = (name: string) => name.split(/\s+/).map((w) => w[0]).slice(0,
 
 // The frame around every signed-in page: side panel on the left, business and account menus on top.
 // Apps come from core.services, so a new service (or one turned on for a business) shows up without touching this file.
-export function PortalFrame({ org, orgs = [], services, person, email, page, bleed = false, auto = false, oldFinance = false, light = false, preview = false, phoneDate, children }: Props) {
+export function PortalFrame({ org, orgs = [], services, person, email, page, bleed = false, auto = false, oldFinance = false, hidden = [], light = false, preview = false, phoneDate, children }: Props) {
   const isAdmin = !!org && org.org_role !== 'member';
   const status = org?.verification_status;
   const statusLabel = status === 'verified' ? 'Verified' : status === 'rejected' ? 'Rejected' : 'Awaiting verification';
@@ -81,13 +82,15 @@ export function PortalFrame({ org, orgs = [], services, person, email, page, ble
             <div className={s.groupTitle}>Modules</div>
             {apps.map((svc) => {
               const on = !!org?.services[svc.key];
+              // Unticked on Add apps (Stock Manager's own entries are filtered one by one below)
+              if (svc.key !== 'stock' && hidden.includes(svc.key)) return null;
               // HRIS and Marketing open their own menu here
               if (on && svc.key === 'attendance') return <AppMenu key={svc.key} service="attendance" icon="attendance" name={svc.name} home="/" nodes={ATTENDANCE_MENU} isAdmin={org?.services.attendance === 'admin'} />;
               // Stock Manager's pages sit straight in this panel, Marketing among them
-              if (on && svc.key === 'stock') return <StockModules key={svc.key} who={who} withDashboard={!merged} />;
+              if (on && svc.key === 'stock') return <StockModules key={svc.key} who={who} withDashboard={!merged} auto={auto} hidden={hidden} />;
               if (svc.key === 'marketing' && stock) return null;
               if (svc.key === 'finance' && merged) return null;
-              if (on && svc.key === 'marketing') return <Fragment key={svc.key}>{item('/app/marketing', 'megaphone', svc.name)}</Fragment>;
+              if (on && svc.key === 'marketing') return <Fragment key={svc.key}>{item('/app/marketing', 'marketing-logo', svc.name)}</Fragment>;
               // Finance runs inside AIBIZTECH (served at /finance); other apps are opened through single sign-on
               if (on && svc.key === 'finance') return <AppMenu key={svc.key} service="finance" icon="finance" name={auto ? 'General Finance' : svc.name} home="/company-dashboard" nodes={FINANCE_MENU} isAdmin />;
               return (
@@ -157,7 +160,7 @@ export function PortalFrame({ org, orgs = [], services, person, email, page, ble
       {bar && (
         <nav className={s.tabs} aria-label="Shortcuts">
           <Link href="/" aria-current={page === 'home' ? 'page' : undefined}><Icon name="dashboard" /><span>Home</span></Link>
-          {TABS.filter(([key]) => org?.services[key]).map(([key, label, href]) => <a key={key} href={href}><Icon name={key} /><span>{label}</span></a>)}
+          {TABS.filter(([key]) => org?.services[key] && !hidden.includes(key)).map(([key, label, href]) => <a key={key} href={href}><Icon name={key} /><span>{label}</span></a>)}
           {/* the other portal pages are reached through More, so it is the one lit on them */}
           <MenuButton className={cls(s.more, page !== 'home' && s.here)} label="More" />
         </nav>

@@ -1,6 +1,7 @@
 'use client';
 
 import { usePathname } from 'next/navigation';
+import { menuShown, tilesFor } from '@/lib/app-tiles';
 import { useEffect, useState, type MouseEvent } from 'react';
 import { Icon } from './icons';
 import s from './frame.module.css';
@@ -10,8 +11,8 @@ import s from './frame.module.css';
 export type StockNode = { key: string; label: string; to: string; active?: boolean; badge?: number; children?: StockNode[] };
 
 const ICONS: Record<string, string> = {
-  dashboard: 'dashboard', sales: 'card', inventory: 'stock', items: 'stock', 'spare-parts': 'structure', marketing: 'megaphone',
-  service: 'wrench', jobs: 'wrench', warranty: 'admin', ledger: 'doc', finance: 'finance', sanakhat: 'doc', ai: 'hanuman', platform: 'branch',
+  dashboard: 'dashboard', sales: 'sales-logo', inventory: 'stock', items: 'stock', 'spare-parts': 'structure', marketing: 'marketing-logo',
+  service: 'service-logo', jobs: 'wrench', warranty: 'admin', ledger: 'doc', finance: 'finance', sanakhat: 'sanakhat-logo', ai: 'hanuman', platform: 'branch',
 };
 const cls = (...names: (string | false | undefined)[]) => names.filter(Boolean).join(' ');
 const address = (to: string) => `/app/stock${to === '/' ? '' : to}`;
@@ -82,15 +83,20 @@ export function StockDashboardLink({ who }: { who: string }) {
   return node ? <Node node={node} here={here} icon="dashboard" /> : null;
 }
 
-// Every other page of Stock Manager, in the Modules group. withDashboard: the portal keeps its own Dashboard too.
-export function StockModules({ who, withDashboard }: { who: string; withDashboard: boolean }) {
+// Every other page of Stock Manager, in the Modules group, leaving out what the business unticked on Add apps.
+// withDashboard: the portal keeps its own Dashboard too.
+export function StockModules({ who, withDashboard, auto, hidden }: { who: string; withDashboard: boolean; auto: boolean; hidden: string[] }) {
   const { menu, here } = useStockMenu(who);
-  if (!menu) return <Node node={{ key: 'stock', label: 'Stock Manager', to: '/' }} here={here} icon="stock" />;
+  // Until the app has been opened once and sent its menu, list the ticked modules themselves
+  const list: StockNode[] = menu ?? [
+    { key: 'dashboard', label: 'Stock Manager', to: '/' },
+    ...tilesFor([{ key: 'stock', name: 'Stock Manager' }], auto ? 'auto' : 'general').map((t) => ({ key: t.id, label: t.name, to: t.href.replace('/app/stock', '') })),
+  ];
   return (
     <>
-      {menu.filter((n) => n.key !== 'settings' && (withDashboard || n.key !== 'dashboard')).map((n) => (
+      {list.filter((n) => n.key !== 'settings' && (!menu || withDashboard || n.key !== 'dashboard') && menuShown(n.key, hidden)).map((n) => (
         // beside the general Finance, which has its own Ledger, the stock app's people list is named for what it holds
-        <Node key={n.key} node={n.key === 'dashboard' ? { ...n, label: 'Stock Dashboard' } : n.key === 'ledger' ? { ...n, label: 'Customers & Staff' } : n} here={here} icon={ICONS[n.key] ?? 'app'} />
+        <Node key={n.key} node={menu && n.key === 'dashboard' ? { ...n, label: 'Stock Dashboard' } : n.key === 'ledger' ? { ...n, label: 'Customers & Staff' } : n} here={here} icon={!menu && n.key === 'dashboard' ? 'stock' : ICONS[n.key] ?? 'app'} />
       ))}
     </>
   );

@@ -28,7 +28,6 @@ const paths: Record<string, ReactNode> = {
   structure: <><rect x="4" y="4" width="16" height="5" rx="1" /><rect x="4" y="11" width="7" height="9" rx="1" /><rect x="13" y="11" width="7" height="9" rx="1" /></>,
   task: <><rect x="4" y="4" width="16" height="16" rx="2" /><path d="m8 12 3 3 5-6" /></>,
   device: <><rect x="6" y="6" width="12" height="12" rx="2" /><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4" /></>,
-  megaphone: <><path d="M3 11v2a1 1 0 0 0 1 1h3l8 4V6L7 10H4a1 1 0 0 0-1 1z" /><path d="M18 9a4 4 0 0 1 0 6" /></>,
   wrench: <path d="M14.7 6.3a4 4 0 0 0-5.4 5.1L3 17.7 6.3 21l6.3-6.3a4 4 0 0 0 5.1-5.4l-2.6 2.6-2.4-.6-.6-2.4z" />,
   spark: <><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z" /><path d="M19 16l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7z" /></>,
   plus: <><circle cx="12" cy="12" r="9" /><path d="M12 8v8M8 12h8" /></>,
@@ -38,16 +37,21 @@ const paths: Record<string, ReactNode> = {
   more: <><circle cx="5" cy="12" r="1.4" /><circle cx="12" cy="12" r="1.4" /><circle cx="19" cy="12" r="1.4" /></>,
 };
 
+// Modules with a logo of their own
+const PICTURES: Record<string, string> = {
+  hanuman: '/apps/hanuman.png', 'sales-logo': '/apps/sales.jpg', 'marketing-logo': '/apps/marketing.jpg', 'service-logo': '/apps/service.jpg', 'sanakhat-logo': '/apps/sanakhat.jpg',
+};
+
 export function Icon({ name, size = 20 }: { name: string; size?: number }) {
-  // AI Assistant wears the Hanuman AI mark: a picture, a little larger than the line icons but taking the same room
+  // A logo is a picture, a little larger than the line icons but taking the same room
   // eslint-disable-next-line @next/next/no-img-element
-  if (name === 'hanuman') return <img src="/apps/hanuman.png" alt="" aria-hidden="true" width={size + 5} height={size + 5} style={{ margin: -2.5, borderRadius: 6, flex: 'none' }} />;
+  if (PICTURES[name]) return <img src={PICTURES[name]} alt="" aria-hidden="true" width={size + 5} height={size + 5} style={{ margin: -2.5, borderRadius: 6, flex: 'none' }} />;
   return <svg {...P} width={size} height={size}>{paths[name] ?? paths.app}</svg>;
 }
 
 export function serviceIcon(key: string, name: string) {
   const s = `${key} ${name}`.toLowerCase();
-  return s.includes('financ') ? 'finance' : s.includes('attend') ? 'attendance' : s.includes('stock') ? 'stock' : s.includes('market') ? 'megaphone' : 'app';
+  return s.includes('financ') ? 'finance' : s.includes('attend') ? 'attendance' : s.includes('stock') ? 'stock' : s.includes('market') ? 'marketing-logo' : 'app';
 }
 
 // Attendance Nepal uses its real logo; Stock Manager uses the StockTrack mark; Finance has a logo drawn for the portal
@@ -70,27 +74,23 @@ export function ServiceLogo({ svc }: { svc: { key: string; name: string } }) {
   const kind = serviceIcon(svc.key, svc.name);
   return (
     <span className="svc-logo">
-      {kind === 'attendance' ? <img src="/apps/attendance.png" alt="" width={44} height={44} /> : kind === 'stock' ? <img src="/apps/stock.png" alt="" width={52} height={52} /> : kind === 'finance' ? <FinanceMark /> : <span style={{ display: 'grid', color: '#0b79ee' }}><Icon name={kind === 'megaphone' ? 'megaphone' : 'app'} size={34} /></span>}
+      {kind === 'attendance' ? <img src="/apps/attendance.png" alt="" width={44} height={44} /> : kind === 'stock' ? <img src="/apps/stock.png" alt="" width={52} height={52} /> : kind === 'finance' ? <FinanceMark /> : kind === 'marketing-logo' ? <img src="/apps/marketing.jpg" alt="" width={60} height={60} style={{ borderRadius: 'inherit' }} /> : <span style={{ display: 'grid', color: '#0b79ee' }}><Icon name="app" size={34} /></span>}
     </span>
   );
 }
 
-// Add apps: modules without a logo of their own get one in the brand's navy, blue and cyan. Inventory keeps the stock
-// logo and AI Assistant wears the Hanuman AI mark.
-const MODULE_ART: Record<string, { icon: string; background: string }> = {
-  sales: { icon: 'card', background: 'linear-gradient(135deg, #22d3ee, #0b79ee)' },
-  megaphone: { icon: 'megaphone', background: 'linear-gradient(135deg, #1e88ff, #0b3fa8)' },
-  service: { icon: 'wrench', background: 'linear-gradient(135deg, #1d4f9e, #0b1230)' },
-  sanakhat: { icon: 'doc', background: 'linear-gradient(135deg, #0ea5b7, #0b3fa8)' },
+// Add apps: each module's logo
+const MODULE_PICTURE: Record<string, string> = {
+  sales: '/apps/sales.jpg', inventory: '/apps/stock.png', marketing: '/apps/marketing.jpg', service: '/apps/service.jpg', sanakhat: '/apps/sanakhat.jpg', ai: '/apps/hanuman.png',
 };
 
 export function ModuleLogo({ art }: { art: string }) {
-  const own = art === 'inventory' ? '/apps/stock.png' : art === 'ai' ? '/apps/hanuman.png' : null;
-  const drawn = MODULE_ART[art];
+  const picture = MODULE_PICTURE[art];
+  const size = art === 'inventory' ? 60 : 72; // the stock logo sits on white with room around it; the others fill the tile
   return (
-    <span className="svc-logo" style={own ? { overflow: 'hidden' } : { background: drawn?.background }}>
+    <span className="svc-logo" style={{ overflow: 'hidden' }}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      {own ? <img src={own} alt="" width={art === 'ai' ? 72 : 60} height={art === 'ai' ? 72 : 60} /> : <Icon name={drawn?.icon ?? 'app'} size={36} />}
+      <img src={picture} alt="" width={size} height={size} />
     </span>
   );
 }

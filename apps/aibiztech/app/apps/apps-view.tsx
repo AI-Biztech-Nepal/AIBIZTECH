@@ -2,11 +2,11 @@ import 'lenis/dist/lenis.css';
 import Link from 'next/link';
 import { ReactLenis } from 'lenis/react';
 import type { BusinessKind } from '@/lib/business-kind';
-import { tilesFor } from '@/lib/app-tiles';
+import { manages, tilesFor } from '@/lib/app-tiles';
 import { appStatus, isOpen } from '@/lib/plans';
 import { TRIAL_DAYS } from '@/lib/signup';
 import a from '../account.module.css';
-import { addApps } from '../actions';
+import { saveModules } from '../actions';
 import { Notices } from '../dashboard-view';
 import page from '../dashboard.module.css';
 import { ModuleLogo, ServiceLogo } from '../icons';
@@ -20,6 +20,7 @@ type Props = {
   services: { key: string; name: string }[];
   kind?: BusinessKind | null; // what the business deals in: decides which Stock Manager modules it has
   rows: AppRow[];
+  hidden?: string[]; // modules the business has unticked
   failed?: boolean;
   error?: string;
   message?: string;
@@ -27,11 +28,11 @@ type Props = {
   now?: Date;
 };
 
-export function AppsView({ orgName, access, services, kind = null, rows, failed = false, error, message, preview = false, now = new Date() }: Props) {
+export function AppsView({ orgName, access, services, kind = null, rows, hidden = [], failed = false, error, message, preview = false, now = new Date() }: Props) {
   const all = tilesFor(services, kind).map((tile) => ({ ...tile, row: rows.find((r) => r.service_key === tile.app) }));
-  // Adding cannot reopen an app whose trial is over or that is suspended: that needs a plan
-  const isClosed = (tile: (typeof all)[number]) => !access[tile.app] && !!tile.row && !isOpen(tile.row, now);
-  const canAdd = all.some((tile) => !access[tile.app] && !isClosed(tile));
+  const mine = new Set(Object.keys(access));
+  // Ticking cannot reopen an app whose trial is over or that is suspended: that needs a plan
+  const isClosed = (tile: (typeof all)[number]) => !manages(tile, mine, kind) && !!tile.row && !isOpen(tile.row, now);
 
   return (
     <div className={`${page.page} ${a.page}`}>
@@ -39,7 +40,7 @@ export function AppsView({ orgName, access, services, kind = null, rows, failed 
       <div className={page.head}>
         <div>
           <h1>Add apps</h1>
-          <p className={page.sub}>Apps for {orgName}. Each new app starts with a free {TRIAL_DAYS}-day trial.</p>
+          <p className={page.sub}>Tick the apps {orgName} wants in the left panel, then press Save. Each new app starts with a free {TRIAL_DAYS}-day trial.</p>
         </div>
       </div>
 
@@ -48,44 +49,32 @@ export function AppsView({ orgName, access, services, kind = null, rows, failed 
       {!failed && (
         <section className={s.card} aria-labelledby="apps-title">
           <div className={s.cardHead}><h2 id="apps-title">All apps</h2></div>
-          <form action={preview ? undefined : addApps}>
+          {/* redrawn after each save, so the ticks always show what is stored */}
+          <form key={`${hidden.join()}|${[...mine].join()}`} action={preview ? undefined : saveModules}>
             <ul className={t.grid}>
               {all.map((tile) => {
                 const status = tile.row ? appStatus(tile.row, now) : null;
-                const face = (
-                  <>
-                    {tile.art ? <ModuleLogo art={tile.art} /> : <ServiceLogo svc={{ key: tile.app, name: tile.name }} />}
-                    <span className={t.name}>{tile.name}</span>
-                  </>
-                );
+                const added = manages(tile, mine, kind);
+                const closed = isClosed(tile);
                 return (
                   <li key={tile.id}>
-                    {access[tile.app] ? (
-                      <a href={tile.href} className={t.tile}>
-                        {face}
-                        {status && <span className={`${s.tag} ${status.tone === 'good' ? s.on : s.over}`}>{status.text}</span>}
-                        <span className={t.action}>Open</span>
-                      </a>
-                    ) : isClosed(tile) ? (
-                      <Link href="/plans" className={t.tile}>
-                        {face}
-                        <span className={`${s.tag} ${s.over}`}>{status!.text}</span>
-                        <span className={t.action}>View plans</span>
-                      </Link>
-                    ) : (
-                      <label className={t.tile}>
-                        <input type="checkbox" name="apps" value={tile.app} />
-                        {face}
-                        {tile.app === 'stock' && <span className={t.note}>Part of Stock Manager</span>}
-                        <span className={t.note}>{status ? `On for your business · ${status.text}` : `${TRIAL_DAYS}-day free trial`}</span>
-                        <span className={t.action}>{status ? 'Add me as admin' : 'Add'}</span>
+                    <div className={t.tile}>
+                      <label className={t.pick}>
+                        <input type="checkbox" name="modules" value={tile.id} defaultChecked={added && !hidden.includes(tile.id)} disabled={closed} aria-label={`Show ${tile.name} in the left panel`} />
+                        {tile.art ? <ModuleLogo art={tile.art} /> : <ServiceLogo svc={{ key: tile.app, name: tile.name }} />}
+                        <span className={t.name}>{tile.name}</span>
                       </label>
-                    )}
+                      {status && <span className={`${s.tag} ${status.tone === 'good' && !closed ? s.on : s.over}`}>{status.text}</span>}
+                      {!added && !closed && tile.app === 'stock' && <span className={t.note}>Part of Stock Manager</span>}
+                      {!added && !closed && <span className={t.note}>{status ? 'Tick to give yourself access' : `Tick for a ${TRIAL_DAYS}-day free trial`}</span>}
+                      {added && <a href={access[tile.app] ? tile.href : `/app/stock/${tile.id}`} className={t.action} aria-label={`Open ${tile.name}`}>Open</a>}
+                      {closed && <Link href="/plans" className={t.action}>View plans</Link>}
+                    </div>
                   </li>
                 );
               })}
             </ul>
-            {canAdd && <div className={a.foot}><button type={preview ? 'button' : 'submit'} className={`${s.button} ${s.primary}`}>Add selected apps</button></div>}
+            <div className={a.foot}><button type={preview ? 'button' : 'submit'} className={`${s.button} ${s.primary}`}>Save left panel</button></div>
           </form>
         </section>
       )}

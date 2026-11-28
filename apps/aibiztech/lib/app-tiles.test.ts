@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { tilesFor } from './app-tiles.ts';
+import { menuShown, planModules, tilesFor } from './app-tiles.ts';
 
 const services = ['attendance', 'finance', 'marketing', 'stock'].map((key) => ({ key, name: key }));
 
@@ -18,4 +18,32 @@ test('a general business has Items and no vehicle-only modules', () => {
 
 test('an app the list does not know yet still appears, last', () => {
   assert.equal(tilesFor([...services, { key: 'new', name: 'New' }]).at(-1)?.id, 'new');
+});
+
+const plan = (over: Partial<Parameters<typeof planModules>[0]>) =>
+  planModules({ tiles: tilesFor(services, 'auto'), access: ['attendance', 'finance', 'marketing', 'stock'], closed: [], kind: 'auto', ticked: [], hidden: [], ...over });
+const all = ['attendance', 'sales', 'inventory', 'marketing', 'service', 'finance', 'sanakhat', 'ai'];
+
+test('unticked modules are left out, and ticking one brings it back', () => {
+  assert.deepEqual(plan({ ticked: all.filter((id) => id !== 'service' && id !== 'ai') }), { add: [], hidden: ['ai', 'service'] });
+  assert.deepEqual(plan({ ticked: all, hidden: ['ai', 'service'] }), { add: [], hidden: [] });
+});
+
+test('ticking one module of an app not added yet adds the app and shows only what was ticked', () => {
+  const result = plan({ access: ['attendance'], kind: 'auto', ticked: ['attendance', 'sales'] });
+  assert.deepEqual(result.add, ['stock']);
+  assert.deepEqual(result.hidden, ['ai', 'finance', 'inventory', 'marketing', 'sanakhat', 'service']);
+});
+
+test('what the person cannot manage keeps the business choice, and a closed app cannot be added', () => {
+  assert.deepEqual(plan({ access: ['attendance'], ticked: ['attendance'], hidden: ['sales'] }), { add: [], hidden: ['sales'] });
+  assert.deepEqual(plan({ access: ['attendance'], closed: ['stock'], ticked: ['attendance', 'sales'] }), { add: [], hidden: [] });
+});
+
+test('side panel entries follow their tile; the rest always show', () => {
+  assert.equal(menuShown('jobs', ['service']), false);
+  assert.equal(menuShown('items', ['inventory']), false);
+  assert.equal(menuShown('sales', ['service']), true);
+  assert.equal(menuShown('dashboard', all), true);
+  assert.equal(menuShown('ledger', all), true);
 });
