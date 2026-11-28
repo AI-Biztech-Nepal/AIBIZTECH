@@ -67,7 +67,7 @@ export function ServiceLogo({ svc }: { svc: { key: string; name: string } }) {
   const kind = serviceIcon(svc.key, svc.name);
   return (
     <span className="svc-logo">
-      {kind === 'attendance' ? <img src="/apps/attendance.png" alt="" width={44} height={44} /> : kind === 'stock' ? <img src="/apps/stock.png" alt="" width={52} height={52} /> : kind === 'finance' ? <FinanceMark /> : kind === 'megaphone' ? <Icon name="megaphone" size={30} /> : <Icon name="app" size={30} />}
+      {kind === 'attendance' ? <img src="/apps/attendance.png" alt="" width={44} height={44} /> : kind === 'stock' ? <img src="/apps/stock.png" alt="" width={52} height={52} /> : kind === 'finance' ? <FinanceMark /> : <span style={{ display: 'grid', color: '#0b79ee' }}><Icon name={kind === 'megaphone' ? 'megaphone' : 'app'} size={34} /></span>}
     </span>
   );
 }
