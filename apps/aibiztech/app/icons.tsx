@@ -39,6 +39,9 @@ const paths: Record<string, ReactNode> = {
 };
 
 export function Icon({ name, size = 20 }: { name: string; size?: number }) {
+  // AI Assistant wears the Hanuman AI mark: a picture, a little larger than the line icons but taking the same room
+  // eslint-disable-next-line @next/next/no-img-element
+  if (name === 'hanuman') return <img src="/apps/hanuman.png" alt="" aria-hidden="true" width={size + 5} height={size + 5} style={{ margin: -2.5, borderRadius: 6, flex: 'none' }} />;
   return <svg {...P} width={size} height={size}>{paths[name] ?? paths.app}</svg>;
 }
 

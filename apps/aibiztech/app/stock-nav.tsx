@@ -11,7 +11,7 @@ export type StockNode = { key: string; label: string; to: string; active?: boole
 
 const ICONS: Record<string, string> = {
   dashboard: 'dashboard', sales: 'card', inventory: 'stock', items: 'stock', 'spare-parts': 'structure', marketing: 'megaphone',
-  service: 'wrench', jobs: 'wrench', warranty: 'admin', ledger: 'doc', finance: 'finance', sanakhat: 'doc', ai: 'spark', platform: 'branch',
+  service: 'wrench', jobs: 'wrench', warranty: 'admin', ledger: 'doc', finance: 'finance', sanakhat: 'doc', ai: 'hanuman', platform: 'branch',
 };
 const cls = (...names: (string | false | undefined)[]) => names.filter(Boolean).join(' ');
 const address = (to: string) => `/app/stock${to === '/' ? '' : to}`;
