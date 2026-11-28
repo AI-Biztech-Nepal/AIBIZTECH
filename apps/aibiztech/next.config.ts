@@ -25,6 +25,7 @@ const config: NextConfig = {
     { source: '/stock-app/static/:path*', headers: KEEP_FOREVER },
     // Logos. Only picture files: /apps on its own is the Add apps page
     { source: '/logo.png', headers: KEEP_PICTURE },
+    { source: '/logo-large.png', headers: KEEP_PICTURE },
     { source: '/apps/:file([^/]+\\.(?:png|jpg))', headers: KEEP_PICTURE },
     { source: '/stock-app/brand/:path*', headers: KEEP_PICTURE },
     { source: '/brand/:path*', headers: KEEP_PICTURE },
